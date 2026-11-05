@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/cad.py @ a649663
-# Changed: export and collision_volume dropped (no CAD export or rules yet).
+# Changed: export and collision_volume dropped (no CAD export or rules yet); convex_parts imported from the shared brixzle.families.convex.
 """CadQuery solid, print exports, mass properties, and convex collision pieces.
 
 The printable solid is the XZ profile (with lightening holes) swept through the
@@ -14,7 +14,7 @@ import numpy as np
 import trimesh
 
 from . import profile as pr
-from .convex import convex_parts
+from brixzle.families.convex import convex_parts
 from shapely.ops import unary_union
 from .profile import _largest
 from .params import PLA_DENSITY, BrickParams

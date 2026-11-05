@@ -26,8 +26,8 @@ For each conflict or unclear item, it asks the person to choose. Nothing reaches
 
 **Design agent.**
 
-- **Prompt:** the base requirements (R1–R12), any extras from intake, and the brick family interface.
-- **Tools:** write family code, run the rule checks, render CAD.
+- **Prompt:** the base requirements (R1–R12), any extras from intake, and the brick family interface (`docs/family-interface.md`).
+- **Tools:** write family code, run the rule checks and `contract.check_family`, render CAD.
 - **Output:** a family package in `src/brixzle/families/<name>/`.
 
 **Critic agent.**
