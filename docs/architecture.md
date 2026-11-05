@@ -28,11 +28,11 @@ For each conflict or unclear item, it asks the person to choose. Nothing reaches
 
 - **Prompt:** the base requirements (R1–R12), any extras from intake, and the brick family interface.
 - **Tools:** write family code, run the rule checks, render CAD.
-- **Output:** a family package in `families/<name>/`.
+- **Output:** a family package in `src/brixzle/families/<name>/`.
 
 **Critic agent.**
 
-- **Prompt:** the distilled design rules in `rules/design_rules.md`. Each rule cites its paper.
+- **Prompt:** the distilled design rules in `src/brixzle/rules/design_rules.md`. Each rule cites its paper.
 - **Tools:** read the report and jam traces, look up the cited papers, read the design log.
 - **Output:** a redesign brief, which may reshape the current family or invent a new one; or a decision to stop.
 
@@ -63,9 +63,9 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
 | Path | Written by | Read by |
 |---|---|---|
 | `docs/requirements.md` (later a data file) | people | design agent |
-| `rules/design_rules.md`, `rules/papers/` | people, with Claude's help | critic agent |
-| `data/error-*.json` | copied from aerial-assembly | evaluation engine |
-| `families/<name>/` | design agent | evaluation engine |
+| `src/brixzle/rules/design_rules.md`, `src/brixzle/rules/papers/` | people, with Claude's help | critic agent |
+| `src/brixzle/data/error-*.json` | copied from aerial-assembly | evaluation engine |
+| `src/brixzle/families/<name>/` | design agent | evaluation engine |
 | `runs/loop/<run>/iter-N/` | orchestrator and engine | critic agent (with the design log) |
 
 ## Open questions
