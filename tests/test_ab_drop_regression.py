@@ -7,9 +7,9 @@ seed and config. All values are simulated, uncalibrated contact, not hardware ra
 Two tiers:
 
 - On every platform, sampled errors, outcomes and floor contact must match exactly, and mass
-  properties closely. This is the issue's "same outcome for the same seed and config".
-- On the reference platform (macOS arm64) geometry and settled poses must match bit for bit
-  (1e-6). Elsewhere they are skipped: the convex decomposition of the profile depends on the
+  properties to 1e-3 relative (CadQuery's tessellation is platform dependent too). This is the issue's "same outcome for the same seed and config".
+- On the reference platform (macOS arm64) geometry, mass properties and settled poses must
+  match bit for bit (1e-6 or tighter). Elsewhere they are skipped: the convex decomposition of the profile depends on the
   platform's floating point (Linux x86_64 gives part B 67 collision pieces, macOS arm64 69),
   which moves contact points and so the settled pose. The upstream code does the same.
 """
@@ -73,14 +73,25 @@ def test_config_matches_reference(case):
     assert json.loads(json.dumps(T.as_dict(_config(case["error"])))) == case["config"]  # tuples -> lists
 
 
+def _check_mass_properties(b, ref, rel, abs_):
+    assert b["mass_g"] == pytest.approx(ref["mass_g"], rel=rel)
+    assert b["volume"] == pytest.approx(ref["volume_mm3"], rel=rel)
+    assert list(b["com"]) == pytest.approx(ref["com_mm"], rel=rel, abs=abs_)
+    for row, ref_row in zip(b["inertia"], ref["inertia_g_mm2"]):
+        assert list(row) == pytest.approx(ref_row, rel=rel, abs=abs_)
+
+
 @pytest.mark.parametrize("part", ["A", "B"])
 def test_mass_properties_match_reference(ab_bricks, part):
-    ref, b = REFERENCE["geometry"][part], ab_bricks[part]
-    assert b["mass_g"] == pytest.approx(ref["mass_g"], rel=1e-6)
-    assert b["volume"] == pytest.approx(ref["volume_mm3"], rel=1e-6)
-    assert list(b["com"]) == pytest.approx(ref["com_mm"], rel=1e-6, abs=1e-6)
-    for row, ref_row in zip(b["inertia"], ref["inertia_g_mm2"]):
-        assert list(row) == pytest.approx(ref_row, rel=1e-6, abs=1e-6)
+    # CadQuery's tessellation differs slightly by platform (part B: 13.5321 g on Linux x86_64,
+    # 13.5273 g on macOS arm64), so 1e-3 relative here and bit-exact below.
+    _check_mass_properties(ab_bricks[part], REFERENCE["geometry"][part], rel=1e-3, abs_=1e-2)
+
+
+@exact_platform_only
+@pytest.mark.parametrize("part", ["A", "B"])
+def test_mass_properties_match_reference_exactly(ab_bricks, part):
+    _check_mass_properties(ab_bricks[part], REFERENCE["geometry"][part], rel=1e-9, abs_=1e-9)
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
