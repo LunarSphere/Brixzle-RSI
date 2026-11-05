@@ -12,6 +12,6 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
 | `src/brixzle/data/` | Measured drone error files |
 | `tests/` | pytest suite (`uv run pytest`) |
-| `docs/` | Requirements (R1–R12) and architecture |
+| `docs/` | Requirements (R1–R12) as prose (`requirements.md`) and data (`requirements.yaml`), and architecture |
 | `.github/workflows/ci.yml` | CI: runs the tests on every PR and on pushes to `main` |
 | `runs/` | Git-ignored. One folder per loop run, one subfolder per iteration |
