@@ -33,14 +33,16 @@ Code is copied in, not imported. Each borrowed file names the aerial-assembly pa
 
 Flight, calibration and hardware experiments stay in aerial-assembly.
 
-## Planned layout
+## Layout
+
+The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full map.
 
 | Path | What it holds |
 |---|---|
-| `intake/` | Local web page: concept sketch and extra requirements, with a conflict check against R1–R12 |
-| `agents/` | Design agent and critic agent (Claude Agent SDK) |
-| `engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
-| `families/<name>/` | One brick family each: parameters and bounds, 2D section, CAD solid, rules |
-| `rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
-| `data/` | Measured drone error files |
+| `src/brixzle/intake/` | Local web page: concept sketch and extra requirements, with a conflict check against R1–R12 |
+| `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
+| `src/brixzle/engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
+| `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, 2D section, CAD solid, rules |
+| `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
+| `src/brixzle/data/` | Measured drone error files |
 | `runs/` | Git-ignored. One folder per loop run, one subfolder per iteration |
