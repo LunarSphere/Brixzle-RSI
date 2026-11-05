@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+# Loop runs, caches and large media
+runs/
+.cache/
+*.mp4
+*.webm
+.env
+.DS_Store
+MUJOCO_LOG.TXT
