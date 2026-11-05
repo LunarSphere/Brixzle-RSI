@@ -70,6 +70,10 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
 
 ## Open questions
 
-- The pickup trial (R12) doesn't exist in aerial-assembly yet. We need to decide what "picked up" means: the gripper fully engaged, and the brick hanging level within a tolerance.
+- The pickup trial (R12) doesn't exist in aerial-assembly yet. Its success test is defined in `docs/requirements.md` under "R12 in detail": capture, self-centring, gentle contact and clean release.
 - The Z and θ sides of the target box need real measurements of the drone's height and tilt error.
 - The analytic predictor is quasi-static and 2D. It must first be checked against existing sim drop maps before the loop relies on it.
+
+## Future work
+
+- **Co-design the gripper.** Let the loop redesign the passive gripper together with the brick. This covers forks, hooks or any other non-actuated type, and the pick fixture's guides. For now the fork is fixed and only the brick is redesigned.

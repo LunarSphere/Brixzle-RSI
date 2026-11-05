@@ -21,10 +21,37 @@ Each requirement is checked one of three ways:
 | R9 | **Mass.** A brick must weigh between 1 g and 25 g in PLA; lighter is preferred. | Rule: mass window |
 | R10 | **Passive pickup.** A non-actuated gripper must be able to pick up the brick; the drone's payload is about 40 g. | Rules: gripper fit, hangs level, straddles the centre of mass |
 | R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Analytic predictor and sim: placement box score |
-| R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. | Analytic predictor and sim: pickup box score |
+| R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
 
 ## Design target
 
-Both R11 and R12 are scored the same way. Find the largest box of drone error in X, Z and θ, around the aim point, where every trial succeeds with no jams. Then scale it against three targets, sized to the drone's mean, 95th-percentile and worst measured error.
+Both R11 and R12 use the same score. Find the largest box of drone error around the aim point where every trial succeeds with no jams. Then scale it against three targets, sized to the drone's mean, 95th-percentile and worst measured error.
 
-The measured error so far covers X–Y position only (Exp 3 in aerial-assembly). The Z and θ sides of the box are estimates until they are measured.
+- **Placement (R11):** the box is in X, Z and θ, the brick's profile plane.
+- **Pickup (R12):** the box is in X (across the tines), Z (vertical) and ψ (yaw).
+
+The measured error so far covers X–Y position only (Exp 3 in aerial-assembly). The Z, θ and ψ sides of the boxes are estimates until they are measured.
+
+## R12 in detail
+
+Today's pickup (aerial-assembly `brixzle`) works like this:
+
+- a passive fork with two 2 mm tines slides along Y into two bores in a brick waiting in the pick fixture;
+- each tine has 0.3 mm of radial clearance;
+- the only error correction is a tapered guide in front of each bore, with a ±5 mm mouth.
+
+Measured drone error is far larger than ±5 mm (Exp 3: 1.6 cm mean, 2.7 cm worst approach), so R12 asks the brick to do the correcting.
+
+Within the pickup box, a pickup succeeds when all four of these hold:
+
+1. **Capture.** The gripper engages the brick, guided only by passive features on the brick (funnels, chamfers, lead-ins), with no jams. Tine-in-bore jamming under yaw or tilt is the classic peg-in-hole problem; see Whitney 1982 and Whitney, Gustavson & Hennessey 1983.
+2. **Self-centring.** After the lift, the brick hangs within **2 mm and 3°** of its nominal carry pose. This is a starting value, to be revisited, slightly looser than the 1 mm, 3° seat tolerance. Any carry offset adds to placement error.
+3. **Gentle contact.** Peak contact force stays within a set share of the drone's thrust margin (`drone_params.py` in aerial-assembly), and no neighbouring brick in the fixture moves.
+4. **Clean release.** After the brick seats, the gripper withdraws without moving it beyond the drift limit (2 mm). This covers the stuck-on-the-fork concern in aerial-assembly #12.
+
+**Scope for now.** The gripper (the fork) is fixed. The loop redesigns only the brick's pickup features. Co-designing the gripper with the brick, including other passive grippers such as hooks, is future work.
+
+**Still to settle:**
+
+- what share of the thrust margin pickup may use;
+- the payload limit. R10 says about 40 g, but `drone_params.py` in aerial-assembly uses 30 g.

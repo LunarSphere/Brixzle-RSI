@@ -1,0 +1,70 @@
+# Base requirements R1–R12 as data. Loaded by brixzle.requirements.
+# Keep in step with the table in docs/requirements.md: the tests check that
+# ids, names, text and check kinds agree. Change only in a reviewed PR.
+#
+# checks: one or more of
+#   rule       an analytic check that runs before any simulation
+#   sim        a simulated trial
+#   design     a fixed design choice
+#   predictor  the analytic predictor (quasi-static, 2D)
+
+requirements:
+  - id: R1
+    name: Generality
+    text: "Bricks must generalize to any structure (bridge, tower, arch)."
+    checks: [sim]
+
+  - id: R2
+    name: Voxelizable
+    text: "Bricks must sit on a voxel lattice so that structures can later be planned algorithmically."
+    checks: [design]
+
+  - id: R3
+    name: Rigidity
+    text: "Assemblies must be rigid and physically stable."
+    checks: [sim]
+
+  - id: R4
+    name: Overhang
+    text: "An overhang must accept n bricks without falling over. One way to achieve this is angled pegs in a stepped design."
+    checks: [rule, sim]
+
+  - id: R5
+    name: Biased error
+    text: "The drone will make placement errors. Instead of correcting all of them, we bias the error onto one side (e.g. always onto the right slope) and use that slope's angle as the guide."
+    checks: [sim, rule]
+
+  - id: R6
+    name: Steep guides
+    text: "A guide ramp must be steeper than its friction coefficient requires (tan θ > μ, with margin)."
+    checks: [rule]
+
+  - id: R7
+    name: Alternating angles
+    text: "Alternating the lean between courses may improve stability."
+    checks: [design]
+
+  - id: R8
+    name: Stiffness
+    text: "I-beam-like sections may be used to stop the brick from flexing. The first course sits on a stable base."
+    checks: [design]
+
+  - id: R9
+    name: Mass
+    text: "A brick must weigh between 1 g and 25 g in PLA; lighter is preferred."
+    checks: [rule]
+
+  - id: R10
+    name: Passive pickup
+    text: "A non-actuated gripper must be able to pick up the brick; the drone's payload is about 40 g."
+    checks: [rule]
+
+  - id: R11
+    name: Coarse drop
+    text: "Bricks are dropped coarsely and slide into place on the ramps."
+    checks: [predictor, sim]
+
+  - id: R12
+    name: Coarse pickup
+    text: "The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail)."
+    checks: [predictor, sim]
