@@ -56,7 +56,7 @@ requirements:
 
   - id: R10
     name: Passive pickup
-    text: "A non-actuated gripper must be able to pick up the brick; the drone's payload is about 40 g."
+    text: "A non-actuated gripper must be able to pick up the brick; the drone's payload limit is 35 g, leaving headroom for the battery."
     checks: [rule]
 
   - id: R11

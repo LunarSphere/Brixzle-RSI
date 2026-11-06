@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/scene.py @ a649663
-# Changed: build_scene takes a family, its params and {part: SimBodies} instead of BrickParams and cad bundles, and builds bases through the family; the simulated-drone option (drone.py), soft barb contact and the collision-key option dropped.
+# Changed: build_scene takes a family, its params and {part: SimBodies} instead of BrickParams and cad bundles, and builds bases through the family; an ``extra`` callback adds bodies (the pickup trial's fork); the simulated-drone option (drone.py), soft barb contact and the collision-key option dropped.
 """MJCF scene: anchored bases, a floor, and a pool of parked brick bodies.
 
 Compile once with every brick the trial may need, park unused bricks far away under gravity compensation, and
@@ -34,12 +34,13 @@ def parked_position(j):
 
 
 def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, visual=True, body_parts=None,
-                static=None, sleep=False):
+                static=None, sleep=False, extra=None):
     """Return (model, xml, info). ``bases`` are [(v0, v1[, direction])] voxel ranges.
 
     ``bodies`` is {part: SimBodies} (``builders.sim_bodies``); ``body_parts`` names the part of
     each pooled body (default: the family's first part). ``static`` adds anchored convex vertex
     sets (mm, world frame), e.g. the per-cell base of a 3D ring.
+    ``extra(asset, world)`` may append more MJCF (e.g. the pickup fork) before compiling.
     ``sleep`` lets resting islands sleep (MuJoCo wakes them on contact, applied
     force or velocity changes).
     """
@@ -108,6 +109,8 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
                 ('.95 .55 .15 1' if j % 2 else '.25 .55 .85 1')
             ET.SubElement(body, 'geom', name=f'brick{j}_vis', type='mesh', mesh=f'{name}_vis',
                           group='2', rgba=rgba, contype='0', conaffinity='0', mass='0')
+    if extra is not None:
+        extra(asset, world)
     xml = ET.tostring(root, encoding='unicode')
     model = mujoco.MjModel.from_xml_string(xml)
     info = {
