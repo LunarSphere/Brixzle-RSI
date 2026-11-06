@@ -12,7 +12,7 @@ Planning. Don't write loop code until the issue for it exists and has been agree
 
 Rapid prototyping beats exhaustive sim verification, because the sim-to-real gap is real: printing and testing a brick tells us more than over-verifying it in sim. Design iterations must be as quick as possible while staying accurate.
 
-- **Target:** 15–30 minutes of wall-clock from the initial design to the final brick family. The old aerial-assembly process took 45–90 minutes per family.
+- **Target:** go from the initial design to the final brick family as fast as possible, and in no more than 30 minutes of wall-clock. Faster is always better. The old aerial-assembly process took 45–90 minutes per family.
 - **The bar** is enough evidence to know whether printing the brick is a good idea, not exhaustive robustness.
 - **Check key points, not volumes:** a few key contact points (guide faces, seats, bores) instead of densely sampling the object, and small seeded sample counts.
 - **Measure time:** record wall-clock for each stage, and flag anything that would push a family past about 30 minutes. Ask before starting a long sweep.
