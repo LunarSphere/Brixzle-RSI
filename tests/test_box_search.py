@@ -69,9 +69,12 @@ def test_pose_sample_maps_x_and_theta_around_the_aim():
     assert (s["dy"], s["roll"], s["yaw"], s["vel"]) == (0.0, 0.0, 0.0, [0.0, 0.0, 0.0])
 
 
-def test_rejects_a_pickup_box():
-    with pytest.raises(ValueError, match="placement"):
-        BS.box_search(AB, V0, BX.default_boxes()["pickup"]["mean"])
+def test_rejects_an_unknown_task():
+    import dataclasses
+
+    box = dataclasses.replace(BX.default_boxes()["pickup"]["mean"], task="carry")
+    with pytest.raises(ValueError, match="task"):
+        BS.box_search(AB, V0, box)
 
 
 # --- with the sim (A/B V0) ---

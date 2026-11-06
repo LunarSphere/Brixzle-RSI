@@ -19,7 +19,7 @@ Each requirement is checked one of three ways:
 | R7 | **Alternating angles.** Alternating the lean between courses may improve stability. | Design: alternating parts by course |
 | R8 | **Stiffness.** I-beam-like sections may be used to stop the brick from flexing. The first course sits on a stable base. | Design: rib frame, anchored base |
 | R9 | **Mass.** A brick must weigh between 1 g and 25 g in PLA; lighter is preferred. | Rule: mass window |
-| R10 | **Passive pickup.** A non-actuated gripper must be able to pick up the brick; the drone's payload is about 40 g. | Rules: gripper fit, hangs level, straddles the centre of mass |
+| R10 | **Passive pickup.** A non-actuated gripper must be able to pick up the brick; the drone's payload limit is 35 g, leaving headroom for the battery. | Rules: gripper fit, hangs level, straddles the centre of mass |
 | R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Analytic predictor and sim: placement box score |
 | R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
 | R13 | **Printable.** A brick must print as one piece in PLA, with walls of at least 1.2 mm. | Rules: single piece, minimum wall |
@@ -68,12 +68,9 @@ Within the pickup box, a pickup succeeds when all four of these hold:
 
 1. **Capture.** The gripper engages the brick, guided only by passive features on the brick (funnels, chamfers, lead-ins), with no jams. Tine-in-bore jamming under yaw or tilt is the classic peg-in-hole problem; see Whitney 1982 and Whitney, Gustavson & Hennessey 1983.
 2. **Self-centring.** After the lift, the brick hangs within **2 mm and 3°** of its nominal carry pose. This is a starting value, to be revisited, slightly looser than the 1 mm, 3° seat tolerance. Any carry offset adds to placement error.
-3. **Gentle contact.** Peak contact force stays within a set share of the drone's thrust margin (`drone_params.py` in aerial-assembly), and no neighbouring brick in the fixture moves.
+3. **Gentle contact.** Peak contact force stays within half (50 %) of the drone's thrust margin: maximum thrust (4 × 0.2942 N, datasheet, `drone_params.py` in aerial-assembly) minus the weight of drone, gripper and brick. No neighbouring brick in the fixture moves.
 4. **Clean release.** After the brick seats, the gripper withdraws without moving it beyond the drift limit (2 mm). This covers the stuck-on-the-fork concern in aerial-assembly #12.
 
 **Scope for now.** The gripper (the fork) is fixed. The loop redesigns only the brick's pickup features. Co-designing the gripper with the brick, including other passive grippers such as hooks, is future work.
 
-**Still to settle:**
-
-- what share of the thrust margin pickup may use;
-- the payload limit. R10 says about 40 g, but `drone_params.py` in aerial-assembly uses 30 g.
+**Settled in issue #9:** pickup may use 50 % of the thrust margin, and the payload limit is 35 g (R10 said about 40 g; `drone_params.py` in aerial-assembly uses 30 g).
