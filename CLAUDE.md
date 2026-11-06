@@ -32,6 +32,10 @@ Rapid prototyping beats exhaustive sim verification, because the sim-to-real gap
 - Every borrowed file starts with a comment naming its source: `# From LunarSphere/aerial-assembly <path> @ <commit>`, plus a line on what changed.
 - Borrow only what the current issue needs.
 
+## Original designs
+
+Don't copy a brick, joint, gripper or structure design from an existing assembly paper or system (for example the construction papers in `src/brixzle/rules/papers/`). Use papers for mechanics and principles, cite them, and design originally.
+
 ## Hardware safety
 
 This repo has no flight code. Never arm a drone, open a radio link, or run anything with `--arm` from here. Real flights happen in aerial-assembly, and only a human flies.

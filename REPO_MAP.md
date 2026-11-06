@@ -11,11 +11,13 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/engine/sim/` | MuJoCo sim core ported from aerial-assembly: scene, drop trial, Tolerance and classify, Exp 3 error model |
 | `src/brixzle/engine/sim/pickup.py`, `fork.py`, `drone.py` | Pickup trial (R12): pick fixture, bored brick collision, the fixed fork, and the drone's mass, thrust margin and hover spring |
 | `src/brixzle/engine/boxes.py`, `box_search.py` | Target error boxes (R11, R12) and the box-scale search for placement and pickup |
+| `src/brixzle/engine/predictor/` | Analytic placement predictor (R11): quasi-static 2D contact stepping, contact-mode LPs and stability tests (Balkcom & Trinkle 2002, Pang & Trinkle 2000), predicted box and map |
 | `src/brixzle/families/` | One brick family per subpackage: parameters and bounds, 2D section, CAD solid, rules |
 | `src/brixzle/families/interface.py`, `builders.py`, `rules.py`, `contract.py`, `registry.py` | The family contract, shared builders (solid, collision, mass, base), shared R6/R9/R10 rules, contract checks, and family discovery |
 | `src/brixzle/families/wedge/`, `pyramid/` | Dummy families for the contract tests: one Prismatic (2.5D), one Solid3D (full 3D) |
 | `src/brixzle/families/ab/` | The A/B baseline family ported from aerial-assembly: parameters and bounds, profile, lattice seats, rules, and `family.py` (the interface) |
 | `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
+| `src/brixzle/rules/papers/` | The papers (PDFs) behind the rules and the predictor, indexed with citations and takeaways in `README.md` |
 | `src/brixzle/data/` | Drone error files: measured X–Y error (`error-exp3-r4.json`) and hover estimates (`hover-exp3-r2.json`) |
 | `scripts/` | One-off data generators, e.g. `make_hover_estimates.py` (Z, pitch and yaw estimates from aerial-assembly's Exp 3 logs) |
 | `tests/` | pytest suite (`uv run pytest`) |
