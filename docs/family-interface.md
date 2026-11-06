@@ -31,7 +31,7 @@ To mark a design as infeasible, for example a profile that can't be built, a fam
 | `insertion_axis(p, placement)` | The unit `(x, z)` direction of the final seating motion. |
 | `release_lift_mm(p)` | How far above the seat the drone releases the brick, so that nothing overlaps at release. |
 | `base(p, voxels, direction)` | The anchored base that receives course 0, in a frame where x = 0 is the first voxel's left edge. It can be a `Section`, a CadQuery solid (decomposed), or a list of exact convex vertex sets. A `Section` is extruded the same way as the family's bricks (Prismatic, e.g. the A/B gutter shear), or straight through D (Solid3D). |
-| `pickup(p, part)` | `PickupFeatures(bores=(Bore(x_mm, z_mm, d_mm, clearance_mm, chamfer_w_mm=0, chamfer_deg=45), ...))`: straight through-Y bores for the fixed fork, each with an optional lead-in chamfer at its mouth (the near face). `chamfer_w_mm` is the chamfer's radial width; `chamfer_deg` is its face angle from the bore's end face (Whitney 1982, Fig. 3), between 0 and 90, and the tine slides down it only if tan(`chamfer_deg`) > μ. The builders cut the straight bores into the solid; the chamfer is used by the pickup predictor only, not yet cut into the sim's collision. |
+| `pickup(p, part)` | `PickupFeatures(bores=(Bore(x_mm, z_mm, d_mm, clearance_mm), ...))`: straight through-Y bores for the fixed fork. The builders cut them into the solid. |
 | `extra_rules(p, part, bodies)` | Optional. Family-specific margins `{"R<n>.<name>": value}`, where a value ≥ 0 means satisfied. |
 
 ## Two ways to describe the geometry
@@ -85,6 +85,6 @@ Each violation says which check failed, where (for example `defaults, part A`) a
 ## Not covered yet
 
 - **Fork spacing:** checking the bores against the fixed fork's tine spacing comes with the pickup trial (#9).
-- **Pickup openings:** a bore's lead-in is one straight chamfer per bore (#12). It is not yet cut into the sim's bored collision, so the pickup sim can't check a chamfered design; funnels of other shapes need another interface change.
+- **Pickup openings:** pickup is described only as tight straight bores. Error-tolerant openings, with a wide mouth tapering to a seat, need an interface change (a follow-up issue).
 - **Soft contact:** `SimBodies.soft_collision` is not built or simulated yet, so A/B's snap barbs (`barb_h > 0`) are rejected.
 - **Running agent-written families safely** belongs to the design agent (#18).
