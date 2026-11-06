@@ -148,6 +148,55 @@ def test_a_corner_does_not_balance_on_a_corner():
     assert abs(r["end_pose"][0]) > 1.0  # it left the apex
 
 
+def _near_parallel_scene():
+    # Issue #36: a body vertex V on a fixed 40 deg face, and that face's end corner C on the body's
+    # face, which is tilted 2 deg from it, 0.024 mm apart: two distinct features.
+    a = math.radians(40.0)
+    u, n = np.array([math.cos(a), math.sin(a)]), np.array([-math.sin(a), math.cos(a)])
+    env = Polygon([tuple(-10 * u), (0.0, 0.0), (0.0, -20.0), (-10 * u[0], -20.0)])
+    b = a + math.radians(2.0)
+    u2, n2 = np.array([math.cos(b), math.sin(b)]), np.array([-math.sin(b), math.cos(b)])
+    V = -0.024 * u
+    sq = Polygon([tuple(V), tuple(V + 8 * u2), tuple(V + 8 * u2 + 5 * n2), tuple(V + 5 * n2)])
+    body = PL.Body(sq, com=tuple(V + 4 * u2 + 2.5 * n2), mass=1.0, inertia=1.0)
+    return body, env, V
+
+
+def test_unmerged_contacts_keep_distinct_near_parallel_features():
+    body, env, V = _near_parallel_scene()
+    cs = PL.contacts(body, (0.0, 0.0, 0.0), [env], merge=-1.0)
+    assert len(cs) == 2
+    assert any(np.allclose(c.point, (0, 0), atol=1e-9) for c in cs)
+    assert any(np.allclose(c.point, V, atol=1e-9) for c in cs)
+    assert len(PL.contacts(body, (0.0, 0.0, 0.0), [env])) == 1  # the default merge joins them
+
+
+def test_a_vertex_near_an_edge_end_is_a_contact():
+    # A vertex within eps of a fixed edge but inside its last eps, and between eps and sqrt(2) eps
+    # from the end vertex: neither an edge contact nor (at radius eps) a corner pair. Missing it let
+    # the body drop straight through the corner (issue #36).
+    env = Polygon([(-10, 0), (0, 0), (0, -5), (-10, -5)])
+    tip = (-0.008, 0.008)
+    sq = Polygon([tip, (tip[0] + 2, tip[1] + 2), (tip[0], tip[1] + 4), (tip[0] - 2, tip[1] + 2)])
+    body = PL.Body(sq, com=(tip[0], tip[1] + 2), mass=1.0, inertia=1.0)
+    assert len(PL.contacts(body, (0.0, 0.0, 0.0), [env])) >= 1
+    assert PL.drop_distance(body, (0.0, 0.0, 0.0), [env]) is not None
+
+
+
+
+def test_a_coincident_duplicate_contact_is_merged():
+    # A vertex on the shared top face of two overlapping fixed polygons (as course 1's base plus a
+    # seated brick) is found once per polygon: the same contact twice, merged to one.
+    from shapely.geometry import box
+
+    env = [box(-10, -5, 10, 0), box(-5, -3, 5, 0)]
+    sq = Polygon([(1.0, 0.0), (3, 2), (1, 4), (-1, 2)])  # a diamond standing on (1, 0)
+    body = PL.Body(sq, com=(1.0, 2.0), mass=1.0, inertia=1.0)
+    assert len(PL.contacts(body, (0.0, 0.0, 0.0), env, merge=-1.0)) == 2  # found twice
+    assert len(PL.contacts(body, (0.0, 0.0, 0.0), env)) == 1
+
+
 def test_trace_records_contacts_modes_and_margins():
     body, env = _v_scene(45.0)
     out = PR.run_pose(body, env, start=(4.0, 10.0, 0.0), seat=(0.0, 0.0, 0.0), U=25.0, mus=(0.3,))
@@ -178,3 +227,20 @@ def test_ab_aligned_pose_seats_on_both_courses():
         out = PR.predict_pose(AB, V0, {"dx": 3.0, "pitch": 0.0, "clear": 5.0}, course=course)
         assert out["outcome"] == "seated", (course, {m: (r["outcome"], r.get("reason")) for m, r in out["per_mu"].items()})
         json.dumps(out, allow_nan=False)
+
+
+def test_ab_guide_slide_at_low_mu_does_not_block():
+    # Issue #36 / #11: on course 0 at dx +11.55 mm about the aim and theta +0.35 deg (the worst
+    # box at unit x 0.3, theta 1) the predictor blocked at mu 0.2; the sim seats it.
+    from brixzle.engine import box_search as BS
+    from brixzle.engine import boxes as BX
+    from brixzle.engine.sim import trials as T
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
+
+    box = BX.default_boxes()["placement"]["max"]
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    for z in (-1.0, 0.0, 1.0):
+        sample = BS.pose_sample(box, 1.0, np.array([0.3, z, 1.0]), cfg)
+        r = PR.predict_pose(AB, V0, sample, course=0, mus=(0.2,), trace=False)["per_mu"]["0.2"]
+        assert r["outcome"] == "seated", (z, r["outcome"], r["reason"])

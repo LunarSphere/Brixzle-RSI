@@ -160,7 +160,7 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
 
     - A vertex within eps of an edge's interior, and in front of it, touches that edge.
     - A vertex within eps of another vertex is a corner pair. In a concave (reflex) corner it touches
-      both faces. Convex on convex, the normal is undefined (a measure-zero balance): one contact
+      both faces (a pair is two vertices within sqrt(2) eps). Convex on convex, the normal is undefined (a measure-zero balance): one contact
       along the fixed corner's mean normal, with the four face normals as ``alternatives``.
     """
     V = place(body, pose)
@@ -181,7 +181,10 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
     hit1 = touching(V, A, B, nA)        # moving vertex k on env edge j
     hit2 = touching(W, VA, VB, nV)      # env vertex w on moving edge j
     out = []
-    pairs = np.argwhere(np.linalg.norm(V[:, None] - W[None], axis=-1) <= eps)
+    # Corner pairs within sqrt(2) eps: an edge contact excludes the last eps of each edge (``inner``),
+    # where a vertex within eps of the edge lies up to sqrt(2) eps from its end vertex; a smaller pair
+    # radius would miss it entirely (issue #36: the body then dropped straight through the corner).
+    pairs = np.argwhere(np.linalg.norm(V[:, None] - W[None], axis=-1) <= math.sqrt(2) * eps)
     for k, w in pairs:
         hit1[k] = False
         hit2[w] = False
@@ -200,7 +203,12 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
         out.append(Contact(tuple(W[w]), tuple(-nV[j])))
     out = _line_extremes(out, eps)
     kept = []
-    for c in out:  # merge duplicates (the same contact found twice); a corner on two faces keeps both
+    # Merge near-duplicates (within ``merge``, normals within 2.6 deg); a corner on two faces keeps
+    # both. This keeps redundant pairs out of the mode analysis, but it can also merge two distinct
+    # features (a body vertex on a fixed face and that face's end corner on a near-parallel body
+    # face): predict.simulate then steps with ``merge=-1`` (nothing merged) if the merged motion
+    # penetrates (issue #36).
+    for c in out:
         if all(np.hypot(c.point[0] - q.point[0], c.point[1] - q.point[1]) > merge
                or np.dot(c.normal, q.normal) < 0.999 for q in kept):
             kept.append(c)

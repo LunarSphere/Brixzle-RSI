@@ -36,11 +36,12 @@ from brixzle.families.interface import Lattice, Placement, Section
 LABEL = "predicted, quasi-static 2D"
 MUS = (0.2, 0.3, 0.4, 0.5)
 G = np.array([0., -1., 0.])  # unit weight
-# Largest point travel per step (mm). On A/B V0 (seed 0, tol 0.05) the predicted scales, course 0/1:
-#   step 0.25 mm: mean 0.594/0.719, p95 0.375/0.375, max 0.281/0.250
-#   step 0.5 mm:  mean 0.594/0.781, p95 0.375/0.375, max 0.281/0.281
-#   step 1.0 mm:  mean 0.625/0.781, p95 0.375/0.375, max 0.250/0.281
-# (issue #10 PR), so 0.5 mm agrees with 0.25 mm to within two bisection steps.
+# Largest point travel per step (mm). On A/B V0 (seed 0, tol 0.05) the predicted scales, course 0/1,
+# re-recorded after the issue #36 contact fixes:
+#   step 0.25 mm: mean 0.719/0.781, p95 0.375/0.344, max 0.281/0.250
+#   step 0.5 mm:  mean 0.719/0.781, p95 0.375/0.375, max 0.281/0.281
+#   step 1.0 mm:  mean 0.719/0.781, p95 0.375/0.375, max 0.250/0.281
+# so 0.5 mm agrees with 0.25 mm to within one bisection step.
 DS_MM = 0.5
 MAX_CONTACTS = 4  # for mode enumeration (4^k LPs); stability tests use every contact
 
@@ -83,6 +84,17 @@ def _advance(body, pose, acc, h):
     return np.array([origin[0], origin[1], th])
 
 
+def _step(body, pose, env, acc, h, tries=14):
+    """The pose after a step of length h along acc, halving h until it does not penetrate; None if
+    no step does."""
+    for _ in range(tries):
+        new = _advance(body, pose, acc, h)
+        if PL.penetration(body, new, env) <= PL.EPS_MM:
+            return new
+        h /= 2
+    return None
+
+
 def _end_class(pose, seat, U, tol):
     err = np.array([pose[0] - seat[0], 0., pose[1] - seat[1]])
     angle = abs(math.degrees(pose[2] - seat[2]))
@@ -105,7 +117,12 @@ def simulate(body, env, start, seat, mu, U, tol=T.Tolerance(), ds=DS_MM, max_ste
             if d is None or PL.com_world(body, pose)[1] - d < floor - 5:
                 state, reason = "fell", "no support below"
                 break
-            pose[1] -= d
+            new = pose.copy()
+            new[1] -= d
+            if PL.penetration(body, new, env) > PL.EPS_MM:  # a contact detection gap, not physics
+                state, reason = "jammed", "contact missed: the drop penetrates"
+                break
+            pose = new
             continue
         com = PL.com_world(body, pose)
         sys = ContactSystem(cs, com, body.M(), U)               # every contact: stability, margins
@@ -147,13 +164,20 @@ def simulate(body, env, start, seat, mu, U, tol=T.Tolerance(), ds=DS_MM, max_ste
         if speed < 1e-12:
             state, reason = "jammed", "zero acceleration"
             break
-        h = ds / speed
-        for _ in range(14):
-            new = _advance(body, pose, acc, h)
-            if PL.penetration(body, new, env) <= PL.EPS_MM:
-                break
-            h /= 2
-        else:
+        new = _step(body, pose, env, acc, ds / speed)
+        if new is None:
+            # The merged contacts may have hidden a distinct one (issue #36): retry with every contact.
+            full = PL.contacts(body, pose, env, merge=-1.0)
+            if len(full) > len(cs) and not ContactSystem(full, com, body.M(), U).weakly_stable(G, mu):
+                f_ordered, f_dropped = _spread(full, MAX_CONTACTS)
+                fred = ContactSystem(f_ordered, com, body.M(), U, n_free=MAX_CONTACTS if f_dropped else None)
+                fmode, facc = fred.motion(G, mu, prefer=prev_mode)
+                if fmode is not None:
+                    fspeed = float(np.linalg.norm(facc[:2]) + abs(facc[2]) * rmax)
+                    if fspeed > 1e-12:
+                        new = _step(body, pose, env, facc, ds / fspeed)
+                        prev_mode = fmode
+        if new is None:
             state, reason = "jammed", "blocked: every step penetrates"
             break
         pose = new
