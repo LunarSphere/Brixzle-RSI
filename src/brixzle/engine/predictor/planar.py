@@ -94,18 +94,16 @@ def _distances(P, A, B):
 
 def _ray_hits(P, A, B, down):
     """Vertical distance from each point to the segments along -z (down) or +z; inf if none."""
-    out = np.full(len(P), np.inf)
-    for (a, b) in zip(A, B):
-        dx = b[0] - a[0]
-        if abs(dx) < 1e-12:
-            continue
-        s = (P[:, 0] - a[0]) / dx
-        ok = (s >= 0) & (s <= 1)
-        z = a[1] + s * (b[1] - a[1])
-        gap = (P[:, 1] - z) if down else (z - P[:, 1])
-        ok &= gap >= -1e-9
-        out = np.where(ok, np.minimum(out, gap), out)
-    return out
+    dx = B[:, 0] - A[:, 0]
+    keep = np.abs(dx) >= 1e-12  # vertical segments are never hit by a vertical ray
+    A, B, dx = A[keep], B[keep], dx[keep]
+    if not len(A):
+        return np.full(len(P), np.inf)
+    s = (P[:, 0, None] - A[None, :, 0]) / dx[None]
+    z = A[None, :, 1] + s * (B[None, :, 1] - A[None, :, 1])
+    gap = (P[:, 1, None] - z) if down else (z - P[:, 1, None])
+    gap = np.where((s >= 0) & (s <= 1) & (gap >= -1e-9), gap, np.inf)
+    return gap.min(axis=1)
 
 
 def drop_distance(body: Body, pose, env):
@@ -170,13 +168,30 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
     rV, inV, outV = _body_data(body)
 
     def touching(P, A, B, n):
+        """(points x segments) mask: point within eps of the segment's interior, in front of it.
+        Only pairs whose bounding boxes come within eps are tested (the rest are too far apart)."""
+        out = np.zeros((len(P), len(A)), dtype=bool)
+        lo, hi = np.minimum(A, B) - eps, np.maximum(A, B) + eps
+        J = np.flatnonzero((hi[:, 0] >= P[:, 0].min()) & (lo[:, 0] <= P[:, 0].max())
+                           & (hi[:, 1] >= P[:, 1].min()) & (lo[:, 1] <= P[:, 1].max()))
+        if not len(J):
+            return out
+        I = np.flatnonzero((P[:, 0] >= lo[J, 0].min()) & (P[:, 0] <= hi[J, 0].max())
+                           & (P[:, 1] >= lo[J, 1].min()) & (P[:, 1] <= hi[J, 1].max()))
+        if not len(I):
+            return out
+        P, A, B, n = P[I], A[J], B[J], n[J]
         d = B - A
         L2 = (d * d).sum(-1)
-        t = ((P[:, None, :] - A[None]) * d[None]).sum(-1) / L2[None]
+        w = P[:, None, :] - A[None]
+        t = (w * d[None]).sum(-1) / L2[None]
         tiny = eps / np.sqrt(L2)[None]
         inner = (t > tiny) & (t < 1 - tiny)
-        front = ((P[:, None, :] - A[None]) * n[None]).sum(-1) >= -eps
-        return (_distances(P, A, B) <= eps) & front & inner
+        front = (w * n[None]).sum(-1) >= -eps
+        Q = A[None] + np.clip(t, 0, 1)[..., None] * d[None]
+        near = ((P[:, None, :] - Q) ** 2).sum(-1) <= eps * eps
+        out[np.ix_(I, J)] = near & front & inner
+        return out
 
     hit1 = touching(V, A, B, nA)        # moving vertex k on env edge j
     hit2 = touching(W, VA, VB, nV)      # env vertex w on moving edge j
@@ -243,16 +258,30 @@ def _line_extremes(cs, eps):
     return out
 
 
+_FIXED = {}
+
+
+def _fixed(env):
+    """The fixed polygons' union (prepared), its boundary and their vertices (cached per env)."""
+    key = tuple(id(p) for p in env)
+    hit = _FIXED.get(key)
+    if hit is None or any(a is not b for a, b in zip(hit[0], env)):
+        fixed = shapely.union_all(env)
+        shapely.prepare(fixed)
+        W = np.vstack([np.asarray(orient(p).exterior.coords)[:-1] for p in env])
+        hit = _FIXED[key] = (list(env), (fixed, fixed.boundary, W))
+    return hit[1]
+
+
 def penetration(body: Body, pose, env):
     """Deepest vertex of either body inside the other (mm); 0 if nothing overlaps."""
-    poly = Polygon(place(body, pose))
-    fixed = shapely.union_all(env)
-    V = np.asarray(poly.exterior.coords)[:-1]
-    W = np.vstack([np.asarray(orient(p).exterior.coords)[:-1] for p in env])
+    V = place(body, pose)
+    poly = Polygon(V)
+    fixed, boundary, W = _fixed(env)
     depth = 0.
     inside = shapely.contains_xy(fixed, V[:, 0], V[:, 1])
     if inside.any():
-        depth = max(depth, float(shapely.distance(shapely.points(V[inside]), fixed.boundary).max()))
+        depth = max(depth, float(shapely.distance(shapely.points(V[inside]), boundary).max()))
     inside = shapely.contains_xy(poly, W[:, 0], W[:, 1])
     if inside.any():
         depth = max(depth, float(shapely.distance(shapely.points(W[inside]), poly.boundary).max()))

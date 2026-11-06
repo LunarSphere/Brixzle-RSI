@@ -264,3 +264,21 @@ def test_ab_guide_slide_at_low_mu_does_not_block():
         sample = BS.pose_sample(box, 1.0, np.array([0.3, z, 1.0]), cfg)
         r = PR.predict_pose(AB, V0, sample, course=0, mus=(0.2,), trace=False)["per_mu"]["0.2"]
         assert r["outcome"] == "seated", (z, r["outcome"], r["reason"])
+
+
+def test_pooled_box_gives_the_serial_scales():
+    # Issue #40: a PosePool runs a scale's poses in parallel; bisection sees the same pass/fail at
+    # every scale, so the scales match the serial search (the pooled run tries more poses per scale).
+    from brixzle.engine import boxes as BX
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
+
+    box = BX.default_boxes()["placement"]["max"]
+    kw = dict(courses=(0,), n_interior=0, tol=0.25, trace=False)
+    serial = PR.predicted_box(AB, V0, box, **kw)
+    with PR.PosePool(workers=2) as pool:
+        pooled = PR.predicted_box(AB, V0, box, pool=pool, **kw)
+        again = PR.predicted_box(AB, V0, box, pool=pool, **kw)  # the pool is reusable
+    assert pooled["scale"] == serial["scale"] == again["scale"]
+    assert [e["ok"] for e in pooled["courses"]["0"]["evaluations"]] == \
+           [e["ok"] for e in serial["courses"]["0"]["evaluations"]]
