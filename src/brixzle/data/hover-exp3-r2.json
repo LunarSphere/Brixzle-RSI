@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "kind": "hover-deviation",
+  "units": {
+    "z": "mm",
+    "pitch": "deg",
+    "yaw": "deg"
+  },
+  "label": "estimated from hover, not measured at release or pickup; z is the drone's own Lighthouse estimate against the commanded height (likely an underestimate)",
+  "source": {
+    "repo": "LunarSphere/aerial-assembly",
+    "commit": "a649663215585c05a9058e575fc890304be11809",
+    "data": "figures/exp3-approach-accuracy/data",
+    "session": "exp3-r2",
+    "trials": [
+      "trial-01",
+      "trial-02",
+      "trial-03",
+      "trial-05",
+      "trial-07"
+    ],
+    "generator": "scripts/make_hover_estimates.py",
+    "date": "2026-11-05",
+    "window": "accuracy.approaches settled window: from 0.5 s after each segment, for dwell_s",
+    "statistic_per_approach": "RMS deviation from the command over the window",
+    "commanded_yaw_deg": 0,
+    "commanded_pitch_deg": 0,
+    "z_reference": "target_m[2]"
+  },
+  "n": 25,
+  "approaches": [
+    {
+      "trial": "trial-01",
+      "tag_id": 0,
+      "samples": 150,
+      "z_rms_mm": 5.951357884680895,
+      "pitch_rms_deg": 0.21632243762142103,
+      "yaw_rms_deg": 0.6327566338887989
+    },
+    {
+      "trial": "trial-01",
+      "tag_id": 2,
+      "samples": 150,
+      "z_rms_mm": 3.046687448091882,
+      "pitch_rms_deg": 0.2585668374331141,
+      "yaw_rms_deg": 1.6739032682047972
+    },
+    {
+      "trial": "trial-01",
+      "tag_id": 3,
+      "samples": 150,
+      "z_rms_mm": 1.8871048822907954,
+      "pitch_rms_deg": 0.2592086402377614,
+      "yaw_rms_deg": 0.5149859438141668
+    },
+    {
+      "trial": "trial-01",
+      "tag_id": 4,
+      "samples": 150,
+      "z_rms_mm": 2.0149940511531907,
+      "pitch_rms_deg": 0.20074267115537175,
+      "yaw_rms_deg": 0.6613355310779853
+    },
+    {
+      "trial": "trial-01",
+      "tag_id": 1,
+      "samples": 150,
+      "z_rms_mm": 3.2606848390932814,
+      "pitch_rms_deg": 0.21534226668203943,
+      "yaw_rms_deg": 0.5098793579310382
+    },
+    {
+      "trial": "trial-02",
+      "tag_id": 0,
+      "samples": 150,
+      "z_rms_mm": 5.364608001367244,
+      "pitch_rms_deg": 0.18041331582654926,
+      "yaw_rms_deg": 0.5306412908996769
+    },
+    {
+      "trial": "trial-02",
+      "tag_id": 2,
+      "samples": 149,
+      "z_rms_mm": 1.8894760207077363,
+      "pitch_rms_deg": 0.209025988325202,
+      "yaw_rms_deg": 0.9467180667001472
+    },
+    {
+      "trial": "trial-02",
+      "tag_id": 3,
+      "samples": 150,
+      "z_rms_mm": 3.790287982260144,
+      "pitch_rms_deg": 0.3263835481196044,
+      "yaw_rms_deg": 0.579691454023092
+    },
+    {
+      "trial": "trial-02",
+      "tag_id": 4,
+      "samples": 150,
+      "z_rms_mm": 2.0780043210072145,
+      "pitch_rms_deg": 0.18667417691104457,
+      "yaw_rms_deg": 0.46975427159077027
+    },
+    {
+      "trial": "trial-02",
+      "tag_id": 1,
+      "samples": 150,
+      "z_rms_mm": 3.8799537806136066,
+      "pitch_rms_deg": 0.16588347299492792,
+      "yaw_rms_deg": 1.0462849070742153
+    },
+    {
+      "trial": "trial-03",
+      "tag_id": 0,
+      "samples": 150,
+      "z_rms_mm": 6.356172052146268,
+      "pitch_rms_deg": 0.317608775178655,
+      "yaw_rms_deg": 1.0254786213109714
+    },
+    {
+      "trial": "trial-03",
+      "tag_id": 2,
+      "samples": 149,
+      "z_rms_mm": 2.0024570052162507,
+      "pitch_rms_deg": 0.25304359293029755,
+      "yaw_rms_deg": 0.5295235689662829
+    },
+    {
+      "trial": "trial-03",
+      "tag_id": 3,
+      "samples": 149,
+      "z_rms_mm": 2.1442955639031513,
+      "pitch_rms_deg": 0.30692838594926913,
+      "yaw_rms_deg": 0.4055646751956474
+    },
+    {
+      "trial": "trial-03",
+      "tag_id": 4,
+      "samples": 150,
+      "z_rms_mm": 2.0649146350071272,
+      "pitch_rms_deg": 0.2862371164758872,
+      "yaw_rms_deg": 0.7760463477911849
+    },
+    {
+      "trial": "trial-03",
+      "tag_id": 1,
+      "samples": 150,
+      "z_rms_mm": 2.957143110288327,
+      "pitch_rms_deg": 0.25651437551507433,
+      "yaw_rms_deg": 1.0277094144119525
+    },
+    {
+      "trial": "trial-05",
+      "tag_id": 0,
+      "samples": 150,
+      "z_rms_mm": 7.246708353599757,
+      "pitch_rms_deg": 0.17421000303499667,
+      "yaw_rms_deg": 0.8760216234542197
+    },
+    {
+      "trial": "trial-05",
+      "tag_id": 2,
+      "samples": 150,
+      "z_rms_mm": 2.4551922168009983,
+      "pitch_rms_deg": 0.27483589495079797,
+      "yaw_rms_deg": 1.128392791383443
+    },
+    {
+      "trial": "trial-05",
+      "tag_id": 3,
+      "samples": 149,
+      "z_rms_mm": 1.6385753783224337,
+      "pitch_rms_deg": 0.18413214338398728,
+      "yaw_rms_deg": 0.9452267131140936
+    },
+    {
+      "trial": "trial-05",
+      "tag_id": 4,
+      "samples": 150,
+      "z_rms_mm": 2.1468131773461225,
+      "pitch_rms_deg": 0.2711065199753548,
+      "yaw_rms_deg": 0.7703004505252813
+    },
+    {
+      "trial": "trial-05",
+      "tag_id": 1,
+      "samples": 150,
+      "z_rms_mm": 1.9892475780627081,
+      "pitch_rms_deg": 0.20429237712371093,
+      "yaw_rms_deg": 1.2663386051566903
+    },
+    {
+      "trial": "trial-07",
+      "tag_id": 0,
+      "samples": 150,
+      "z_rms_mm": 4.6616812194891075,
+      "pitch_rms_deg": 0.13580399107811456,
+      "yaw_rms_deg": 1.1509971747051078
+    },
+    {
+      "trial": "trial-07",
+      "tag_id": 2,
+      "samples": 149,
+      "z_rms_mm": 1.6427822409500532,
+      "pitch_rms_deg": 0.23959490585203885,
+      "yaw_rms_deg": 0.9341882406120148
+    },
+    {
+      "trial": "trial-07",
+      "tag_id": 3,
+      "samples": 148,
+      "z_rms_mm": 2.727265648577446,
+      "pitch_rms_deg": 0.350067856698857,
+      "yaw_rms_deg": 1.37834134253857
+    },
+    {
+      "trial": "trial-07",
+      "tag_id": 4,
+      "samples": 150,
+      "z_rms_mm": 2.5333634176502784,
+      "pitch_rms_deg": 0.22742763629092672,
+      "yaw_rms_deg": 0.6794979700919627
+    },
+    {
+      "trial": "trial-07",
+      "tag_id": 1,
+      "samples": 150,
+      "z_rms_mm": 1.942837225159443,
+      "pitch_rms_deg": 0.2601073861311823,
+      "yaw_rms_deg": 1.1258394074387328
+    }
+  ],
+  "mean_z_mm": 3.1069043213514185,
+  "p95_z_mm": 6.275209218653192,
+  "max_z_mm": 7.246708353599757,
+  "mean_pitch_deg": 0.23841897263504744,
+  "p95_pitch_deg": 0.3246285935314145,
+  "max_pitch_deg": 0.350067856698857,
+  "mean_yaw_deg": 0.8634167068760337,
+  "p95_yaw_deg": 1.3559407950621938,
+  "max_yaw_deg": 1.6739032682047972
+}

@@ -31,7 +31,28 @@ Both R11 and R12 use the same score. Find the largest box of drone error around 
 - **Placement (R11):** the box is in X, Z and θ, the brick's profile plane.
 - **Pickup (R12):** the box is in X (across the tines), Z (vertical) and ψ (yaw).
 
-The measured error so far covers X–Y position only (Exp 3 in aerial-assembly). The Z, θ and ψ sides of the boxes are estimates until they are measured.
+The measured error so far covers X–Y position only (Exp 3 in aerial-assembly). The Z, θ and ψ sides of the boxes are estimates until they are measured. The boxes are listed in [Target boxes](#target-boxes).
+
+## Target boxes
+
+Half-widths around the aim point, from `brixzle.engine.boxes.default_boxes()`.
+
+| Task | Statistic | X (mm) | Z (mm) | θ or ψ (deg) |
+|---|---|---|---|---|
+| Placement | mean | 14.8 | 3.1 | 0.2 |
+| Placement | p95 | 27.8 | 6.3 | 0.3 |
+| Placement | worst | 38.5 | 7.2 | 0.4 |
+| Pickup | mean | 14.8 | 3.1 | 0.9 |
+| Pickup | p95 | 27.8 | 6.3 | 1.4 |
+| Pickup | worst | 38.5 | 7.2 | 1.7 |
+
+The angle column is θ (pitch) for placement and ψ (yaw) for pickup.
+
+- **X is measured.** It is the Exp 3 positioning error (session exp3-r4, 24 approaches, `src/brixzle/data/error-exp3-r4.json`), taken as a radius that may lie wholly along X.
+- **Z, θ and ψ are estimates.** They are the RMS deviation from the command during the settled hovers of Exp 3 session exp3-r2 (25 approaches, `src/brixzle/data/hover-exp3-r2.json`, made by `scripts/make_hover_estimates.py`).
+  - They come from a hover with no payload, not from a release or a pickup, so they are probably too small.
+  - Z is the drone's own Lighthouse height against the commanded height, so it misses any error in the Lighthouse estimate itself.
+  - Real measurements are aerial-assembly#27.
 
 ## R12 in detail
 
@@ -41,7 +62,7 @@ Today's pickup (aerial-assembly `brixzle`) works like this:
 - each tine has 0.3 mm of radial clearance;
 - the only error correction is a tapered guide in front of each bore, with a ±5 mm mouth.
 
-Measured drone error is far larger than ±5 mm (Exp 3: 1.6 cm mean, 2.7 cm worst approach), so R12 asks the brick to do the correcting.
+Measured drone error is far larger than ±5 mm (Exp 3, session exp3-r4: 1.5 cm mean, 3.9 cm worst approach), so R12 asks the brick to do the correcting.
 
 Within the pickup box, a pickup succeeds when all four of these hold:
 

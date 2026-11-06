@@ -14,7 +14,8 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/families/wedge/`, `pyramid/` | Dummy families for the contract tests: one Prismatic (2.5D), one Solid3D (full 3D) |
 | `src/brixzle/families/ab/` | The A/B baseline family ported from aerial-assembly: parameters and bounds, profile, lattice seats, rules, and `family.py` (the interface) |
 | `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
-| `src/brixzle/data/` | Measured drone error files |
+| `src/brixzle/data/` | Drone error files: measured X–Y error (`error-exp3-r4.json`) and hover estimates (`hover-exp3-r2.json`) |
+| `scripts/` | One-off data generators, e.g. `make_hover_estimates.py` (Z, pitch and yaw estimates from aerial-assembly's Exp 3 logs) |
 | `tests/` | pytest suite (`uv run pytest`) |
 | `tests/fixtures/` | Reference results recorded from aerial-assembly, and the scripts that recorded them |
 | `docs/` | Requirements (R1–R13) as prose (`requirements.md`) and data (`requirements.yaml`), the family interface (`family-interface.md`), and architecture |
