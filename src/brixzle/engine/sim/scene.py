@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/scene.py @ a649663
-# Changed: imports point at brixzle.engine.sim and brixzle.families.ab; the simulated-drone option (drone.py) dropped.
+# Changed: build_scene takes a family, its params and {part: SimBodies} instead of BrickParams and cad bundles, and builds bases through the family; the simulated-drone option (drone.py), soft barb contact and the collision-key option dropped.
 """MJCF scene: anchored bases, a floor, and a pool of parked brick bodies.
 
 Compile once with every brick the trial may need, park unused bricks far away under gravity compensation, and
@@ -11,8 +11,8 @@ import mujoco
 import numpy as np
 
 from brixzle.engine.sim.config import Physics
-from brixzle.families.ab.cad import as_pair, build_base
-from brixzle.families.ab.params import BrickParams
+from brixzle.families import builders as B
+from brixzle.families.interface import Family
 
 MM = 1e-3
 PARK_Z = 2.0
@@ -33,22 +33,19 @@ def parked_position(j):
     return np.array([1.0 + 0.2*j, 1.0, PARK_Z])
 
 
-def build_scene(p: BrickParams, brick, bases, n_bricks, physics: Physics, visual=True, body_parts=None,
-                static=None, collision='collision', sleep=False):
+def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, visual=True, body_parts=None,
+                static=None, sleep=False):
     """Return (model, xml, info). ``bases`` are [(v0, v1[, direction])] voxel ranges.
 
-    ``brick`` is one bundle or {part: bundle}; ``body_parts`` names the part of
-    each pooled body (default: all 'A'). ``static`` adds anchored convex vertex
-    sets (mm, world frame), e.g. the per-cell base of a 3D ring. ``collision`` picks the brick
-    bundle's collision key ('collision_bored' keeps the tine bores open).
+    ``bodies`` is {part: SimBodies} (``builders.sim_bodies``); ``body_parts`` names the part of
+    each pooled body (default: the family's first part). ``static`` adds anchored convex vertex
+    sets (mm, world frame), e.g. the per-cell base of a 3D ring.
     ``sleep`` lets resting islands sleep (MuJoCo wakes them on contact, applied
     force or velocity changes).
     """
-    body_parts = list(body_parts or ['A']*n_bricks)
-    if 'collision' in brick:
-        bundles = {brick.get('part', 'A'): brick} if set(body_parts) <= {brick.get('part', 'A')} else as_pair(brick)
-    else:
-        bundles = brick
+    body_parts = list(body_parts or [family.parts[0]]*n_bricks)
+    bundles = bodies
+    U = family.lattice(p).U_mm
     root = ET.Element('mujoco', model='brixzle')
     ET.SubElement(root, 'compiler', angle='radian', inertiafromgeom='false')
     ET.SubElement(root, 'size', memory='256M')
@@ -70,12 +67,12 @@ def build_scene(p: BrickParams, brick, bases, n_bricks, physics: Physics, visual
     floor_z = 0.
     for i, spec in enumerate(bases):
         v0, v1 = spec[:2]
-        base = build_base(p, v1 - v0, direction=spec[2] if len(spec) > 2 else 1)
-        base_bundles.append(base)
-        floor_z = min(floor_z, base['outer'].bounds[1])
-        for j, piece in enumerate(base['collision']):
+        pieces, base_z = B.base(family, p, v1 - v0, direction=spec[2] if len(spec) > 2 else 1)
+        base_bundles.append(pieces)
+        floor_z = min(floor_z, base_z)
+        for j, piece in enumerate(pieces):
             name = f'base{i}_{j}'
-            _mesh(asset, name, piece + np.array([v0*p.U, 0, 0]))
+            _mesh(asset, name, piece + np.array([v0*U, 0, 0]))
             ET.SubElement(world, 'geom', name=name, type='mesh', mesh=name, rgba='.55 .55 .58 1',
                           contype='1', conaffinity='1')
     for j, piece in enumerate(static or []):
@@ -87,32 +84,25 @@ def build_scene(p: BrickParams, brick, bases, n_bricks, physics: Physics, visual
     ET.SubElement(world, 'geom', name='floor', type='plane', size='3 3 .01',
                   pos=f'0 0 {floor_z*MM - 0.0005}', rgba='.2 .22 .25 1', contype='1', conaffinity='1')
     for name, bundle in bundles.items():
-        for j, piece in enumerate(bundle[collision]):
+        for j, piece in enumerate(bundle.collision):
             _mesh(asset, f'{name}_col_{j}', piece)
-        for j, piece in enumerate(bundle.get('soft_collision', [])):
-            _mesh(asset, f'{name}_soft_{j}', piece)
-        if visual and 'mesh' in bundle:
-            _mesh(asset, f'{name}_vis', bundle['mesh'].vertices, bundle['mesh'].faces)
+        if visual and bundle.mesh is not None:
+            _mesh(asset, f'{name}_vis', bundle.mesh.vertices, bundle.mesh.faces)
     for j in range(n_bricks):
         name = body_parts[j]
         bundle = bundles[name]
-        mass = bundle['mass_g']*1e-3
-        com = np.asarray(bundle['com'])*MM
-        I = np.asarray(bundle['inertia'])*1e-9 if 'inertia' in bundle else np.diag([1e-6]*3)
+        mass = bundle.mass_g*1e-3
+        com = np.asarray(bundle.com_mm)*MM
+        I = np.asarray(bundle.inertia_g_mm2)*1e-9
         body = ET.SubElement(world, 'body', name=f'brick{j}', pos=_numbers(parked_position(j)),
                              gravcomp='1')
         ET.SubElement(body, 'freejoint', name=f'brick{j}_free')
         ET.SubElement(body, 'inertial', mass=str(mass), pos=_numbers(com),
                       fullinertia=_numbers([I[0, 0], I[1, 1], I[2, 2], I[0, 1], I[0, 2], I[1, 2]]))
-        for k in range(len(bundle[collision])):
+        for k in range(len(bundle.collision)):
             ET.SubElement(body, 'geom', name=f'brick{j}_c{k}', type='mesh', mesh=f'{name}_col_{k}',
                           group='3', rgba='.3 .6 .9 .4', contype='1', conaffinity='1')
-        # Snap barbs: soft contact stands in for the flexing a printed barb needs to pass the slot wall.
-        for k in range(len(bundle.get('soft_collision', []))):
-            ET.SubElement(body, 'geom', name=f'brick{j}_s{k}', type='mesh', mesh=f'{name}_soft_{k}',
-                          group='3', rgba='.9 .3 .3 .4', contype='1', conaffinity='1',
-                          solref=f'{p.barb_timeconst} 1', solimp='0.2 0.95 0.001 0.5 2')
-        if visual and 'mesh' in bundle:
+        if visual and bundle.mesh is not None:
             palette = {'B': '.95 .55 .15 1', 'L3': '.95 .55 .15 1', 'I3': '.35 .75 .4 1', 'K2': '.85 .3 .35 1'}
             rgba = palette.get(name, '.25 .55 .85 1') if len(bundles) > 1 else \
                 ('.95 .55 .15 1' if j % 2 else '.25 .55 .85 1')
@@ -126,7 +116,7 @@ def build_scene(p: BrickParams, brick, bases, n_bricks, physics: Physics, visual
         'qvel': [model.jnt_dofadr[model.joint(f'brick{j}_free').id] for j in range(n_bricks)],
         'floor': model.geom('floor').id,
         'base_geoms': {model.geom(f'base{i}_{j}').id for i, b in enumerate(base_bundles)
-                       for j in range(len(b['collision']))},
+                       for j in range(len(b))},
         'static_geoms': {model.geom(f'static_{j}').id for j in range(len(static or []))},
     }
     return model, xml, info

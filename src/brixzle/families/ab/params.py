@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/params.py @ a649663
-# Changed: optimizer BOUNDS, CONCEPT_BOUNDS and with_vector dropped (no tuner yet).
+# Changed: BrickParams subclasses the family interface's FamilyParams (finite check); CONCEPT_BOUNDS and with_vector dropped (no tuner yet).
 """Brick design parameters, the V0 educated guess, and optimizer bounds.
 
 Lengths are millimetres and angles degrees; conversion to SI happens at the
@@ -12,12 +12,14 @@ direction (``profile.brick_parts``).
 from dataclasses import asdict, dataclass, fields
 import math
 
+from brixzle.families.interface import FamilyParams
+
 
 PLA_DENSITY = 1.24e-3  # g/mm^3
 
 
 @dataclass(frozen=True)
-class BrickParams:
+class BrickParams(FamilyParams):
     U: float = 25.0             # voxel pitch in X (brick length is 2U)
     D: float = 25.0             # depth in Y
     H0: float = 15.0            # course pitch (vertical thickness of the corrugated body)
@@ -80,3 +82,19 @@ class BrickParams:
 
 
 V0 = BrickParams()
+
+# Continuous NSGA-III search space (name -> (low, high)).
+BOUNDS = {
+    'U': (18.0, 32.0),
+    'H0': (9.0, 20.0),
+    'theta': (30.0, 65.0),
+    'alpha': (10.0, 45.0),
+    'gutter': (28.0, 45.0),
+    'gutter_flat': (0.0, 10.0),
+    'tooth_w': (2.5, 8.0),
+    'tooth_L': (3.0, 9.0),
+    'tip_chamfer': (0.3, 2.5),
+    'tooth_taper': (0.0, 3.0),
+    'clearance': (0.1, 0.6),
+    'mouth_chamfer': (0.3, 3.0),
+}

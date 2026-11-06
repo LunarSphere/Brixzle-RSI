@@ -1,4 +1,4 @@
-"""Load and validate the base requirements (R1–R12) from docs/requirements.yaml."""
+"""Load and validate the base requirements (R1–R13) from docs/requirements.yaml."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 DEFAULT_PATH = Path(__file__).resolve().parents[2] / "docs" / "requirements.yaml"
-REQUIRED_IDS = tuple(f"R{n}" for n in range(1, 13))
+REQUIRED_IDS = tuple(f"R{n}" for n in range(1, 14))
 CHECK_KINDS = frozenset({"rule", "sim", "design", "predictor"})
 FIELDS = ("id", "name", "text", "checks")
 
@@ -48,7 +48,7 @@ def load_requirements(path: Path | str = DEFAULT_PATH) -> list[Requirement]:
             raise RequirementsError(f"duplicate id: {r.id}")
         seen.add(r.id)
         if r.id not in REQUIRED_IDS:
-            raise RequirementsError(f"unknown id: {r.id} (expected R1–R12)")
+            raise RequirementsError(f"unknown id: {r.id} (expected R1–R13)")
 
     missing = [rid for rid in REQUIRED_IDS if rid not in seen]
     if missing:

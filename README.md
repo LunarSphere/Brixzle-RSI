@@ -19,7 +19,7 @@ The loop has two nested parts.
 
 A design's **score** is the largest scaling of a target error box (in X, Z and θ) that the brick handles with every drop seated. A score of 1 or more passes. Each design is run against three target boxes, sized to the drone's mean, 95th-percentile and worst measured error.
 
-See [`docs/architecture.md`](docs/architecture.md) for the components and [`docs/requirements.md`](docs/requirements.md) for R1–R12.
+See [`docs/architecture.md`](docs/architecture.md) for the components and [`docs/requirements.md`](docs/requirements.md) for R1–R13.
 
 ## Relationship to aerial-assembly
 
@@ -39,7 +39,7 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 
 | Path | What it holds |
 |---|---|
-| `src/brixzle/intake/` | Local web page: concept sketch and extra requirements, with a conflict check against R1–R12 |
+| `src/brixzle/intake/` | Local web page: concept sketch and extra requirements, with a conflict check against R1–R13 |
 | `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
 | `src/brixzle/engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
 | `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, 2D section, CAD solid, rules |

@@ -22,11 +22,13 @@ import pytest
 
 from brixzle.engine.sim import approach_error as AE
 from brixzle.engine.sim import trials as T
+from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import V0, BrickParams
 
 REFERENCE = json.loads(
     (Path(__file__).parent / "fixtures" / "ab_drop_reference.json").read_text(encoding="utf-8")
 )
+COURSE = {"A": 0, "B": 1}  # the reference's part B drops onto a seated A, i.e. course 1
 SAMPLE_KEYS = ("dx", "dy", "aim", "yaw", "roll", "pitch", "clear", "vel")
 CASES = REFERENCE["cases"]
 REFERENCE_PLATFORM = REFERENCE["source"]["platform"]
@@ -48,12 +50,12 @@ def _config(error):
 
 
 @pytest.fixture(scope="module")
-def drops(ab_bricks):
+def drops():
     """{case name: rows} for every reference case, run once."""
     out = {}
     for case in CASES:
-        rows, _ = T.drop_trials(V0, ab_bricks, _config(case["error"]), samples=case["samples"],
-                                seed=case["seed"], part=case["part"])
+        rows, _ = T.drop_trials(AB, V0, _config(case["error"]), samples=case["samples"],
+                                seed=case["seed"], course=COURSE[case["part"]])
         out[case["name"]] = rows
     return out
 
@@ -74,24 +76,24 @@ def test_config_matches_reference(case):
 
 
 def _check_mass_properties(b, ref, rel, abs_):
-    assert b["mass_g"] == pytest.approx(ref["mass_g"], rel=rel)
-    assert b["volume"] == pytest.approx(ref["volume_mm3"], rel=rel)
-    assert list(b["com"]) == pytest.approx(ref["com_mm"], rel=rel, abs=abs_)
-    for row, ref_row in zip(b["inertia"], ref["inertia_g_mm2"]):
+    assert b.mass_g == pytest.approx(ref["mass_g"], rel=rel)
+    assert b.volume_mm3 == pytest.approx(ref["volume_mm3"], rel=rel)
+    assert list(b.com_mm) == pytest.approx(ref["com_mm"], rel=rel, abs=abs_)
+    for row, ref_row in zip(b.inertia_g_mm2, ref["inertia_g_mm2"]):
         assert list(row) == pytest.approx(ref_row, rel=rel, abs=abs_)
 
 
 @pytest.mark.parametrize("part", ["A", "B"])
-def test_mass_properties_match_reference(ab_bricks, part):
+def test_mass_properties_match_reference(ab_bodies, part):
     # CadQuery's tessellation differs slightly by platform (part B: 13.5321 g on Linux x86_64,
     # 13.5273 g on macOS arm64), so 1e-3 relative here and bit-exact below.
-    _check_mass_properties(ab_bricks[part], REFERENCE["geometry"][part], rel=1e-3, abs_=1e-2)
+    _check_mass_properties(ab_bodies[part], REFERENCE["geometry"][part], rel=1e-3, abs_=1e-2)
 
 
 @exact_platform_only
 @pytest.mark.parametrize("part", ["A", "B"])
-def test_mass_properties_match_reference_exactly(ab_bricks, part):
-    _check_mass_properties(ab_bricks[part], REFERENCE["geometry"][part], rel=1e-9, abs_=1e-9)
+def test_mass_properties_match_reference_exactly(ab_bodies, part):
+    _check_mass_properties(ab_bodies[part], REFERENCE["geometry"][part], rel=1e-9, abs_=1e-9)
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
@@ -106,10 +108,10 @@ def test_drop_outcomes_reproduce_aerial_assembly(drops, case):
 
 @exact_platform_only
 @pytest.mark.parametrize("part", ["A", "B"])
-def test_collision_pieces_match_reference_exactly(ab_bricks, part):
-    ref, b = REFERENCE["geometry"][part], ab_bricks[part]
-    assert len(b["collision"]) == ref["n_collision"]
-    assert len(b["collision_bored"]) == ref["n_collision_bored"]
+def test_collision_pieces_match_reference_exactly(ab_bodies, part):
+    # n_collision_bored (pieces with the tine bores open) is recorded too, but nothing builds
+    # bored collision until the pickup trial (#9).
+    assert len(ab_bodies[part].collision) == REFERENCE["geometry"][part]["n_collision"]
 
 
 @exact_platform_only

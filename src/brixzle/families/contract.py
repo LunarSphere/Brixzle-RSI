@@ -184,7 +184,7 @@ def _check_sim_bodies(family, p, part):
         _require(B.is_convex_vertex_set(piece),
                  f"collision piece {i} has vertices inside its hull; give convex vertex sets")
         _require(ConvexHull(piece).volume > 0, f"collision piece {i} has no volume")
-    cover, outside = B.coverage(B.solid_mesh(family, p, part, bored=False), bodies.collision)
+    cover, outside = B.coverage(B.shell_mesh(family, p, part), bodies.collision)
     _require(cover >= MIN_COVERAGE, f"collision covers {cover:.1%} of the solid (need {MIN_COVERAGE:.0%})")
     _require(outside <= MAX_OUTSIDE,
              f"{outside:.1%} of the collision volume lies outside the solid (max {MAX_OUTSIDE:.0%})")
@@ -266,12 +266,12 @@ def _check_pickup(family, p, part):
     bores = family.pickup(p, part).bores
     _require(len(bores) >= 1, "pickup needs at least one bore for the fixed fork")
     s = B.section(family, p, part)
-    wall = R.RuleSettings().min_feature
+    # Wall thickness around a bore is a margin (R13.bore_wall); here only broken geometry fails.
     for i, b in enumerate(bores):
         _require(B.math_finite(b.x_mm, b.z_mm, b.d_mm, b.clearance_mm) and b.d_mm > 0 and b.clearance_mm >= 0,
                  f"bore {i} must have finite position, d > 0 and clearance >= 0")
         circle = Point(b.x_mm, b.z_mm).buffer(b.radius_mm)
-        _require(s.outer.buffer(-wall).contains(circle),
-                 f"bore {i} at ({b.x_mm:.2f}, {b.z_mm:.2f}) is not inside the section with a {wall} mm wall")
+        _require(s.outer.contains(circle),
+                 f"bore {i} at ({b.x_mm:.2f}, {b.z_mm:.2f}) breaks out of the section outline")
         for j, h in enumerate(s.holes):
-            _require(circle.distance(h) >= wall, f"bore {i} is within {wall} mm of hole {j}")
+            _require(circle.disjoint(h), f"bore {i} breaks into hole {j}")

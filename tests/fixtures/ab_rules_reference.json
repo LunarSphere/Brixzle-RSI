@@ -1,0 +1,119 @@
+{
+  "label": "analytic rule margins (aerial-assembly rules.py) and CadQuery mass",
+  "source": {
+    "repo": "LunarSphere/aerial-assembly",
+    "commit": "a649663215585c05a9058e575fc890304be11809",
+    "checked_out_head": "fc4f72486e3807e531daa24bd46f8b35e0f795e4",
+    "paths_identical_to_commit": [
+      "brixzle/src"
+    ],
+    "generator": "tests/fixtures/make_ab_rules_reference.py",
+    "date": "2026-11-05",
+    "platform": "macOS-26.0.1-arm64-arm-64bit",
+    "python": "3.12.15"
+  },
+  "params": {
+    "U": 25.0,
+    "D": 25.0,
+    "H0": 15.0,
+    "theta": 50.0,
+    "alpha": 38.0,
+    "gutter": 30.0,
+    "gutter_flat": 3.0,
+    "tooth_w": 5.0,
+    "tooth_L": 6.5,
+    "tip_chamfer": 1.5,
+    "tooth_taper": 2.0,
+    "clearance": 0.3,
+    "slot_extra": 1.0,
+    "mouth_chamfer": 1.5,
+    "end_gap": 0.3,
+    "wall": 1.2,
+    "lighten": true,
+    "fork_d": 2.0,
+    "fork_clearance": 0.3,
+    "infill": 1.0,
+    "lip_L": 0.0,
+    "lip_w": 4.0,
+    "barb_h": 0.0,
+    "barb_len": 2.0,
+    "barb_timeconst": 0.02,
+    "end_scarf": 0.0,
+    "end_step": 0.0
+  },
+  "rule_settings": "RuleSettings() defaults",
+  "parts": {
+    "A": {
+      "margins": {
+        "long_ramp_slides": 20.19859051364819,
+        "steep_face_slides": 22.19859051364819,
+        "gutter_slides": 0.19859051364818825,
+        "capture_x": 0.0,
+        "capture_y": 3.5,
+        "nest_cone": 2.0,
+        "clearance_absorbs_tilt": 1.9205649887602525,
+        "seated_play": 0.7261040426482355,
+        "hook_depth": 1.2017995896167788,
+        "single_piece": 0.0,
+        "mass_min": 13.270104146182225,
+        "mass_max": 10.729895853817775,
+        "tooth_printable": 0.30000000000000004,
+        "tooth_strength": 1497.2002055665191,
+        "lip_web": 1.0,
+        "lip_printable": 1.0,
+        "barb_fits": 1.0,
+        "fork_fits": 1.0,
+        "hangs_stable": 7.6217613417560734,
+        "tines_straddle_com": 3.7485833808009215
+      },
+      "mass_g": 14.270104146182225,
+      "fragments": 1,
+      "channels": [
+        [
+          -22.25,
+          22.678429678342226
+        ],
+        [
+          2.5,
+          22.928429678342226
+        ]
+      ]
+    },
+    "B": {
+      "margins": {
+        "long_ramp_slides": 20.19859051364819,
+        "steep_face_slides": 22.19859051364819,
+        "gutter_slides": 0.19859051364818825,
+        "capture_x": 0.0,
+        "capture_y": 3.5,
+        "nest_cone": 2.0,
+        "clearance_absorbs_tilt": 1.9205649887602525,
+        "seated_play": 0.7261040426482355,
+        "hook_depth": 1.2017995896167788,
+        "single_piece": 0.0,
+        "mass_min": 12.527348333692771,
+        "mass_max": 11.472651666307229,
+        "tooth_printable": 0.30000000000000004,
+        "tooth_strength": 1497.3459342569295,
+        "lip_web": 1.0,
+        "lip_printable": 1.0,
+        "barb_fits": 1.0,
+        "fork_fits": 1.0,
+        "hangs_stable": 7.431887499951392,
+        "tines_straddle_com": 3.438999785702186
+      },
+      "mass_g": 13.527348333692771,
+      "fragments": 1,
+      "channels": [
+        [
+          -22.25,
+          22.678429678342226
+        ],
+        [
+          2.5,
+          22.928429678342226
+        ]
+      ]
+    }
+  }
+}

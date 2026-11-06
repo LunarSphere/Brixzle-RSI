@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
-# Changed: imports point at brixzle.engine.sim and brixzle.families.ab; sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
+# Changed: trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -15,9 +15,8 @@ from scipy.spatial.transform import Rotation
 
 from brixzle.engine.sim.config import Physics
 from brixzle.engine.sim.scene import MM, activate, body_pose, build_scene
-from brixzle.families.ab import lattice as L
-from brixzle.families.ab.cad import as_pair
-from brixzle.families.ab.params import BrickParams
+from brixzle.families import builders as B
+from brixzle.families.interface import Family, Lattice, Placement
 
 
 RADIAL_MODES = ('gauss', 'ring', 'bootstrap')
@@ -94,16 +93,16 @@ class TrialConfig:
     tolerance: Tolerance = field(default_factory=Tolerance)
 
 
-def release_pose(p: BrickParams, placement, sample, seat_pose=None):
+def release_pose(family: Family, p, placement, sample, seat_pose=None):
     """Seat pose displaced by the sampled error, lifted so nothing overlaps at release.
 
     ``seat_pose`` (pos, quat) overrides the ideal lattice seat, e.g. the seat
     implied by a sagging supporter's measured pose.
     """
-    pos, quat = seat_pose if seat_pose is not None else L.pose(p, placement)
-    d = L.insertion_axis(p, placement)
-    side = -np.sign(d[0])  # the stroke arrives from this x side
-    lift = p.amplitude + p.tooth_L + p.slot_extra + sample['clear']
+    pos, quat = seat_pose if seat_pose is not None else family.seat_pose(p, placement)
+    d = family.insertion_axis(p, placement)
+    side = -np.sign(d[0]) or 1.0  # the stroke arrives from this x side (+x for a vertical insertion)
+    lift = family.release_lift_mm(p) + sample['clear']
     rel = pos + np.array([side*sample['dx'], sample['dy'], lift])
     seat = Rotation.from_quat([quat[1], quat[2], quat[3], quat[0]])
     err = Rotation.from_euler('xyz', [sample['roll'], sample['pitch'], sample['yaw']], degrees=True)
@@ -115,7 +114,7 @@ def _rot(q):
     return Rotation.from_quat([q[1], q[2], q[3], q[0]])
 
 
-def pose_error(p, data, info, j, placement, ref=None):
+def pose_error(family: Family, p, data, info, j, placement, ref=None):
     """Position (mm) and angle (deg) error of brick j against its lattice seat.
 
     With ``ref = (k, ref_placement)`` the seat is taken relative to brick k's
@@ -123,12 +122,12 @@ def pose_error(p, data, info, j, placement, ref=None):
     as seated; sag is reported separately.
     """
     pos, quat = body_pose(data, info, j)
-    tpos, tquat = L.pose(p, placement)
+    tpos, tquat = family.seat_pose(p, placement)
     target_r = _rot(tquat)
     if ref is not None:
         k, ref_placement = ref
         rpos, rquat = body_pose(data, info, k)
-        ipos, iquat = L.pose(p, ref_placement)
+        ipos, iquat = family.seat_pose(p, ref_placement)
         delta = _rot(rquat)*_rot(iquat).inv()
         tpos = rpos + delta.apply(tpos - ipos)
         target_r = delta*target_r
@@ -137,13 +136,15 @@ def pose_error(p, data, info, j, placement, ref=None):
     return pos - tpos, angle
 
 
-def classify(p, err, angle, tol: Tolerance, on_floor):
+def classify(lat: Lattice, err, angle, tol: Tolerance, on_floor):
+    """'fell', 'seated', 'wrong_valley' (seated a whole brick length off in X) or 'jammed'."""
+    U, pitch = lat.U_mm, lat.span_voxels*lat.U_mm
     dx, dy, dz = err
     if on_floor:
         return 'fell'
     if abs(dx) <= tol.seat_xz and abs(dz) <= tol.seat_xz and abs(dy) <= tol.seat_y and angle <= tol.seat_angle:
         return 'seated'
-    if abs(abs(dx) - 2*p.U*round(abs(dx)/(2*p.U))) <= 2*tol.seat_xz and abs(dx) > p.U and angle <= tol.seat_angle:
+    if abs(abs(dx) - pitch*round(abs(dx)/pitch)) <= 2*tol.seat_xz and abs(dx) > U and angle <= tol.seat_angle:
         return 'wrong_valley'
     return 'jammed'
 
@@ -199,26 +200,24 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
             'time': (still_since if settled else data.time) - t0, 'settled': settled}
 
 
-def _bundles(brick):
-    return as_pair(brick)
-
-
-def drop_trials(p: BrickParams, brick, cfg: TrialConfig, samples=32, seed=0, offsets=None, record=False,
-                part='A'):
+def drop_trials(family: Family, p, cfg: TrialConfig, samples=32, seed=0, offsets=None, record=False,
+                course=0):
     """Drop one brick and judge its seat; Monte Carlo over the error model.
 
-    part 'A': an A brick onto an anchored base at voxel 1. part 'B' ('ab' mode):
-    a B brick onto an ideally seated A (B never lands on the base).
+    course 0: a brick onto an anchored base at voxel 1. course 1: a brick onto an ideally
+    seated course-0 brick (for A/B, a B onto an A; it never lands on the base).
     ``offsets`` instead runs a deterministic capture sweep over X offsets (mm).
     """
-    bundles = _bundles(brick)
-    if part == 'B':
-        support, target = L.Placement(0, 1), L.Placement(1, 1)
-        body_parts, j = ['A', 'B'], 1
+    if course not in (0, 1):
+        raise ValueError('course must be 0 or 1')
+    bodies = {k: B.sim_bodies(family, p, k) for k in family.parts}
+    if course == 1:
+        support, target = Placement(0, 1), Placement(1, 1)
+        body_parts, j = [family.part_for(0, 1), family.part_for(1, 1)], 1
     else:
-        support, target = None, L.Placement(0, 1)
-        body_parts, j = ['A'], 0
-    model, xml, info = build_scene(p, bundles, [(0, 4)], len(body_parts), cfg.physics, visual=record,
+        support, target = None, Placement(0, 1)
+        body_parts, j = [family.part_for(0, 1)], 0
+    model, xml, info = build_scene(family, p, bodies, [(0, 4)], len(body_parts), cfg.physics, visual=record,
                                    body_parts=body_parts)
     data = mujoco.MjData(model)
     owner = _brick_geoms(model, info)
@@ -228,7 +227,7 @@ def drop_trials(p: BrickParams, brick, cfg: TrialConfig, samples=32, seed=0, off
     for item in runs:
         mujoco.mj_resetData(model, data)
         if support is not None:
-            spos, squat = L.pose(p, support)
+            spos, squat = family.seat_pose(p, support)
             activate(model, data, info, 0, spos, squat)
             ideal = Tolerance(max_time=0.3)
             run_until_settled(model, data, info, 0, ideal, owner)
@@ -236,14 +235,14 @@ def drop_trials(p: BrickParams, brick, cfg: TrialConfig, samples=32, seed=0, off
         if offsets is not None:
             sample = dict(sample, dx=float(item), dy=0., yaw=0., roll=0., pitch=0., vel=[0, 0, 0],
                           clear=cfg.error.clearance[0])
-        pos, quat = release_pose(p, target, sample)
+        pos, quat = release_pose(family, p, target, sample)
         activate(model, data, info, j, pos, quat, linvel=sample['vel'])
         frames = [] if record else None
         m = run_until_settled(model, data, info, j, cfg.tolerance, owner, frames=frames,
                               watch=range(j))
         ref = (0, support) if support is not None else None
-        err, angle = pose_error(p, data, info, j, target, ref)
-        outcome = classify(p, err, angle, cfg.tolerance, m['floor'])
+        err, angle = pose_error(family, p, data, info, j, target, ref)
+        outcome = classify(family.lattice(p), err, angle, cfg.tolerance, m['floor'])
         rows.append({**sample, **m, 'outcome': outcome, 'err_mm': err.tolist(), 'angle_deg': angle})
         if record:
             rows[-1]['frames'] = frames
@@ -281,7 +280,7 @@ def capture_radius(rows, level=0.9, bins=None):
     return radius
 
 
-def capture_margin(p: BrickParams, brick, tolerance, level=0.9, step=1.0, part='A', cfg=None):
+def capture_margin(family: Family, p, tolerance, level=0.9, step=1.0, course=0, cfg=None):
     """X capture radius at ``level`` minus the required tolerance (mm); >= 0 satisfied.
 
     A deterministic sweep of offsets up to ``tolerance + step`` on both sides of the aim
@@ -290,7 +289,7 @@ def capture_margin(p: BrickParams, brick, tolerance, level=0.9, step=1.0, part='
     cfg = cfg or TrialConfig(error=ErrorModel(ideal=True))
     d = np.arange(0., tolerance + step + 1e-9, step)
     offsets = cfg.error.aim_bias + np.concatenate([-d[:0:-1], d])
-    rows, _ = drop_trials(p, brick, cfg, offsets=offsets.tolist(), part=part)
+    rows, _ = drop_trials(family, p, cfg, offsets=offsets.tolist(), course=course)
     return capture_radius(rows, level) - tolerance
 
 

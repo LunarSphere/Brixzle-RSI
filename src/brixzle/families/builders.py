@@ -102,6 +102,20 @@ def solid_mesh(family: Family, p, part, bored=True):
     return _cached(("mesh", bored), family, p, part, lambda: _mesh(solid(family, p, part, bored)))
 
 
+def shell_mesh(family: Family, p, part):
+    """The solid's outer shell: no fork bores and, for Prismatic, no lightening holes.
+
+    Collision covers this shell (other bricks never touch the inside of a hole), so collision
+    coverage is measured against it.
+    """
+    g = family.geometry
+    if isinstance(g, Prismatic):
+        def build():
+            return _mesh(_swept(g.section(p, part).outer, (), g.extrusion(p)))
+        return _cached("shell", family, p, part, build)
+    return solid_mesh(family, p, part, bored=False)
+
+
 def inclined_edges(polygon, angle_range=GUIDE_ANGLE_RANGE_DEG):
     """Outline edges whose angle from horizontal lies inside angle_range, as guide faces."""
     coords = list(polygon.simplify(1e-3).exterior.coords)
@@ -171,14 +185,22 @@ def sim_bodies(family: Family, p, part) -> SimBodies:
                      inertia_g_mm2=mesh.moment_inertia.tolist(), mesh=mesh)
 
 
-def base_pieces(family: Family, p, voxels, direction=1):
-    """Convex pieces (mm, base frame: x = 0 at the first voxel's left edge) of an anchored base."""
+def base(family: Family, p, voxels, direction=1):
+    """(convex pieces, lowest z) of an anchored base, in mm, base frame: x = 0 at the first voxel."""
     out = family.base(p, voxels, direction)
     if isinstance(out, Section):
-        return _pieces(out.outer, Extrusion(family.lattice(p).D_mm))
-    if isinstance(out, (list, tuple)):
-        return [np.asarray(v, dtype=float) for v in out]
-    return decompose(_mesh(out))
+        # Extruded like the family's bricks (e.g. the A/B gutter shear), else straight through D.
+        g = family.geometry
+        extrusion = g.extrusion(p) if isinstance(g, Prismatic) else Extrusion(family.lattice(p).D_mm)
+        return _pieces(out.outer, extrusion), float(out.outer.bounds[1])
+    pieces = ([np.asarray(v, dtype=float) for v in out] if isinstance(out, (list, tuple))
+              else decompose(_mesh(out)))
+    return pieces, float(min(v[:, 2].min() for v in pieces))
+
+
+def base_pieces(family: Family, p, voxels, direction=1):
+    """Convex pieces (mm, base frame: x = 0 at the first voxel's left edge) of an anchored base."""
+    return base(family, p, voxels, direction)[0]
 
 
 def inside_any(points, pieces, tol=0.0):

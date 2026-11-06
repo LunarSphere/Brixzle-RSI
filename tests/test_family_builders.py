@@ -105,7 +105,7 @@ def test_pyramid_section_falls_back_to_the_y0_slice():
 def test_pyramid_collision_is_decomposed_and_covers_the_solid(pyramid):
     p, bodies = pyramid
     assert bodies.collision_source == "decomposed"
-    cover, outside = B.coverage(B.solid_mesh(PYRAMID, p, "A", bored=False), bodies.collision)
+    cover, outside = B.coverage(B.shell_mesh(PYRAMID, p, "A"), bodies.collision)
     assert cover >= 0.99
     assert outside <= 0.02
 
