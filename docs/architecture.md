@@ -52,11 +52,11 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
    - then a short Py-BOBYQA run on the simulated box.
 3. **Sim verifier.** MuJoCo drops (and pickups) at the box's corners and faces, plus a few interior points. Bisection on the box's scale finds the largest box in which every trial succeeds. Every contact is logged.
 4. **Scorer and diagnoser.**
-   - **Score:** the box scale for each target, where 1 or more passes.
-   - **Failures:** sorted into jam, fall and wrong valley.
-   - **Cross-check:** flags where the prediction and the sim disagree.
+   - **Score:** the sim box scale for each target, where 1 or more passes. A target's overall score is the smaller of placement and pickup. A failed clean-release check scores pickup 0.
+   - **Failures:** placement failures are sorted into jam, fall and wrong valley. Pickup failures are sorted into jam, pickup miss, off-centre and forceful, plus a failed release. The limiting failures, which cap each box, keep their contact traces.
+   - **Cross-check:** the predictor is run on the poses the sim dropped, and the report flags where they disagree. *Optimistic* means only the predictor succeeds; *conservative* means only the sim does. The scale gap is recorded for each target. When both fail, their failure classes are compared but not trusted.
 
-   It writes `report.json`.
+   `engine/report.py` writes `report.json` to a new run directory. The full sim and predictor results are written beside it.
 
 ## Files
 
