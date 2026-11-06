@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
-# Changed: trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
+# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -137,14 +137,19 @@ def pose_error(family: Family, p, data, info, j, placement, ref=None):
 
 
 def classify(lat: Lattice, err, angle, tol: Tolerance, on_floor):
-    """'fell', 'seated', 'wrong_valley' (seated a whole brick length off in X) or 'jammed'."""
-    U, pitch = lat.U_mm, lat.span_voxels*lat.U_mm
+    """'fell', 'seated', 'wrong_valley' (seated cleanly a whole number of voxels off in X) or 'jammed'.
+
+    Bricks sit on the voxel lattice (R2), so a clean seat off by a multiple of the voxel pitch U is
+    a wrong valley. (aerial-assembly used a whole brick length, 2U, and so called one-voxel-off
+    seats jammed.)
+    """
+    U = pitch = lat.U_mm
     dx, dy, dz = err
     if on_floor:
         return 'fell'
     if abs(dx) <= tol.seat_xz and abs(dz) <= tol.seat_xz and abs(dy) <= tol.seat_y and angle <= tol.seat_angle:
         return 'seated'
-    if abs(abs(dx) - pitch*round(abs(dx)/pitch)) <= 2*tol.seat_xz and abs(dx) > U and angle <= tol.seat_angle:
+    if abs(abs(dx) - pitch*round(abs(dx)/pitch)) <= 2*tol.seat_xz and abs(dx) > U/2 and angle <= tol.seat_angle:
         return 'wrong_valley'
     return 'jammed'
 
@@ -158,8 +163,28 @@ def _brick_geoms(model, info):
     return owner
 
 
-def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), frames=None, fps=60):
-    """Step until brick j (and watched bricks) are still; return impact metrics."""
+def _contact_name(names, owner, g):
+    """Body-level name of the thing brick geoms touch: 'brick<k>', 'base', 'floor' or 'static'."""
+    if g in owner:
+        return f'brick{owner[g]}'
+    name = names[g]
+    return 'base' if name.startswith('base') else name.split('_')[0]
+
+
+def _trace_rows(contacts):
+    rows = sorted(contacts.values(), key=lambda c: (c['start_s'], c['piece'], c['other_geom']))
+    return [{**c, 'first_pos_mm': [float(v) for v in c['first_pos_mm']]} for c in rows]
+
+
+def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), frames=None, fps=60,
+                      contacts=None, names=None):
+    """Step until brick j (and watched bricks) are still; return impact metrics.
+
+    ``contacts`` (a dict, with ``names`` = geom names) collects brick j's contact sequence: one
+    entry per (own collision piece, touched geom) with first and last contact time, the number
+    of separate touches, peak normal force and the first contact point. It only reads contact
+    data, so the simulation is unchanged.
+    """
     force = np.zeros(6)
     t0 = data.time
     still_since = None
@@ -173,6 +198,7 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
             frames.append(data.qpos.copy())
         step += 1
         total, touching = 0., False
+        active = set()
         for i in range(data.ncon):
             c = data.contact[i]
             if owner.get(c.geom1) != j and owner.get(c.geom2) != j:
@@ -183,6 +209,24 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
             pen_max = max(pen_max, -c.dist)
             if info['floor'] in (c.geom1, c.geom2):
                 floor_hit = True
+            if contacts is not None:
+                mine, other = (c.geom1, c.geom2) if owner.get(c.geom1) == j else (c.geom2, c.geom1)
+                key = (mine, other)
+                now = data.time - t0
+                entry = contacts.get(key)
+                if entry is None:
+                    entry = contacts[key] = {
+                        'piece': int(names[mine].rsplit('_c', 1)[1]), 'other': _contact_name(names, owner, other),
+                        'other_geom': names[other], 'start_s': now, 'end_s': now, 'touches': 0, 'peak_N': 0.,
+                        'first_pos_mm': (np.asarray(c.pos)/MM).tolist(), 'active_at_end': False, '_live': False}
+                if not entry['_live']:
+                    entry['touches'] += 1
+                entry['end_s'] = now
+                entry['peak_N'] = max(entry['peak_N'], float(abs(force[0])))
+                active.add(key)
+        if contacts is not None:
+            for key, entry in contacts.items():
+                entry['_live'] = key in active
         f_max = max(f_max, total)
         if touching and not in_contact:
             onsets += 1
@@ -196,57 +240,81 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
         else:
             still_since = None
     settled = still_since is not None and data.time - still_since >= tol.settle_hold
+    if contacts is not None:
+        for entry in contacts.values():
+            entry['active_at_end'] = entry.pop('_live')
     return {'f_max': f_max, 'onsets': onsets, 'floor': floor_hit, 'penetration_mm': pen_max/MM,
             'time': (still_since if settled else data.time) - t0, 'settled': settled}
 
 
+class DropRig:
+    """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 onto
+    an ideally seated course-0 brick), so many poses don't rebuild the model."""
+
+    def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False, bodies=None):
+        """``bodies`` ({part: SimBodies}) skips rebuilding the bricks, e.g. in a worker process."""
+        if course not in (0, 1):
+            raise ValueError('course must be 0 or 1')
+        self.family, self.p, self.cfg, self.course, self.record = family, p, cfg, course, record
+        bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}
+        if course == 1:
+            self.support, self.target = Placement(0, 1), Placement(1, 1)
+            body_parts, self.j = [family.part_for(0, 1), family.part_for(1, 1)], 1
+        else:
+            self.support, self.target = None, Placement(0, 1)
+            body_parts, self.j = [family.part_for(0, 1)], 0
+        self.model, self.xml, self.info = build_scene(family, p, bodies, [(0, 4)], len(body_parts), cfg.physics,
+                                                      visual=record, body_parts=body_parts)
+        self.data = mujoco.MjData(self.model)
+        self.owner = _brick_geoms(self.model, self.info)
+        self.names = [self.model.geom(g).name for g in range(self.model.ngeom)]
+
+    def drop(self, sample, trace=True):
+        """Drop at a sample pose (ErrorModel.sample keys) and judge the seat; returns one row."""
+        model, data, info, family, p = self.model, self.data, self.info, self.family, self.p
+        mujoco.mj_resetData(model, data)
+        if self.support is not None:
+            spos, squat = family.seat_pose(p, self.support)
+            activate(model, data, info, 0, spos, squat)
+            ideal = Tolerance(max_time=0.3)
+            run_until_settled(model, data, info, 0, ideal, self.owner)
+        pos, quat = release_pose(family, p, self.target, sample)
+        activate(model, data, info, self.j, pos, quat, linvel=sample['vel'])
+        frames = [] if self.record else None
+        contacts = {} if trace else None
+        m = run_until_settled(model, data, info, self.j, self.cfg.tolerance, self.owner, frames=frames,
+                              watch=range(self.j), contacts=contacts, names=self.names)
+        ref = (0, self.support) if self.support is not None else None
+        err, angle = pose_error(family, p, data, info, self.j, self.target, ref)
+        outcome = classify(family.lattice(p), err, angle, self.cfg.tolerance, m['floor'])
+        row = {**sample, **m, 'outcome': outcome, 'err_mm': err.tolist(), 'angle_deg': angle}
+        if trace:
+            row['contacts'] = _trace_rows(contacts)
+        if self.record:
+            row['frames'] = frames
+        return row
+
+
 def drop_trials(family: Family, p, cfg: TrialConfig, samples=32, seed=0, offsets=None, record=False,
-                course=0):
+                course=0, trace=False):
     """Drop one brick and judge its seat; Monte Carlo over the error model.
 
     course 0: a brick onto an anchored base at voxel 1. course 1: a brick onto an ideally
     seated course-0 brick (for A/B, a B onto an A; it never lands on the base).
     ``offsets`` instead runs a deterministic capture sweep over X offsets (mm).
+    ``trace`` adds each drop's contact sequence (``DropRig.drop``).
     """
-    if course not in (0, 1):
-        raise ValueError('course must be 0 or 1')
-    bodies = {k: B.sim_bodies(family, p, k) for k in family.parts}
-    if course == 1:
-        support, target = Placement(0, 1), Placement(1, 1)
-        body_parts, j = [family.part_for(0, 1), family.part_for(1, 1)], 1
-    else:
-        support, target = None, Placement(0, 1)
-        body_parts, j = [family.part_for(0, 1)], 0
-    model, xml, info = build_scene(family, p, bodies, [(0, 4)], len(body_parts), cfg.physics, visual=record,
-                                   body_parts=body_parts)
-    data = mujoco.MjData(model)
-    owner = _brick_geoms(model, info)
+    rig = DropRig(family, p, cfg, course, record)
     rng = np.random.default_rng(seed)
     rows = []
     runs = offsets if offsets is not None else range(samples)
     for item in runs:
-        mujoco.mj_resetData(model, data)
-        if support is not None:
-            spos, squat = family.seat_pose(p, support)
-            activate(model, data, info, 0, spos, squat)
-            ideal = Tolerance(max_time=0.3)
-            run_until_settled(model, data, info, 0, ideal, owner)
         sample = cfg.error.sample(rng)
         if offsets is not None:
             sample = dict(sample, dx=float(item), dy=0., yaw=0., roll=0., pitch=0., vel=[0, 0, 0],
                           clear=cfg.error.clearance[0])
-        pos, quat = release_pose(family, p, target, sample)
-        activate(model, data, info, j, pos, quat, linvel=sample['vel'])
-        frames = [] if record else None
-        m = run_until_settled(model, data, info, j, cfg.tolerance, owner, frames=frames,
-                              watch=range(j))
-        ref = (0, support) if support is not None else None
-        err, angle = pose_error(family, p, data, info, j, target, ref)
-        outcome = classify(family.lattice(p), err, angle, cfg.tolerance, m['floor'])
-        rows.append({**sample, **m, 'outcome': outcome, 'err_mm': err.tolist(), 'angle_deg': angle})
-        if record:
-            rows[-1]['frames'] = frames
-    return rows, xml
+        rows.append(rig.drop(sample, trace=trace))
+    return rows, rig.xml
 
 
 def summarize_drops(rows):

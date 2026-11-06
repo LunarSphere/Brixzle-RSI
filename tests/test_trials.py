@@ -69,6 +69,9 @@ def test_tolerance_defaults():
     ((0.5, 1.0, -0.5), 1.0, False, "seated"),
     ((0.5, 1.0, -0.5), 1.0, True, "fell"),
     ((2 * V0.U, 0.0, 0.0), 0.5, False, "wrong_valley"),
+    ((V0.U, 0.0, 0.0), 0.5, False, "wrong_valley"),       # one voxel over (the baseline's failures)
+    ((-V0.U + 1.5, 0.0, 0.0), 0.5, False, "wrong_valley"),
+    ((V0.U / 2, 0.0, 0.0), 0.5, False, "jammed"),          # between valleys
     ((3.0, 0.0, 0.0), 0.5, False, "jammed"),
     ((0.0, 0.0, 0.0), 10.0, False, "jammed"),
     ((0.0, 3.0, 0.0), 0.0, False, "jammed"),
