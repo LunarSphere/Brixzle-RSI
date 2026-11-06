@@ -1,0 +1,218 @@
+# From LunarSphere/aerial-assembly brixzle/src/brixzle/cad.py @ a649663
+# Changed: _wire, _swept, _pieces and _mesh take an Extrusion instead of BrickParams; the bore cut and mass properties follow build_brick; Solid3D support (y = 0 slice, CoACD decomposition), coverage and caching are new.
+"""Shared builders: everything the engine needs from a family, derived from its geometry.
+
+Prismatic families give a section and an extrusion; the solid is the section swept through the
+extrusion's Y bands, and collision is exact (convex parts of the outline, each swept through one
+band, are convex because the sweep is affine). Solid3D families give a CadQuery solid; collision
+is their exact convex pieces if given, otherwise a CoACD convex decomposition. In both cases the
+fork bores from ``family.pickup`` are cut here, so pickup features and geometry cannot disagree.
+Collision covers the unbored outline: other bricks never touch the inside of a bore.
+"""
+
+import math
+
+import cadquery as cq
+import coacd
+import numpy as np
+import trimesh
+from scipy.spatial import ConvexHull
+from shapely.geometry import LineString, Polygon
+from shapely.ops import polygonize, unary_union
+
+from brixzle.families.convex import convex_parts
+from brixzle.families.interface import (
+    Extrusion, Family, GuideFace, Prismatic, Section, SimBodies,
+)
+
+PLA_DENSITY = 1.24e-3  # g/mm^3, from aerial-assembly brixzle/src/brixzle/params.py @ a649663
+SLICE_Y_MM = 1e-3      # slice just off y = 0 so mesh vertices on the plane don't make degenerate cuts
+GUIDE_ANGLE_RANGE_DEG = (5.0, 85.0)  # outline edges in this range count as guide faces
+COACD = dict(threshold=0.05, preprocess_mode="off", seed=0)  # input meshes are watertight
+
+_cache: dict = {}
+
+
+def _cached(kind, family, p, part, build):
+    key = (kind, id(family), p, part)
+    if key not in _cache:
+        _cache[key] = (family, build())  # keep family alive so its id stays unique
+    return _cache[key][1]
+
+
+def _wire(coords, y=0., dz=0.):
+    pts = [cq.Vector(float(x), float(y), float(z) + dz) for x, z in list(coords)[:-1]]
+    return cq.Wire.makePolygon(pts, close=True)
+
+
+def _swept(polygon, holes, extrusion: Extrusion):
+    solids = []
+    for y0, y1, z0, z1 in extrusion.resolved_bands():
+        outer = _wire(polygon.exterior.coords, y0, z0)
+        inner = [_wire(h.exterior.coords, y0, z0) for h in holes]
+        solids.append(cq.Solid.extrudeLinear(outer, inner, cq.Vector(0, y1 - y0, z1 - z0)))
+    shape = solids[0]
+    for other in solids[1:]:
+        shape = shape.fuse(other)
+    return shape.clean()
+
+
+def _pieces(polygon, extrusion: Extrusion):
+    """Convex 3D vertex sets (mm) covering the banded sweep of polygon."""
+    coords = np.asarray(polygon.simplify(1e-4).exterior.coords)[:-1]
+    pieces = []
+    for q in convex_parts(coords):
+        for y0, y1, z0, z1 in extrusion.resolved_bands():
+            near = np.column_stack([q[:, 0], np.full(len(q), y0), q[:, 1] + z0])
+            far = np.column_stack([q[:, 0], np.full(len(q), y1), q[:, 1] + z1])
+            pieces.append(np.vstack([near, far]))
+    return pieces
+
+
+def _mesh(shape, tolerance=0.05):
+    vertices, faces = shape.tessellate(tolerance, 0.2)
+    mesh = trimesh.Trimesh(np.array([v.toTuple() for v in vertices]), np.array(faces), process=True)
+    mesh.fix_normals()
+    return mesh
+
+
+def _unbored_solid(family: Family, p, part):
+    g = family.geometry
+    if isinstance(g, Prismatic):
+        s = g.section(p, part)
+        return _swept(s.outer, s.holes, g.extrusion(p))
+    return g.solid(p, part)
+
+
+def solid(family: Family, p, part, bored=True):
+    """The printable CadQuery solid of one part (mm), with the fork bores cut if ``bored``."""
+    def build():
+        shape = _unbored_solid(family, p, part)
+        if bored:
+            bb = shape.BoundingBox()
+            for b in family.pickup(p, part).bores:
+                bore = cq.Solid.makeCylinder(b.radius_mm, bb.ymax - bb.ymin + 2,
+                                             cq.Vector(b.x_mm, bb.ymin - 1, b.z_mm), cq.Vector(0, 1, 0))
+                shape = shape.cut(bore)
+        return shape
+    return _cached(("solid", bored), family, p, part, build)
+
+
+def solid_mesh(family: Family, p, part, bored=True):
+    return _cached(("mesh", bored), family, p, part, lambda: _mesh(solid(family, p, part, bored)))
+
+
+def inclined_edges(polygon, angle_range=GUIDE_ANGLE_RANGE_DEG):
+    """Outline edges whose angle from horizontal lies inside angle_range, as guide faces."""
+    coords = list(polygon.simplify(1e-3).exterior.coords)
+    faces = []
+    for a, b in zip(coords[:-1], coords[1:]):
+        face = GuideFace((float(a[0]), float(a[1])), (float(b[0]), float(b[1])))
+        if angle_range[0] < face.angle_deg < angle_range[1]:
+            faces.append(face)
+    return tuple(faces)
+
+
+def slice_section(mesh, y=SLICE_Y_MM):
+    """The XZ section of a watertight mesh at Y = y, with inclined outline edges as guide faces."""
+    segments = trimesh.intersections.mesh_plane(mesh, plane_normal=[0, 1, 0], plane_origin=[0, y, 0])
+    xz = np.round(np.asarray(segments)[:, :, [0, 2]], 6)  # snap: shared endpoints differ by float noise
+    lines = unary_union([LineString(s) for s in xz if not np.array_equal(s[0], s[1])])
+    faces = list(polygonize(lines))
+    if not faces:
+        raise ValueError("the solid does not cross the y = 0 plane; give Solid3D a section")
+    points = np.array([[f.representative_point().x, y, f.representative_point().y] for f in faces])
+    material = unary_union([f for f, inside in zip(faces, mesh.contains(points)) if inside])
+    if not isinstance(material, Polygon):
+        raise ValueError("the y = 0 slice is not one piece; give Solid3D a section")
+    material = material.simplify(1e-3)
+    outer = Polygon(material.exterior)
+    holes = tuple(Polygon(r) for r in material.interiors)
+    return Section(outer=outer, holes=holes, guide_faces=inclined_edges(outer))
+
+
+def section(family: Family, p, part) -> Section:
+    """The predictor's 2D section: the family's own, or a slice of a Solid3D at y = 0."""
+    g = family.geometry
+    if isinstance(g, Prismatic):
+        return g.section(p, part)
+    if g.section is not None:
+        return g.section(p, part)
+    return _cached("section", family, p, part,
+                   lambda: slice_section(solid_mesh(family, p, part, bored=False)))
+
+
+def decompose(mesh):
+    """Convex pieces (mm) of a watertight mesh by CoACD, seeded so it is reproducible."""
+    coacd.set_log_level("error")
+    parts = coacd.run_coacd(coacd.Mesh(np.asarray(mesh.vertices), np.asarray(mesh.faces)), **COACD)
+    return [np.asarray(v, dtype=float) for v, _ in parts]
+
+
+def collision(family: Family, p, part):
+    """(convex pieces, 'exact' | 'decomposed') for one part."""
+    g = family.geometry
+    if isinstance(g, Prismatic):
+        return _pieces(g.section(p, part).outer, g.extrusion(p)), "exact"
+    if g.collision is not None:
+        return [np.asarray(v, dtype=float) for v in g.collision(p, part)], "exact"
+    pieces = _cached("decomposed", family, p, part,
+                     lambda: decompose(solid_mesh(family, p, part, bored=False)))
+    return pieces, "decomposed"
+
+
+def sim_bodies(family: Family, p, part) -> SimBodies:
+    """Collision pieces and mass properties (PLA, solid infill) of one part."""
+    pieces, source = collision(family, p, part)
+    mesh = solid_mesh(family, p, part, bored=True)
+    mesh.density = PLA_DENSITY
+    return SimBodies(collision=pieces, collision_source=source, mass_g=float(mesh.mass),
+                     volume_mm3=float(mesh.volume), com_mm=mesh.center_mass.tolist(),
+                     inertia_g_mm2=mesh.moment_inertia.tolist(), mesh=mesh)
+
+
+def base_pieces(family: Family, p, voxels, direction=1):
+    """Convex pieces (mm, base frame: x = 0 at the first voxel's left edge) of an anchored base."""
+    out = family.base(p, voxels, direction)
+    if isinstance(out, Section):
+        return _pieces(out.outer, Extrusion(family.lattice(p).D_mm))
+    if isinstance(out, (list, tuple)):
+        return [np.asarray(v, dtype=float) for v in out]
+    return decompose(_mesh(out))
+
+
+def inside_any(points, pieces, tol=0.0):
+    """Mask of points inside at least one convex piece (tol > 0 grows, < 0 shrinks each piece)."""
+    points = np.asarray(points, dtype=float)
+    inside = np.zeros(len(points), dtype=bool)
+    for piece in pieces:
+        eq = ConvexHull(piece).equations
+        inside |= np.all(points @ eq[:, :3].T + eq[:, 3] <= tol, axis=1)
+    return inside
+
+
+def coverage(mesh, pieces, n=20000, seed=0):
+    """(fraction of the solid inside the pieces, fraction of the pieces outside the solid)."""
+    lo = np.minimum(mesh.bounds[0], np.min([pc.min(axis=0) for pc in pieces], axis=0)) - 0.5
+    hi = np.maximum(mesh.bounds[1], np.max([pc.max(axis=0) for pc in pieces], axis=0)) + 0.5
+    pts = np.random.default_rng(seed).uniform(lo, hi, size=(n, 3))
+    in_solid = mesh.contains(pts)
+    in_pieces = inside_any(pts, pieces)
+    cover = (in_solid & in_pieces).sum() / max(in_solid.sum(), 1)
+    outside = (in_pieces & ~in_solid).sum() / max(in_pieces.sum(), 1)
+    return float(cover), float(outside)
+
+
+def is_convex_vertex_set(piece, tol=1e-6):
+    """True if every vertex lies on the piece's convex hull (no interior points)."""
+    piece = np.unique(np.round(np.asarray(piece, dtype=float), 9), axis=0)
+    if len(piece) < 4:
+        return False
+    eq = ConvexHull(piece).equations
+    dist = piece @ eq[:, :3].T + eq[:, 3]  # <= 0 inside; 0 on a facet plane
+    return bool(np.all(np.max(dist, axis=1) >= -tol))
+
+
+def math_finite(*values):
+    """True if every number in every value (scalars or nested arrays of any shape) is finite."""
+    return all(math.isfinite(float(x)) for v in values for x in np.ravel(np.asarray(v, dtype=float)))

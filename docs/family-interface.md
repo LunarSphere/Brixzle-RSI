@@ -1,0 +1,85 @@
+# Brick family interface
+
+A brick family is a Python package `src/brixzle/families/<name>/` whose `family.py` exports `FAMILY = Family(...)`. The engine reads a family only through this object. The registry finds a family automatically, so adding one doesn't mean editing a list.
+
+Before the engine scores a family, `brixzle.families.contract.check_family(FAMILY)` must return an empty list. The code is in `src/brixzle/families/interface.py`. Two dummy families in `src/brixzle/families/`, `wedge` and `pyramid`, show the two forms.
+
+## Conventions
+
+- **Units:** geometry is in millimetres and degrees, and field names carry `_mm` or `_deg`. Mass is in grams. Conversion to SI happens only at the MuJoCo boundary.
+- **Frame:**
+  - X runs along the lattice;
+  - Y runs across it (the fork's tines slide along Y);
+  - Z points up, and z = 0 is the brick's seat.
+- **Quaternions:** `[w, x, y, z]`.
+- **Material:** PLA at 1.24e-3 g/mm³, solid infill.
+
+## What a family provides
+
+| Field | What it is |
+|---|---|
+| `name`, `version`, `description` | Identity. Names are unique. |
+| `params_type` | A frozen dataclass subclassing `FamilyParams`, which gives `to_dict` and `from_dict`. Its defaults are the starting design. Its `__post_init__` raises `ValueError` for infeasible values. |
+| `bounds` | `{name: (lo, hi)}` for the parameters the tuner may change. The defaults must lie inside. |
+| `parts` | Part names, e.g. `("A",)` or `("A", "B")` for alternating courses. |
+| `geometry` | `Prismatic` or `Solid3D` (see below). |
+| `lattice(p)` | `Lattice(U_mm, D_mm, H0_mm, span_voxels)`: the voxel pitch in X, the depth in Y, the course pitch in Z, and the number of voxels a brick covers. |
+| `part_for(course, direction)` | Which part sits at a placement. |
+| `seat_pose(p, placement)` | `(pos_mm, quat_wxyz)` of a seated brick. A `Placement` is `(course, i0, direction)`. |
+| `insertion_axis(p, placement)` | The unit `(x, z)` direction of the final seating motion. |
+| `release_lift_mm(p)` | How far above the seat the drone releases the brick, so that nothing overlaps at release. |
+| `base(p, voxels, direction)` | The anchored base that receives course 0, in a frame where x = 0 is the first voxel's left edge. It can be a `Section` (extruded through D), a CadQuery solid (decomposed), or a list of exact convex vertex sets. |
+| `pickup(p, part)` | `PickupFeatures(bores=(Bore(x_mm, z_mm, d_mm, clearance_mm), ...))`: straight through-Y bores for the fixed fork. The builders cut them into the solid. |
+| `extra_rules(p, bodies)` | Optional. Family-specific margins `{"R<n>.<name>": value}`, where a value ≥ 0 means satisfied. |
+
+## Two ways to describe the geometry
+
+**`Prismatic(section, extrusion)`** is for 2.5D bricks: an XZ profile swept through Y.
+- `section(p, part)` returns a `Section(outer, holes, guide_faces)`, built from shapely polygons in XZ. The holes are lightening holes, not the fork bores.
+- `extrusion(p)` returns an `Extrusion(depth_mm, bands)`. With no bands it's a straight extrusion. Bands of the form `(y0, y1, z_shift_y0, z_shift_y1)` shear the profile, for example to make a V gutter across Y.
+- The builders derive the solid, exact convex collision pieces and the predictor section.
+
+**`Solid3D(solid, collision=None, section=None)`** is for fully 3D bricks.
+- `solid(p, part)` returns a CadQuery solid without the fork bores.
+- `collision` is optional. If given, it returns exact convex vertex sets: use it when the brick is built from convex primitives. Otherwise the solid is convex-decomposed with CoACD (seed 0, preprocessing off). That takes about 2 s per part for `pyramid`.
+- `section` is optional. Otherwise the 2D predictor uses the solid's slice on the XZ plane at y = 0. Outline edges between 5° and 85° from horizontal then count as guide faces.
+- The 2D predictor is only approximate for a genuinely 3D brick. The sim verifier is the reference.
+
+## Shared rules
+
+`brixzle.families.rules` computes these margins for every family. Each key starts with a requirement id from `docs/requirements.yaml`.
+
+| Key | Margin |
+|---|---|
+| `R6.guide_slides` | The shallowest guide face's angle minus (atan μ_max + 8°), with μ_max = 0.4 |
+| `R9.mass_min`, `R9.mass_max` | Mass − 1 g, and 25 g − mass |
+| `R10.tines_straddle_com` | How far the centre of mass lies inside the outermost bores in X |
+| `R10.hangs_below_tines` | Lowest bore height − centre-of-mass height − 1 mm |
+
+The constants come from aerial-assembly `rules.py` `RuleSettings` @ a649663. A family's `extra_rules` may add margins but not redefine these.
+
+## What the contract checks
+
+`check_family(family, samples=5, seed=0)` runs on the defaults and on seeded random points inside the bounds. At a sampled point, raising `ValueError` marks the point as infeasible and is allowed. Any other exception is a violation, and so is any exception at the defaults.
+
+1. **params:** bounds are finite with lo < hi and name real fields. The defaults are finite and inside the bounds. `to_dict`/`from_dict` round-trips, and `from_dict` rejects unknown keys.
+2. **section:** `outer` is a valid polygon with area. Holes lie inside it, and guide faces lie on the outline.
+3. **solid:** the solid is valid and gives one watertight piece. For a straight `Prismatic` extrusion, its volume matches section area × depth within 1%.
+4. **sim_bodies:**
+   - every collision piece is a convex vertex set with volume, and the pieces cover at least 99% of the solid with at most 2% of their volume outside it;
+   - mass, centre of mass and inertia are finite, and inertia is symmetric positive-definite;
+   - MuJoCo compiles the bodies.
+5. **lattice:**
+   - quaternions have unit norm and insertion axes are unit vectors;
+   - a seated brick overlaps the brick above it, its neighbour in the course and the base by no more than 0.5% of its volume (touching is fine);
+   - `part_for` returns a listed part.
+6. **rules:** every margin is finite and its key names a requirement that exists.
+7. **pickup:** there's at least one bore, and every bore lies inside the section with a wall of at least 1.2 mm.
+
+Each violation says which check failed, where (for example `defaults, part A`) and what to fix.
+
+## Not covered yet
+
+- **Fork spacing:** checking the bores against the fixed fork's tine spacing comes with the pickup trial (#9).
+- **The engine:** `scene` and `trials` still read the A/B family directly. They switch to this interface when A/B adopts it (#6).
+- **Running agent-written families safely** belongs to the design agent (#18).
