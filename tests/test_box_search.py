@@ -82,7 +82,7 @@ def baseline():
     # Coarse on purpose (tests stay fast): tol 0.5 and no interior points. The full-resolution
     # baseline runs (tol 0.05, 4 interior points) are recorded with the CLI, see the PR.
     box = BX.default_boxes()["placement"]["mean"]
-    return box, BS.box_search(AB, V0, box, seed=0, tol=0.5, n_interior=0)
+    return box, BS.box_search(AB, V0, box, seed=0, tol=0.5, n_interior=0, workers=1)
 
 
 def test_aligned_drop_has_a_contact_trace_ending_on_the_support():
@@ -95,17 +95,36 @@ def test_aligned_drop_has_a_contact_trace_ending_on_the_support():
     assert any(c["other"] == "brick0" and c["active_at_end"] for c in trace)  # resting on the seated A
 
 
+def test_both_courses_are_searched_and_the_smaller_scale_counts(baseline):
+    _, result = baseline
+    assert set(result["courses"]) == {"0", "1"}
+    scales = {c: r["scale"] for c, r in result["courses"].items()}
+    assert result["scale"] == min(scales.values())
+    assert result["limiting_course"] in scales and scales[result["limiting_course"]] == result["scale"]
+
+
 def test_every_drop_in_the_search_has_a_contact_trace(baseline):
     _, result = baseline
-    assert result["drops"]
-    assert all(d["contacts"] for d in result["drops"])
+    for course in result["courses"].values():
+        assert course["drops"]
+        assert all(d["contacts"] for d in course["drops"])
 
 
-def test_baseline_box_is_reproducible_from_the_seed(baseline):
-    box, result = baseline
-    again = BS.box_search(AB, V0, box, seed=0, tol=0.5, n_interior=0)
-    assert again["scale"] == result["scale"]
-    assert [d["outcome"] for d in again["drops"]] == [d["outcome"] for d in result["drops"]]
+def _outcomes(result):
+    return {c: [(d["scale"], d["point"], d["outcome"], d["err_mm"]) for d in r["drops"]]
+            for c, r in result["courses"].items()}
+
+
+def test_parallel_drops_reproduce_the_serial_result_from_the_seed(baseline):
+    """The baseline box is reproducible from its seed, whether drops run serially or in parallel."""
+    box, serial = baseline
+    parallel = BS.box_search(AB, V0, box, seed=0, tol=0.5, n_interior=0, workers=2)
+    assert parallel["scale"] == serial["scale"]
+    # Serial stops a scale at its first failure; parallel drops every point. Every drop they
+    # share must be identical, bit for bit.
+    for c, rows in _outcomes(serial).items():
+        par = {(s, k): (o, e) for s, k, o, e in _outcomes(parallel)[c]}
+        assert all(par[(s, k)] == (o, e) for s, k, o, e in rows), c
 
 
 def test_result_records_its_inputs_and_is_json_safe(baseline):

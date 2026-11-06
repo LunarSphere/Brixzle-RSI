@@ -4,7 +4,12 @@ A box (engine/boxes.py) gives half-widths in X, Z and theta around the aim point
 the verifier drops the brick at s times a fixed set of unit points: the centre, the 8 corners,
 the 6 face centres and a few seeded interior points. A scale passes only if every drop seats
 (no jam, fall or wrong valley). Bisection on s finds the largest passing scale; s >= 1 means
-the design covers the target box. Every drop logs its contact sequence (trials.DropRig).
+the design covers the target box. Both placements are searched, course 0 (onto the anchored
+base) and course 1 (onto a seated course-0 brick), and the placement scale is the smaller.
+Every drop logs its contact sequence (trials.DropRig).
+
+Drops at one scale run in parallel worker processes, each with its own compiled scene. A drop
+depends only on its pose, so parallel and serial searches give identical drops.
 
 Pose mapping, around the aim (ErrorModel.aim_bias):
 - X: dx = aim + s * x * half_width_x (along the lattice).
@@ -20,9 +25,12 @@ Results are simulated, uncalibrated contact. Run it from the command line to rec
 """
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import math
+import multiprocessing
+import os
 from pathlib import Path
 import time
 
@@ -31,8 +39,13 @@ import numpy as np
 from brixzle.engine import boxes as BX
 from brixzle.engine.sim import trials as T
 from brixzle.engine.sim.trials import DropRig
+from brixzle.families import builders as B
 
 LABEL = "simulated, uncalibrated contact"
+# Measured on a 14-core Mac (10 performance + 4 efficiency cores), 2026-11-06: a 19-drop round
+# takes 3.9 s serially, 1.1 s on 4 workers, 0.8 s on 6, and 3.9 s again on 8 or more; each
+# worker also costs ~1 s to start (imports, scene compile). 4 gave the fastest whole search.
+DEFAULT_WORKERS = 4
 CORNERS = np.array([(x, z, a) for x in (-1, 1) for z in (-1, 1) for a in (-1, 1)], dtype=float)
 FACES = np.array([v for i in range(3) for v in (np.eye(3)[i], -np.eye(3)[i])], dtype=float)
 
@@ -85,41 +98,87 @@ def bisect_scale(ok, s_max=2.0, tol=0.05):
     return lo, evals
 
 
-def box_search(family, p, box: BX.TargetBox, cfg=None, course=1, seed=0, s_max=2.0, tol=0.05, n_interior=4):
-    """Bisect the scale of a placement box for one family; returns a JSON-safe result dict.
+_WORKER = {}  # per process: the search's family, params, config, bodies, and one DropRig per course
 
-    course 1 drops onto a seated course-0 brick (for A/B, a B onto an A), the common case in a
-    structure; course 0 drops onto the anchored base."""
-    if box.task != "placement":
-        raise ValueError("box_search verifies placement boxes; pickup is the pickup trial (#9)")
-    cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
-    t0 = time.time()
-    rig = DropRig(family, p, cfg, course=course)
-    unit = unit_points(n_interior, seed)
+
+def _init_worker(family, p, cfg, bodies):
+    _WORKER.clear()
+    _WORKER.update(family=family, p=p, cfg=cfg, bodies=bodies, rigs={})
+
+
+def _drop(job):
+    """Drop one pose in this process's rig for the course (built once, from the shared bodies)."""
+    course, sample = job
+    w = _WORKER
+    if course not in w["rigs"]:
+        w["rigs"][course] = DropRig(w["family"], w["p"], w["cfg"], course=course, bodies=w["bodies"])
+    return w["rigs"][course].drop(sample)
+
+
+def _search_course(box, cfg, course, unit, s_max, tol, pool):
     drops = []
 
     def ok(scale):
-        for k, u in enumerate(unit):
-            row = rig.drop(pose_sample(box, scale, u, cfg))
+        jobs = [(course, pose_sample(box, scale, u, cfg)) for u in unit]
+        if pool is None:  # serial: stop the scale at its first failure
+            rows = []
+            for job in jobs:
+                rows.append(_drop(job))
+                if rows[-1]["outcome"] != "seated":
+                    break
+        else:  # parallel: drop every point at once
+            rows = list(pool.map(_drop, jobs))
+        for k, (u, row) in enumerate(zip(unit, rows)):
             drops.append({"scale": scale, "point": k, "unit": u.tolist(), **row})
-            if row["outcome"] != "seated":
-                return False  # fail fast: one failing pose fails the scale
-        return True
+        return all(r["outcome"] == "seated" for r in rows)
 
     scale, evals = bisect_scale(ok, s_max, tol)
     for e in evals:
         e["drops"] = sum(1 for d in drops if d["scale"] == e["scale"])
-    failures = [d for d in drops if d["outcome"] != "seated"]
+    return {"scale": scale, "passed": scale >= 1.0, "evaluations": evals,
+            "failure_outcomes": sorted({d["outcome"] for d in drops if d["outcome"] != "seated"}),
+            "drops": drops, "drop_count": len(drops)}
+
+
+def box_search(family, p, box: BX.TargetBox, cfg=None, courses=(0, 1), seed=0, s_max=2.0, tol=0.05,
+               n_interior=4, workers=None):
+    """Bisect the scale of a placement box for one family; returns a JSON-safe result dict.
+
+    ``courses``: 0 drops onto the anchored base, 1 onto a seated course-0 brick (for A/B, a B
+    onto an A). The placement scale is the smaller over the courses searched.
+    ``workers``: parallel drop processes (default DEFAULT_WORKERS, capped by the CPU count);
+    1 runs serially in this process."""
+    if box.task != "placement":
+        raise ValueError("box_search verifies placement boxes; pickup is the pickup trial (#9)")
+    cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
+    unit = unit_points(n_interior, seed)
+    workers = min(workers or DEFAULT_WORKERS, os.cpu_count() or 1, len(unit))
+    t0 = time.time()
+    bodies = {k: B.sim_bodies(family, p, k) for k in family.parts}  # built once, here
+    if workers > 1:
+        pool = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
+                                   initializer=_init_worker, initargs=(family, p, cfg, bodies))
+    else:
+        pool = None
+        _init_worker(family, p, cfg, bodies)
+    try:
+        # The courses bisect independently, so run them side by side on the same pool.
+        with ThreadPoolExecutor(len(courses)) as threads:
+            futures = {str(c): threads.submit(_search_course, box, cfg, c, unit, s_max, tol, pool) for c in courses}
+            per_course = {c: f.result() for c, f in futures.items()}
+    finally:
+        if pool is not None:
+            pool.shutdown()
+    limiting = min(per_course, key=lambda c: per_course[c]["scale"])
+    scale = per_course[limiting]["scale"]
     return {
         "label": LABEL,
         "family": family.name, "family_version": family.version, "params": p.to_dict(),
-        "box": box.to_dict(), "course": course, "seed": seed, "s_max": s_max, "tol": tol,
-        "n_interior": n_interior, "config": json.loads(json.dumps(T.as_dict(cfg))),
-        "scale": scale, "passed": scale >= 1.0,
-        "evaluations": evals,
-        "failure_outcomes": sorted({d["outcome"] for d in failures}),
-        "drops": drops,
-        "drop_count": len(drops), "seconds": time.time() - t0,
+        "box": box.to_dict(), "seed": seed, "s_max": s_max, "tol": tol, "n_interior": n_interior,
+        "workers": workers, "config": json.loads(json.dumps(T.as_dict(cfg))),
+        "scale": scale, "passed": scale >= 1.0, "limiting_course": limiting,
+        "courses": per_course,
+        "drop_count": sum(r["drop_count"] for r in per_course.values()), "seconds": time.time() - t0,
     }
 
 
@@ -137,20 +196,23 @@ def main(argv=None):
     ap.add_argument("--family", default="ab")
     ap.add_argument("--statistic", choices=BX.STATISTICS, default="mean")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--course", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--courses", type=int, nargs="+", choices=(0, 1), default=[0, 1])
     ap.add_argument("--tol", type=float, default=0.05)
+    ap.add_argument("--workers", type=int, default=None, help=f"parallel drop processes (default {DEFAULT_WORKERS})")
     ap.add_argument("--runs", default="runs")
     args = ap.parse_args(argv)
     family = registry.get(args.family)
     box = BX.default_boxes()["placement"][args.statistic]
-    result = box_search(family, family.defaults, box, course=args.course, seed=args.seed, tol=args.tol)
-    if not all(math.isfinite(d["angle_deg"]) for d in result["drops"]):
+    result = box_search(family, family.defaults, box, courses=tuple(args.courses), seed=args.seed, tol=args.tol,
+                        workers=args.workers)
+    if not all(math.isfinite(d["angle_deg"]) for r in result["courses"].values() for d in r["drops"]):
         raise SystemExit("non-finite drop result")
     out = _new_run_dir(args.runs, family.name, args.statistic)
     (out / "result.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    per = ", ".join(f"course {c} {r['scale']:.3f}" for c, r in result["courses"].items())
     print(f"{family.name} placement {args.statistic}: scale {result['scale']:.3f} "
-          f"({'passes' if result['passed'] else 'fails'}), {result['drop_count']} drops, "
-          f"{result['seconds']:.1f} s -> {out}")
+          f"({'passes' if result['passed'] else 'fails'}; {per}), {result['drop_count']} drops, "
+          f"{result['workers']} workers, {result['seconds']:.1f} s -> {out}")
 
 
 if __name__ == "__main__":

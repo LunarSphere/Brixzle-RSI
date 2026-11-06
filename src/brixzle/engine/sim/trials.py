@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
-# Changed: run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
+# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -137,14 +137,19 @@ def pose_error(family: Family, p, data, info, j, placement, ref=None):
 
 
 def classify(lat: Lattice, err, angle, tol: Tolerance, on_floor):
-    """'fell', 'seated', 'wrong_valley' (seated a whole brick length off in X) or 'jammed'."""
-    U, pitch = lat.U_mm, lat.span_voxels*lat.U_mm
+    """'fell', 'seated', 'wrong_valley' (seated cleanly a whole number of voxels off in X) or 'jammed'.
+
+    Bricks sit on the voxel lattice (R2), so a clean seat off by a multiple of the voxel pitch U is
+    a wrong valley. (aerial-assembly used a whole brick length, 2U, and so called one-voxel-off
+    seats jammed.)
+    """
+    U = pitch = lat.U_mm
     dx, dy, dz = err
     if on_floor:
         return 'fell'
     if abs(dx) <= tol.seat_xz and abs(dz) <= tol.seat_xz and abs(dy) <= tol.seat_y and angle <= tol.seat_angle:
         return 'seated'
-    if abs(abs(dx) - pitch*round(abs(dx)/pitch)) <= 2*tol.seat_xz and abs(dx) > U and angle <= tol.seat_angle:
+    if abs(abs(dx) - pitch*round(abs(dx)/pitch)) <= 2*tol.seat_xz and abs(dx) > U/2 and angle <= tol.seat_angle:
         return 'wrong_valley'
     return 'jammed'
 
@@ -246,11 +251,12 @@ class DropRig:
     """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 onto
     an ideally seated course-0 brick), so many poses don't rebuild the model."""
 
-    def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False):
+    def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False, bodies=None):
+        """``bodies`` ({part: SimBodies}) skips rebuilding the bricks, e.g. in a worker process."""
         if course not in (0, 1):
             raise ValueError('course must be 0 or 1')
         self.family, self.p, self.cfg, self.course, self.record = family, p, cfg, course, record
-        bodies = {k: B.sim_bodies(family, p, k) for k in family.parts}
+        bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}
         if course == 1:
             self.support, self.target = Placement(0, 1), Placement(1, 1)
             body_parts, self.j = [family.part_for(0, 1), family.part_for(1, 1)], 1
