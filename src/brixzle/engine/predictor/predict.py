@@ -37,11 +37,13 @@ LABEL = "predicted, quasi-static 2D"
 MUS = (0.2, 0.3, 0.4, 0.5)
 G = np.array([0., -1., 0.])  # unit weight
 # Largest point travel per step (mm). On A/B V0 (seed 0, tol 0.05) the predicted scales, course 0/1,
-# re-recorded after the issue #36 contact fixes:
-#   step 0.25 mm: mean 0.719/0.781, p95 0.375/0.344, max 0.281/0.250
-#   step 0.5 mm:  mean 0.719/0.781, p95 0.375/0.375, max 0.281/0.281
-#   step 1.0 mm:  mean 0.719/0.781, p95 0.375/0.375, max 0.250/0.281
-# so 0.5 mm agrees with 0.25 mm to within one bisection step.
+# re-recorded after the issue #36 contact fixes and the #38 drift correction:
+#   step 0.25 mm: mean 0.719/0.750, p95 0.375/0.406, max 0.281/0.281
+#   step 0.5 mm:  mean 0.719/0.781, p95 0.375/0.344, max 0.281/0.281
+#   step 1.0 mm:  mean 0.719/0.781, p95 0.375/0.406, max 0.281/0.281
+# so every step size agrees to within two bisection steps. The p95 course-1 spread is one pose (a
+# corner of the p95 box at scale 0.375) that at mu 0.5 can catch in a concave corner of the seated
+# brick 5.4 mm above the seat, depending on the step path; the sim (with momentum) seats it.
 DS_MM = 0.5
 MAX_CONTACTS = 4  # for mode enumeration (4^k LPs); stability tests use every contact
 
@@ -84,13 +86,19 @@ def _advance(body, pose, acc, h):
     return np.array([origin[0], origin[1], th])
 
 
+DRIFT_MM = PL.EPS_MM / 10  # an accepted step leaving more penetration than this is corrected
+
+
 def _step(body, pose, env, acc, h, tries=14):
     """The pose after a step of length h along acc, halving h until it does not penetrate; None if
-    no step does."""
+    no step does. An accepted step's residual penetration (the second-order drift of a first-order
+    step, e.g. when pivoting on a corner) is projected out, so it cannot creep up to EPS_MM and
+    block every later step (issue #38)."""
     for _ in range(tries):
         new = _advance(body, pose, acc, h)
-        if PL.penetration(body, new, env) <= PL.EPS_MM:
-            return new
+        pen = PL.penetration(body, new, env)
+        if pen <= PL.EPS_MM:
+            return PL.depenetrate(body, new, env) if pen > DRIFT_MM else new
         h /= 2
     return None
 

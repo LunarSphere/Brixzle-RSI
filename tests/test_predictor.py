@@ -171,6 +171,26 @@ def test_unmerged_contacts_keep_distinct_near_parallel_features():
     assert len(PL.contacts(body, (0.0, 0.0, 0.0), [env])) == 1  # the default merge joins them
 
 
+def test_a_slab_pivoting_on_a_near_parallel_face_slides_without_blocking():
+    # Issue #38: stepping is first-order, so pivoting on one corner adds a little penetration each
+    # step; without a position correction it crept to EPS_MM and every step blocked (step 21).
+    body, env, V = _near_parallel_scene()
+    r = PR.simulate(body, [env], start=(0.0, 0.0, 0.0), seat=(-50.0, -50.0, 0.0), mu=0.2, U=25.0, max_steps=60)
+    assert "blocked" not in (r["reason"] or ""), (r["reason"], r["steps"])
+    assert r["steps"] > 21
+
+
+def test_depenetrate_pushes_a_shallow_overlap_out():
+    env = Polygon([(-10, -5), (10, -5), (10, 0), (-10, 0)])
+    sq = Polygon([(0, 0), (2, 2), (0, 4), (-2, 2)])
+    body = PL.Body(sq, com=(0.0, 2.0), mass=1.0, inertia=1.0)
+    sunk = (0.0, -0.008, 0.0)
+    assert PL.penetration(body, sunk, [env]) == pytest.approx(0.008)
+    out = PL.depenetrate(body, sunk, [env])
+    assert PL.penetration(body, out, [env]) < 1e-6
+    assert out[1] == pytest.approx(0.0, abs=1e-6) and out[0] == pytest.approx(0.0) and out[2] == 0.0
+
+
 def test_a_vertex_near_an_edge_end_is_a_contact():
     # A vertex within eps of a fixed edge but inside its last eps, and between eps and sqrt(2) eps
     # from the end vertex: neither an edge contact nor (at radius eps) a corner pair. Missing it let

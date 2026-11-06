@@ -257,3 +257,45 @@ def penetration(body: Body, pose, env):
     if inside.any():
         depth = max(depth, float(shapely.distance(shapely.points(W[inside]), poly.boundary).max()))
     return depth
+
+
+def _deepest_push(body: Body, pose, env):
+    """(depth, translation) that lifts the deepest penetrating vertex of either body to the other's
+    boundary; (0, None) if nothing overlaps."""
+    poly = Polygon(place(body, pose))
+    fixed = shapely.union_all(env)
+    best = (0., None)
+    V = np.asarray(poly.exterior.coords)[:-1]
+    for k in np.flatnonzero(shapely.contains_xy(fixed, V[:, 0], V[:, 1])):
+        q = np.asarray(shapely.shortest_line(shapely.Point(V[k]), fixed.boundary).coords[1])
+        d = float(np.linalg.norm(q - V[k]))
+        if d > best[0]:
+            best = (d, q - V[k])           # move the body vertex out to the fixed boundary
+    W = np.vstack([np.asarray(orient(p).exterior.coords)[:-1] for p in env])
+    for k in np.flatnonzero(shapely.contains_xy(poly, W[:, 0], W[:, 1])):
+        q = np.asarray(shapely.shortest_line(shapely.Point(W[k]), poly.boundary).coords[1])
+        d = float(np.linalg.norm(q - W[k]))
+        if d > best[0]:
+            best = (d, W[k] - q)           # move the body's boundary out past the fixed vertex
+    return best
+
+
+def depenetrate(body: Body, pose, env, tol=1e-6, iters=4):
+    """The pose translated out of a shallow overlap (issue #38: first-order steps drift into the
+    surface when pivoting). Each pass lifts the deepest vertex to the boundary; the pose with the
+    least penetration is returned, so it never makes things worse."""
+    pose = np.asarray(pose, float).copy()
+    best, best_pen = pose, penetration(body, pose, env)
+    for _ in range(iters):
+        if best_pen <= tol:
+            break
+        depth, t = _deepest_push(body, best, env)
+        if t is None:
+            break
+        trial = best.copy()
+        trial[:2] += t * (1 + 1e-6)  # a hair past the boundary, so it ends just outside
+        pen = penetration(body, trial, env)
+        if pen >= best_pen:
+            break
+        best, best_pen = trial, pen
+    return best
