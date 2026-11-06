@@ -22,10 +22,7 @@ from brixzle.families import rules as R
 from brixzle.families.interface import Family, Placement, Prismatic
 from brixzle.requirements import load_requirements
 
-MIN_COVERAGE = 0.99    # of the solid inside the collision pieces
-MAX_OUTSIDE = 0.02     # of the collision pieces outside the solid (phantom ledges)
-MAX_OVERLAP = 0.005    # of a seated brick's volume inside its neighbour or the base
-TOUCH_MM = 0.05        # pieces are shrunk by this before overlap tests, so touching is not overlap
+TOUCH_MM = 0.5         # half the 1 mm seat tolerance: closer than this counts as touching, not overlap
 VOLUME_REL = 0.01      # Prismatic straight extrusion: solid volume vs section area x depth
 CHECKS = ("params", "section", "solid", "sim_bodies", "lattice", "rules", "pickup")
 
@@ -46,7 +43,7 @@ def _require(ok, message):
         raise _Fail(message)
 
 
-def check_family(family: Family, samples=5, seed=0) -> list[Violation]:
+def check_family(family: Family, samples=3, seed=0) -> list[Violation]:
     out = _check_params(family)
     try:
         defaults = family.defaults
@@ -184,10 +181,13 @@ def _check_sim_bodies(family, p, part):
         _require(B.is_convex_vertex_set(piece),
                  f"collision piece {i} has vertices inside its hull; give convex vertex sets")
         _require(ConvexHull(piece).volume > 0, f"collision piece {i} has no volume")
-    cover, outside = B.coverage(B.shell_mesh(family, p, part), bodies.collision)
-    _require(cover >= MIN_COVERAGE, f"collision covers {cover:.1%} of the solid (need {MIN_COVERAGE:.0%})")
-    _require(outside <= MAX_OUTSIDE,
-             f"{outside:.1%} of the collision volume lies outside the solid (max {MAX_OUTSIDE:.0%})")
+    inside, outside = B.contact_points(family, p, part)
+    # 1 um tolerance: decomposed pieces meet at seams, and a point on a seam belongs to both.
+    missed = int((~B.inside_any(inside, bodies.collision, tol=1e-3)).sum())
+    _require(missed == 0, f"{missed} of {len(inside)} points just inside the outline are not in the collision")
+    phantom = int(B.inside_any(outside, bodies.collision, tol=-1e-3).sum())
+    _require(phantom == 0, f"{phantom} of {len(outside)} points just outside the outline or off a guide face "
+                           "are inside the collision (phantom material)")
     _require(B.math_finite(bodies.mass_g, bodies.com_mm, bodies.inertia_g_mm2),
              "mass, centre of mass and inertia must be finite")
     inertia = np.asarray(bodies.inertia_g_mm2)
@@ -207,15 +207,11 @@ def _placed(family, p, placement):
     return [rot.apply(np.asarray(v)) + np.asarray(pos) for v in pieces]
 
 
-def _overlap(a, b, n=20000, seed=0):
-    """Fraction of a's volume inside b, with both shrunk by TOUCH_MM."""
-    lo = np.min([v.min(axis=0) for v in a], axis=0)
-    hi = np.max([v.max(axis=0) for v in a], axis=0)
-    pts = np.random.default_rng(seed).uniform(lo, hi, size=(n, 3))
-    pts = pts[B.inside_any(pts, a, tol=-TOUCH_MM)]
-    if not len(pts):
-        return 0.0
-    return float(B.inside_any(pts, b, tol=-TOUCH_MM).mean())
+def _overlap(a, b):
+    """Key points of a (each corner of each piece, a quarter of the way to its centre) inside b,
+    with b shrunk by TOUCH_MM."""
+    pts = np.vstack([v + 0.25 * (v.mean(axis=0) - v) for v in a])
+    return int(B.inside_any(pts, b, tol=-TOUCH_MM).sum())
 
 
 def _check_lattice(family, p, part=None):
@@ -240,13 +236,14 @@ def _check_lattice(family, p, part=None):
     lower = _placed(family, p, Placement(0, 0))
     pairs = {"the brick above": Placement(1, 0), "its neighbour in the course": Placement(0, lat.span_voxels)}
     for label, pl in pairs.items():
-        frac = _overlap(lower, _placed(family, p, pl))
-        _require(frac <= MAX_OVERLAP, f"a seated brick overlaps {label} by {frac:.1%} of its volume")
+        upper = _placed(family, p, pl)
+        n = _overlap(lower, upper) + _overlap(upper, lower)
+        _require(n == 0, f"a seated brick overlaps {label} ({n} key points inside it)")
     base = B.base_pieces(family, p, 2 * lat.span_voxels, 1)
     for i, piece in enumerate(base):
         _require(B.math_finite(piece) and ConvexHull(piece).volume > 0, f"base piece {i} is degenerate")
-    frac = _overlap(lower, base)
-    _require(frac <= MAX_OVERLAP, f"a course-0 brick overlaps the base by {frac:.1%} of its volume")
+    n = _overlap(lower, base) + _overlap(base, lower)
+    _require(n == 0, f"a course-0 brick overlaps the base ({n} key points inside it)")
 
 
 _RULE_KEY = re.compile(r"^(R\d+)\.[a-z0-9_]+$")

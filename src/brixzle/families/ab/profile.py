@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/profile.py @ a649663
-# Unchanged.
+# Changed: fork_channels is memoised with functools.lru_cache (pure in its arguments, returns a tuple); it took ~0.4 s and was called ~35 times per contract run.
 """2D XZ profile of the A/B brick pair and the anchored base, built with shapely.
 
 A brick spans local x in [-U, U] (two voxels, a voxel boundary at x=0). The
@@ -291,6 +291,7 @@ def channel_footprint(p: BrickParams, center):
     return LineString([(x, z - shear_drop(p)), (x, z)]).buffer(r, quad_segs=8)
 
 
+@lru_cache(maxsize=256)
 def fork_channels(p: BrickParams, step=0.25, min_spacing=8.0):
     """Two straight through-Y tine bores shared by parts A and B, as high as possible, >= min_spacing apart.
 

@@ -147,3 +147,25 @@ def test_violation_says_where():
     (v,) = [v for v in C.check_family(bad, samples=0) if v.check == "rules"]
     assert v.where == "defaults, part A"
     assert "R99" in v.message
+
+
+def _wedge_with_collision(collision):
+    def solid(p, part):
+        return B.solid(WEDGE, p, part, bored=False)
+
+    return replace(WEDGE, geometry=Solid3D(solid=solid, collision=collision, section=wedge_module.section))
+
+
+def test_rejects_collision_missing_material():
+    def half(p, part):
+        return B.collision(WEDGE, p, part)[0][:1]  # one of the chevron's two convex pieces
+
+    assert "sim_bodies" in _checks(_wedge_with_collision(half))
+
+
+def test_rejects_phantom_collision_material():
+    def box(p, part):
+        h = p.U * math.tan(math.radians(p.groove_deg))
+        return [np.array([[x, y, z] for x in (-p.U, p.U) for y in (-p.D / 2, p.D / 2) for z in (0.0, h + p.H0)])]
+
+    assert "sim_bodies" in _checks(_wedge_with_collision(box))

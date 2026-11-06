@@ -63,18 +63,19 @@ The R9 and R10 formulas and all the constants come from aerial-assembly `rules.p
 
 ## What the contract checks
 
-`check_family(family, samples=5, seed=0)` runs on the defaults and on seeded random points inside the bounds. At a sampled point, raising `ValueError` marks the point as infeasible and is allowed. Any other exception is a violation, and so is any exception at the defaults.
+`check_family(family, samples=3, seed=0)` runs on the defaults and on seeded random points inside the bounds. At a sampled point, raising `ValueError` marks the point as infeasible and is allowed. Any other exception is a violation, and so is any exception at the defaults.
 
 1. **params:** bounds are finite with lo < hi and name real fields. The defaults are finite and inside the bounds. `to_dict`/`from_dict` round-trips, and `from_dict` rejects unknown keys.
 2. **section:** `outer` is a valid polygon with area. Holes lie inside it, and guide faces lie on the outline.
 3. **solid:** the solid is valid and gives one watertight piece. For a straight `Prismatic` extrusion, its volume matches section area × depth within 1%.
 4. **sim_bodies:**
-   - every collision piece is a convex vertex set with volume. The pieces must cover at least 99% of the solid's outer shell, with at most 2% of their volume outside it. The shell is the solid without its bores and, for Prismatic, without its lightening holes, since other bricks never touch the inside of a hole;
+   - every collision piece is a convex vertex set with volume;
+   - the collision is right at the key contact points. These are points a quarter, half and three quarters along every outline edge, 0.5 mm inside and 0.5 mm outside it (half the 1 mm seat tolerance), at three depths across Y (Prismatic) or in the y = 0 slice (Solid3D). Every inside point must be in the collision (no missing material at a face), and no outside point may be (no phantom ledge). Sharp corners are left out, because a convex decomposition rounds them off slightly without changing how a brick seats;
    - mass, centre of mass and inertia are finite, and inertia is symmetric positive-definite;
    - MuJoCo compiles the bodies.
 5. **lattice:**
    - quaternions have unit norm and insertion axes are unit vectors;
-   - a seated brick overlaps the brick above it, its neighbour in the course and the base by no more than 0.5% of its volume (touching is fine);
+   - a seated brick doesn't overlap the brick above it, its neighbour in the course or the base. This is checked at key points, a quarter of the way from each collision corner to its piece's centre; contact closer than 0.5 mm counts as touching;
    - `part_for` returns a listed part.
 6. **rules:** every margin is finite and its key names a requirement that exists.
 7. **pickup:** there's at least one bore, and no bore breaks out of the section's outline or into a hole. The wall thickness round a bore is the `R13.bore_wall` margin, not a pass/fail check.

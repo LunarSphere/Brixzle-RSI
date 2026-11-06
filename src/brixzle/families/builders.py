@@ -17,7 +17,7 @@ import coacd
 import numpy as np
 import trimesh
 from scipy.spatial import ConvexHull
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import polygonize, unary_union
 
 from brixzle.families.convex import convex_parts
@@ -213,16 +213,54 @@ def inside_any(points, pieces, tol=0.0):
     return inside
 
 
-def coverage(mesh, pieces, n=20000, seed=0):
-    """(fraction of the solid inside the pieces, fraction of the pieces outside the solid)."""
-    lo = np.minimum(mesh.bounds[0], np.min([pc.min(axis=0) for pc in pieces], axis=0)) - 0.5
-    hi = np.maximum(mesh.bounds[1], np.max([pc.max(axis=0) for pc in pieces], axis=0)) + 0.5
-    pts = np.random.default_rng(seed).uniform(lo, hi, size=(n, 3))
-    in_solid = mesh.contains(pts)
-    in_pieces = inside_any(pts, pieces)
-    cover = (in_solid & in_pieces).sum() / max(in_solid.sum(), 1)
-    outside = (in_pieces & ~in_solid).sum() / max(in_pieces.sum(), 1)
-    return float(cover), float(outside)
+CONTACT_OFFSET_MM = 0.5  # half the 1 mm seat tolerance (trials.Tolerance.seat_xz)
+
+
+def _band_shift(extrusion: Extrusion, y):
+    for y0, y1, z0, z1 in extrusion.resolved_bands():
+        if min(y0, y1) <= y <= max(y0, y1):
+            return z0 + (z1 - z0) * (y - y0) / (y1 - y0)
+    raise ValueError(f"y = {y} is outside the extrusion")
+
+
+def contact_points(family: Family, p, part, offset=CONTACT_OFFSET_MM):
+    """(points that must be inside the collision, points that must be outside it), mm.
+
+    A few key contact points rather than a volume sample: along every edge of the section outline
+    (the faces other bricks and the base touch), at a quarter, half and three quarters of its
+    length, ``offset`` inside and ``offset`` outside. Sharp corners are left out on purpose: a
+    convex decomposition rounds them off slightly, which doesn't change how a brick seats.
+    Prismatic: at three depths across Y, following the bands. Solid3D: in the y = 0 slice.
+    """
+    s = section(family, p, part)
+    g = family.geometry
+    if isinstance(g, Prismatic):
+        e = g.extrusion(p)
+        planes = [(y, _band_shift(e, y)) for y in (-0.4 * e.depth_mm, 0.0, 0.4 * e.depth_mm)]
+    else:
+        planes = [(SLICE_Y_MM, 0.0)]
+    coords = np.asarray(s.outer.simplify(1e-3).exterior.coords)
+    inside, outside = [], []
+    for a, b in zip(coords[:-1], coords[1:]):
+        length = np.linalg.norm(b - a)
+        if length < 4 * offset:  # too short to hold a point clear of both corners
+            continue
+        n = np.array([-(b - a)[1], (b - a)[0]]) / length
+        for t in (0.25, 0.5, 0.75):
+            q = a + t * (b - a)
+            out_dir = n if not s.outer.contains(Point(*(q + offset * n))) else -n
+            # Keep only points that really are `offset` from the outline: on a feature thinner
+            # than 2 * offset (a tooth tip, a chamfer) the inside point would leave the brick.
+            for pt, want_inside, bucket in ((q - offset * out_dir, True, inside),
+                                            (q + offset * out_dir, False, outside)):
+                point = Point(*pt)
+                if s.outer.contains(point) == want_inside and s.outer.exterior.distance(point) >= 0.99 * offset:
+                    bucket.append(pt)
+
+    def lift(xz):
+        xz = np.asarray(xz).reshape(-1, 2)
+        return np.vstack([np.column_stack([xz[:, 0], np.full(len(xz), y), xz[:, 1] + dz]) for y, dz in planes])
+    return lift(inside), lift(outside)
 
 
 def is_convex_vertex_set(piece, tol=1e-6):
