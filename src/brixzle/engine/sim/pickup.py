@@ -127,7 +127,8 @@ def _bore_hole(b, z_a, z_b):
 
 
 def bored_collision(family, p, part, sub_bands=3):
-    """Convex pieces (mm, brick frame) of the brick with its straight fork bores open.
+    """Convex pieces (mm, brick frame) of the brick with its straight fork bores and its fork
+    openings (PickupFeatures.openings, which sweep with the section) open.
 
     The engine's usual collision covers the unbored outline (builders). A sheared band moves the
     section in z along y while the bore stays straight, so each sheared band is cut into
@@ -136,7 +137,10 @@ def bored_collision(family, p, part, sub_bands=3):
     """
     _require_prismatic(family)
     outer = family.geometry.section(p, part).outer
-    bores = family.pickup(p, part).bores
+    feats = family.pickup(p, part)
+    bores, openings = feats.bores, feats.openings
+    # Openings are part of the section, so they shear with each band's prism: cut them as they are.
+    outer = outer.difference(unary_union(openings)) if openings else outer
     x0, _, x1, _ = outer.bounds
     pieces = []
     for y0, y1, z0, z1 in family.geometry.extrusion(p).resolved_bands():
@@ -146,8 +150,8 @@ def bored_collision(family, p, part, sub_bands=3):
             za, zb = z0 + (z1 - z0)*k/n, z0 + (z1 - z0)*(k + 1)/n
             holes = unary_union([_bore_hole(b, b.z_mm - za, b.z_mm - zb) for b in bores])
             polys = [outer.difference(holes)]
-            for b in bores:  # cut through each hole so every piece is simple
-                zc = b.z_mm - (za + zb)/2
+            cuts = [b.z_mm - (za + zb)/2 for b in bores] + [o.centroid.y for o in openings]
+            for zc in cuts:  # cut through each hole so every piece is simple
                 line = LineString([(x0 - 1, zc), (x1 + 1, zc)])
                 polys = [q for poly in polys for q in split(poly, line).geoms]
             for poly in polys:
@@ -205,7 +209,17 @@ class PickRig:
         self.part = part = part or family.part_for(0, 1)
         plain = (bodies or {}).get(part) or B.sim_bodies(family, p, part)
         self.brick = replace(plain, collision=bored_collision(family, p, part, cfg.sub_bands))
-        self.fork = build_fork(family, p, part, cfg.fork, cfg.drone, cfg.gains)
+        feats = family.pickup(p, part)
+        self.openings = feats.openings
+        if self.openings:  # through the openings (issue #12): the fork fitted to their seats
+            from brixzle.engine.predictor import pickup as PP  # not at module level: PP imports box_search
+
+            self.geo = PP.geometry(family, p, cfg.fork)
+            self.fork = build_fork(family, p, part, cfg.fork, cfg.drone, cfg.gains,
+                                   tines=[tuple(s) for s in self.geo["seats"]])
+        else:
+            self.geo = None
+            self.fork = build_fork(family, p, part, cfg.fork, cfg.drone, cfg.gains)
         static = fixture_pieces(family, p, part, cfg.pocket_clearance_mm) if mode == "pick" else None
         bases = [] if mode == "pick" else [(0, BASE_VOXELS)]
         self.model, self.xml, self.info = build_scene(
@@ -231,9 +245,12 @@ class PickRig:
         w = 2*math.pi*g.att_hz
         self.k_att, self.c_att = I*w*w, 2*g.att_damping*I*w
         self.kp, self.kd = np.asarray(g.kp), np.asarray(g.kd)
-        bores = family.pickup(p, part).bores
-        self.aim_low = float(np.mean([b.radius_mm - self.fork["tine_r"] for b in bores]))  # tine centred in bore
-        self.bores = bores
+        self.bores = feats.bores
+        if self.openings:  # aim the fork at the centre of the region where every tine clears
+            self.aim_dx, self.aim_low = float(self.geo["aim"][0]), -float(self.geo["aim"][1])
+        else:
+            self.aim_dx = 0.0
+            self.aim_low = float(np.mean([b.radius_mm - self.fork["tine_r"] for b in self.bores]))  # tine centred
 
     # -- low level --
 
@@ -357,7 +374,7 @@ class PickRig:
         self._hold_park(cfg.settle_s)
         aim_pos, aim_R = self._brick_pose()   # the camera-measured pose of the waiting brick
         start_z = aim_pos[2]
-        err = (float(sample["dx"]), float(sample["dz"]), float(sample["psi"]))
+        err = (float(sample["dx"]) + self.aim_dx, float(sample["dz"]), float(sample["psi"]))
         D = self.family.lattice(self.p).D_mm
         y_back = -(D + cfg.fork.protrude + cfg.standoff_mm)
         contacts = {} if trace else None
@@ -369,8 +386,13 @@ class PickRig:
         # Capture: every tine's mid point in its bore, at full depth.
         bpos, bR = self._brick_pose()
         mids = self._in_frame(bR, bpos, self._tine_points(0.))
-        off = [math.hypot(q[0] - b.x_mm, q[2] - b.z_mm) for q, b in zip(mids, self.bores)]
-        in_bore = all(o <= b.radius_mm + 0.5 for o, b in zip(off, self.bores))
+        if self.openings:  # each tine's mid point inside its opening (centre band: no shear at y = 0)
+            off = [float(o.exterior.distance(Point(q[0], q[2]))) * (1 if o.contains(Point(q[0], q[2])) else -1)
+                   for q, o in zip(mids, self.openings)]
+            in_bore = all(v >= 0 for v in off)
+        else:
+            off = [math.hypot(q[0] - b.x_mm, q[2] - b.z_mm) for q, b in zip(mids, self.bores)]
+            in_bore = all(o <= b.radius_mm + 0.5 for o, b in zip(off, self.bores))
         depth_ok = all(abs(q[1]) <= cfg.insert_tol_mm for q in mids)
         blocked = any(q[1] < -cfg.insert_tol_mm for q in mids)
         lift, Tl = self._path(aim_pos, aim_R, err, 0., 0., -self.aim_low, -self.aim_low + self.lift_mm, cfg.v_lift)
@@ -388,7 +410,7 @@ class PickRig:
             outcome = "forceful"
         else:
             outcome = "picked"
-        row = {"dx": err[0], "dz": err[1], "psi": err[2], "outcome": outcome,
+        row = {"dx": float(sample["dx"]), "dz": err[1], "psi": err[2], "outcome": outcome,
                "captured": bool(in_bore and depth_ok), "tine_offset_mm": [float(o) for o in off],
                "rise_mm": float(rise), "lift_mm": float(self.lift_mm),
                "carry_err_mm": [float(v) for v in carry_err], "carry_angle_deg": float(carry_angle),

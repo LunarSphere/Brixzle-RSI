@@ -127,3 +127,20 @@ def test_pickup_parallel_reproduces_serial(search):
     par = {(d["scale"], d["point"]): (d["outcome"], d["carry_err_mm"]) for d in parallel["courses"]["pick"]["drops"]}
     for d in serial["courses"]["pick"]["drops"]:
         assert par[(d["scale"], d["point"])] == (d["outcome"], d["carry_err_mm"])
+
+
+def test_the_fork_goes_through_the_openings_as_predicted(ab_bodies):
+    # Issue #12: A/B is picked through its two big windows. The fork's tines sit at the predicted
+    # seats; an aligned pick seats, 1 mm across lands on a web (the sheared windows leave a
+    # 0.71 mm aim margin), matching the predictor. Simulated, uncalibrated contact.
+    from brixzle.engine.predictor import pickup as PP
+    from brixzle.engine.sim import pickup as PK
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
+
+    rig = PK.PickRig(AB, V0, bodies=ab_bodies)
+    assert rig.fork["tines"] == [tuple(s) for s in PP.geometry(AB, V0)["seats"]]
+    for dx, want in ((0.0, "picked"), (1.0, "jammed")):
+        sample = {"dx": dx, "dz": 0.0, "psi": 0.0}
+        assert rig.pick(sample, trace=False)["outcome"] == want
+        assert PP.predict_pick(AB, V0, sample)["outcome"] == want
