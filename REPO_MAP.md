@@ -12,6 +12,7 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/engine/sim/pickup.py`, `fork.py`, `drone.py` | Pickup trial (R12): pick fixture, bored brick collision, the fixed fork, and the drone's mass, thrust margin and hover spring |
 | `src/brixzle/engine/boxes.py`, `box_search.py` | Target error boxes (R11, R12) and the box-scale search for placement and pickup |
 | `src/brixzle/engine/predictor/` | Analytic placement predictor (R11): quasi-static 2D contact stepping, contact-mode LPs and stability tests (Balkcom & Trinkle 2002, Pang & Trinkle 2000), predicted box and map |
+| `src/brixzle/engine/predictor/pickup.py` | Analytic pickup predictor (R12 capture, issue #12): Whitney 1982 peg-in-hole per tine (chamfer crossing, one- and two-point contact, wedging, the jamming diagram) against the hover spring's push, and the predicted pickup box |
 | `src/brixzle/engine/validate.py` | Predictor-vs-sim validation (issue #11): both models on an X, Z, theta grid over a placement box, agreement, capture edges and a disagreement map |
 | `src/brixzle/families/` | One brick family per subpackage: parameters and bounds, 2D section, CAD solid, rules |
 | `src/brixzle/families/interface.py`, `builders.py`, `rules.py`, `contract.py`, `registry.py` | The family contract, shared builders (solid, collision, mass, base), shared R6/R9/R10 rules, contract checks, and family discovery |

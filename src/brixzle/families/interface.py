@@ -88,12 +88,28 @@ class Extrusion:
 
 @dataclass(frozen=True)
 class Bore:
-    """A straight through-Y bore for one tine of the fixed fork."""
+    """A straight through-Y bore for one tine of the fixed fork, with an optional lead-in chamfer
+    at its mouth (the near face, where the tine enters).
+
+    The chamfer follows Whitney 1982 (Fig. 3): ``chamfer_w_mm`` is its radial width, so the mouth
+    radius is ``radius_mm + chamfer_w_mm``; ``chamfer_deg`` is the face's angle from the bore's end
+    face, so 90 is a straight wall and lower is flatter. A tine slides down it only if
+    tan(chamfer_deg) > mu. No chamfer (width 0) is a plain bore. The pickup predictor
+    (engine/predictor/pickup.py) uses the chamfer; the sim's bored collision does not cut it yet.
+    """
 
     x_mm: float
     z_mm: float
     d_mm: float          # tine diameter
     clearance_mm: float  # radial clearance around the tine
+    chamfer_w_mm: float = 0.0   # lead-in width at the mouth (radial)
+    chamfer_deg: float = 45.0   # lead-in face angle from the bore's end face; used when the width > 0
+
+    def __post_init__(self):
+        if not (math.isfinite(self.chamfer_w_mm) and self.chamfer_w_mm >= 0):
+            raise ValueError("chamfer_w_mm must be finite and >= 0")
+        if not (math.isfinite(self.chamfer_deg) and 0 < self.chamfer_deg < 90):
+            raise ValueError("chamfer_deg must be between 0 and 90 (exclusive)")
 
     @property
     def radius_mm(self) -> float:
