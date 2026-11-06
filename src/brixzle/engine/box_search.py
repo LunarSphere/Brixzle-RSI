@@ -174,7 +174,7 @@ def _search_course(box, cfg, course, unit, s_max, tol, pool):
 
 
 def box_search(family, p, box: BX.TargetBox, cfg=None, courses=(0, 1), seed=0, s_max=2.0, tol=0.05,
-               n_interior=4, workers=None):
+               n_interior=4, workers=None, release=True):
     """Bisect the scale of a placement or pickup box for one family; returns a JSON-safe result dict.
 
     Placement: ``courses`` 0 drops onto the anchored base, 1 onto a seated course-0 brick (for
@@ -183,7 +183,9 @@ def box_search(family, p, box: BX.TargetBox, cfg=None, courses=(0, 1), seed=0, s
     Pickup: one course, 'pick' (``courses`` is ignored), plus the release check; passes only if
     the scale reaches 1 and the release is clean. ``cfg`` is a pickup.PickConfig.
     ``workers``: parallel trial processes (default DEFAULT_WORKERS, capped by the CPU count);
-    1 runs serially in this process."""
+    1 runs serially in this process. ``release=False`` skips the pickup release check (it does not
+    depend on the box, so a caller scoring several pickup boxes runs it once itself); the result
+    then has no 'release' key and ``passed`` covers the scale only."""
     if box.task not in SUCCESS:
         raise ValueError(f"unknown box task {box.task!r}; expected one of {sorted(SUCCESS)}")
     pickup = box.task == "pickup"
@@ -221,7 +223,7 @@ def box_search(family, p, box: BX.TargetBox, cfg=None, courses=(0, 1), seed=0, s
         "courses": per_course,
         "drop_count": sum(r["drop_count"] for r in per_course.values()),
     }
-    if pickup:
+    if pickup and release:
         out["release"] = PK.release_check(family, p, cfg, bodies=bodies)
         out["passed"] = scale >= 1.0 and out["release"]["passed"]
     out["seconds"] = time.time() - t0
