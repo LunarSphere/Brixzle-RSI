@@ -9,6 +9,7 @@ from shapely.geometry import Polygon
 
 from brixzle.families import builders as B
 from brixzle.families import contract as C
+from brixzle.families import rules as R
 from brixzle.families import registry
 from brixzle.families.interface import Bore, PickupFeatures, Prismatic, Section, Solid3D
 from brixzle.families.wedge import family as wedge_module
@@ -55,23 +56,30 @@ def test_rejects_bore_outside_the_brick():
     assert "pickup" in _checks(replace(WEDGE, pickup=outside))
 
 
-def test_rejects_bore_too_close_to_the_wall():
+def test_thin_bore_wall_is_a_negative_margin_not_a_violation():
     def thin(p, part):
         f = wedge_module.pickup(p, part)
         b = f.bores[0]
         top = abs(b.x_mm) * math.tan(math.radians(p.groove_deg)) + p.H0
         return PickupFeatures(bores=(replace(b, z_mm=top - b.radius_mm - 0.5), *f.bores[1:]))
 
-    assert "pickup" in _checks(replace(WEDGE, pickup=thin))
+    bad = replace(WEDGE, pickup=thin)
+    assert "pickup" not in _checks(bad)
+    p = WEDGE.defaults
+    margins = R.margins(bad, p, "A", B.sim_bodies(bad, p, "A"))
+    # 0.5 mm below the slanted top vertically is (r + 0.5) cos(groove) - r perpendicular to it.
+    r = wedge_module.pickup(p, "A").bores[0].radius_mm
+    wall = (r + 0.5) * math.cos(math.radians(p.groove_deg)) - r
+    assert margins["R13.bore_wall"] == pytest.approx(wall - 1.2, abs=1e-3)
 
 
 def test_rejects_non_finite_margin():
-    bad = replace(WEDGE, extra_rules=lambda p, bodies: {"R6.extra": math.nan})
+    bad = replace(WEDGE, extra_rules=lambda p, part, bodies: {"R6.extra": math.nan})
     assert "rules" in _checks(bad)
 
 
 def test_rejects_margin_for_unknown_requirement():
-    bad = replace(WEDGE, extra_rules=lambda p, bodies: {"R99.extra": 1.0})
+    bad = replace(WEDGE, extra_rules=lambda p, part, bodies: {"R99.extra": 1.0})
     assert "rules" in _checks(bad)
 
 
@@ -135,7 +143,29 @@ def test_other_exception_at_a_sampled_point_is_a_violation():
 
 
 def test_violation_says_where():
-    bad = replace(WEDGE, extra_rules=lambda p, bodies: {"R99.extra": 1.0})
+    bad = replace(WEDGE, extra_rules=lambda p, part, bodies: {"R99.extra": 1.0})
     (v,) = [v for v in C.check_family(bad, samples=0) if v.check == "rules"]
     assert v.where == "defaults, part A"
     assert "R99" in v.message
+
+
+def _wedge_with_collision(collision):
+    def solid(p, part):
+        return B.solid(WEDGE, p, part, bored=False)
+
+    return replace(WEDGE, geometry=Solid3D(solid=solid, collision=collision, section=wedge_module.section))
+
+
+def test_rejects_collision_missing_material():
+    def half(p, part):
+        return B.collision(WEDGE, p, part)[0][:1]  # one of the chevron's two convex pieces
+
+    assert "sim_bodies" in _checks(_wedge_with_collision(half))
+
+
+def test_rejects_phantom_collision_material():
+    def box(p, part):
+        h = p.U * math.tan(math.radians(p.groove_deg))
+        return [np.array([[x, y, z] for x in (-p.U, p.U) for y in (-p.D / 2, p.D / 2) for z in (0.0, h + p.H0)])]
+
+    assert "sim_bodies" in _checks(_wedge_with_collision(box))

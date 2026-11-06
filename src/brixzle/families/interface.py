@@ -169,7 +169,7 @@ class Family:
     release_lift_mm: Callable[[Any], float]                  # release height above the seat
     base: Callable[[Any, int, int], Any]  # (p, voxels, direction) -> Section | cq shape | pieces
     pickup: Callable[[Any, str], PickupFeatures]
-    extra_rules: Callable[[Any, SimBodies], dict[str, float]] | None = None
+    extra_rules: Callable[[Any, str, SimBodies], dict[str, float]] | None = None  # (p, part, bodies)
 
     @property
     def defaults(self):

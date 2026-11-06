@@ -1,4 +1,4 @@
-# Base requirements R1–R12 as data. Loaded by brixzle.requirements.
+# Base requirements R1–R13 as data. Loaded by brixzle.requirements.
 # Keep in step with the table in docs/requirements.md: the tests check that
 # ids, names, text and check kinds agree. Change only in a reviewed PR.
 #
@@ -68,3 +68,8 @@ requirements:
     name: Coarse pickup
     text: "The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail)."
     checks: [predictor, sim]
+
+  - id: R13
+    name: Printable
+    text: "A brick must print as one piece in PLA, with walls of at least 1.2 mm."
+    checks: [rule]

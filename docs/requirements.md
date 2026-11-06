@@ -22,6 +22,7 @@ Each requirement is checked one of three ways:
 | R10 | **Passive pickup.** A non-actuated gripper must be able to pick up the brick; the drone's payload is about 40 g. | Rules: gripper fit, hangs level, straddles the centre of mass |
 | R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Analytic predictor and sim: placement box score |
 | R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
+| R13 | **Printable.** A brick must print as one piece in PLA, with walls of at least 1.2 mm. | Rules: single piece, minimum wall |
 
 ## Design target
 

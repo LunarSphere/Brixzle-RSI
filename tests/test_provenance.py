@@ -13,7 +13,7 @@ BORROWED = [
     "src/brixzle/families/ab/params.py",
     "src/brixzle/families/ab/profile.py",
     "src/brixzle/families/convex.py",
-    "src/brixzle/families/ab/cad.py",
+    "src/brixzle/families/ab/rules.py",
     "src/brixzle/families/ab/lattice.py",
     "src/brixzle/families/builders.py",
     "src/brixzle/families/rules.py",

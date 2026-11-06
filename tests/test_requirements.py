@@ -15,7 +15,7 @@ from brixzle.requirements import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS_MD = REPO_ROOT / "docs" / "requirements.md"
-EXPECTED_IDS = [f"R{n}" for n in range(1, 13)]
+EXPECTED_IDS = [f"R{n}" for n in range(1, 14)]
 
 VALID_ENTRY = """\
   - id: R{n}
@@ -32,7 +32,7 @@ def write_yaml(tmp_path, body):
 
 
 def full_yaml(skip=None, extra=""):
-    entries = "".join(VALID_ENTRY.format(n=n) for n in range(1, 13) if n != skip)
+    entries = "".join(VALID_ENTRY.format(n=n) for n in range(1, 14) if n != skip)
     return "requirements:\n" + entries + extra
 
 
@@ -67,7 +67,7 @@ def md_check_kinds(checked_by):
 # --- The shipped data file ---
 
 
-def test_default_file_loads_r1_to_r12_in_order():
+def test_default_file_loads_r1_to_r13_in_order():
     requirements = load_requirements()
     assert [r.id for r in requirements] == EXPECTED_IDS
     assert all(isinstance(r, Requirement) for r in requirements)
@@ -123,8 +123,8 @@ def test_rejects_duplicate_id(tmp_path):
 
 
 def test_rejects_unknown_id(tmp_path):
-    path = write_yaml(tmp_path, full_yaml(extra=VALID_ENTRY.format(n=13)))
-    with pytest.raises(RequirementsError, match="unknown id.*R13"):
+    path = write_yaml(tmp_path, full_yaml(extra=VALID_ENTRY.format(n=14)))
+    with pytest.raises(RequirementsError, match="unknown id.*R14"):
         load_requirements(path)
 
 

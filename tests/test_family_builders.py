@@ -102,12 +102,12 @@ def test_pyramid_section_falls_back_to_the_y0_slice():
     assert [g.angle_deg for g in s.guide_faces] == pytest.approx([side] * 4, abs=0.01)
 
 
-def test_pyramid_collision_is_decomposed_and_covers_the_solid(pyramid):
+def test_pyramid_collision_is_decomposed_and_right_at_the_contact_points(pyramid):
     p, bodies = pyramid
     assert bodies.collision_source == "decomposed"
-    cover, outside = B.coverage(B.solid_mesh(PYRAMID, p, "A", bored=False), bodies.collision)
-    assert cover >= 0.99
-    assert outside <= 0.02
+    inside, outside = B.contact_points(PYRAMID, p, "A")
+    assert B.inside_any(inside, bodies.collision, tol=1e-3).all()       # no missing material at a face
+    assert not B.inside_any(outside, bodies.collision, tol=-1e-3).any()  # no phantom ledge in the pocket
 
 
 def test_decomposition_is_reproducible(pyramid):

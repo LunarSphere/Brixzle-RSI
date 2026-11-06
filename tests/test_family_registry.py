@@ -13,8 +13,8 @@ def test_discovers_the_dummy_families():
     assert {"wedge", "pyramid"} <= set(registry.names())
 
 
-def test_skips_packages_without_a_family_module():
-    assert "ab" not in registry.names()  # the A/B baseline adopts the interface in #6
+def test_registers_the_ab_baseline():
+    assert "ab" in registry.names()
 
 
 def test_get_returns_the_family():

@@ -1,32 +1,34 @@
 # From LunarSphere/aerial-assembly brixzle/tests/test_trials.py, test_ab.py, test_approach_error.py @ a649663
 # Changed: only drop-trial tests kept (assembly, rules and fixture tests not ported); new imports;
-# classify, ErrorModel validation and Tolerance tests added. Results are simulated, uncalibrated contact.
+# classify, ErrorModel validation and Tolerance tests added; trials take a family (A/B) and a course
+# instead of BrickParams, bricks and a part. Results are simulated, uncalibrated contact.
 
 import numpy as np
 import pytest
 
 from brixzle.engine.sim import trials as T
+from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import V0
 
 
-@pytest.mark.parametrize("part", ["A", "B"])
-def test_aligned_drop_seats(ab_bricks, part):
+@pytest.mark.parametrize("course", [0, 1])  # part A onto the base; part B onto a seated A
+def test_aligned_drop_seats(course):
     cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
-    rows, _ = T.drop_trials(V0, ab_bricks, cfg, offsets=[0.0], part=part)
+    rows, _ = T.drop_trials(AB, V0, cfg, offsets=[0.0], course=course)
     assert rows[0]["outcome"] == "seated"
     assert rows[0]["settled"]
 
 
-def test_capture_covers_ten_mm_around_aim_in_x(ab_bricks):
+def test_capture_covers_ten_mm_around_aim_in_x():
     cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
     aim = cfg.error.aim_bias
-    rows, _ = T.drop_trials(V0, ab_bricks, cfg, offsets=[aim + d for d in (-10.0, -5.0, 0.0, 5.0, 10.0)])
+    rows, _ = T.drop_trials(AB, V0, cfg, offsets=[aim + d for d in (-10.0, -5.0, 0.0, 5.0, 10.0)])
     assert all(r["outcome"] == "seated" for r in rows), [(r["dx"], r["outcome"]) for r in rows]
 
 
-def test_capture_margin_from_simulated_sweep(ab_bricks):
-    assert T.capture_margin(V0, ab_bricks, 5.0) >= 0
-    assert T.capture_margin(V0, ab_bricks, 14.8) < 0
+def test_capture_margin_from_simulated_sweep():
+    assert T.capture_margin(AB, V0, 5.0) >= 0
+    assert T.capture_margin(AB, V0, 14.8) < 0
 
 
 def test_capture_radius_is_measured_from_the_aim():
@@ -72,4 +74,4 @@ def test_tolerance_defaults():
     ((0.0, 3.0, 0.0), 0.0, False, "jammed"),
 ])
 def test_classify(err, angle, on_floor, expect):
-    assert T.classify(V0, np.array(err), angle, T.Tolerance(), on_floor) == expect
+    assert T.classify(AB.lattice(V0), np.array(err), angle, T.Tolerance(), on_floor) == expect

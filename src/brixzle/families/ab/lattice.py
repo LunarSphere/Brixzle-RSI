@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/lattice.py @ a649663
-# Changed: only placements and seat poses kept; Structure, connectivity, assembly order, tiling and footprints dropped (no assembly trials yet), so networkx and shapely imports go too.
+# Changed: only seat poses kept, and Placement comes from the family interface; Structure, connectivity, assembly order, tiling and footprints dropped (no assembly trials yet), so networkx and shapely imports go too.
 """Voxel lattice, brick placements and their seat poses.
 
 Lattice: voxel i spans x in [iU, (i+1)U]; course k sits at z = k H0. A brick
@@ -10,27 +10,12 @@ unrotated, so every tooth trails toward -x; a placement with direction=-1
 which flips the lean to +x.
 Bases are anchored plates covering a voxel range and receive course 0.
 """
-from dataclasses import dataclass
-
 import numpy as np
+
+from brixzle.families.interface import Placement
 
 from . import profile as pr
 from .params import BrickParams
-
-
-@dataclass(frozen=True)
-class Placement:
-    course: int
-    i0: int
-    direction: int = 1  # build direction the teeth hook against
-
-    @property
-    def voxels(self):
-        return (self.i0, self.i0 + 1)
-
-    @property
-    def name(self):
-        return f'b{self.course}_{self.i0}' + ('m' if self.direction < 0 else '')
 
 
 def orientation(p: BrickParams, b: Placement):
