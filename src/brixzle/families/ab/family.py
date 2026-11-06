@@ -10,6 +10,7 @@ they are rejected. Their bounds are not searched (CONCEPT_BOUNDS was not ported)
 """
 
 import numpy as np
+import shapely
 from shapely.errors import GEOSException
 
 from brixzle.families import builders as B
@@ -56,12 +57,21 @@ def extrusion(p: BrickParams):
     return Extrusion(depth_mm=p.D, bands=tuple(tuple(b) for b in pr.y_bands(p)))
 
 
+OPENING_MIN_D_MM = 5.0  # a window counts as a fork opening if a circle this wide fits in it
+
+
 def pickup(p: BrickParams, part):
+    """The two straight fork bores (the aerial-assembly baseline: CAD and R10/R13 rules) and the
+    fork openings: the big lightening windows, which the fork goes through (issue #12)."""
     if not pr.fork_channels(p):
         raise ValueError("no position for the two fork bores (aerial-assembly fork_fits < 0)")
-    return PickupFeatures(bores=tuple(Bore(x_mm=float(x), z_mm=float(z), d_mm=p.fork_d,
-                                           clearance_mm=p.fork_clearance)
-                                      for x, z in pr.fork_channels(p)))
+    bores = tuple(Bore(x_mm=float(x), z_mm=float(z), d_mm=p.fork_d, clearance_mm=p.fork_clearance)
+                  for x, z in pr.fork_channels(p))
+    # The two widest lightening holes (the big windows), if a circle OPENING_MIN_D_MM wide fits in them.
+    wide = sorted(((2 * shapely.maximum_inscribed_circle(h).length, h) for h in section(p, part).holes),
+                  key=lambda t: -t[0])
+    openings = tuple(sorted((h for d, h in wide[:2] if d >= OPENING_MIN_D_MM), key=lambda h: h.centroid.x))
+    return PickupFeatures(bores=bores, openings=openings)
 
 
 def lattice(p: BrickParams):

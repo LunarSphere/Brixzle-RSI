@@ -54,13 +54,17 @@ def _combine(parts):
 
 
 def build_fork(family, p, part, fp: ForkParams = ForkParams(), drone: DroneConfig = DroneConfig(),
-               gains: HoverGains = HoverGains()):
-    """Fork geometry and the rigid drone+fork body's mass properties, in the carry frame (mm, g)."""
-    bores = family.pickup(p, part).bores
+               gains: HoverGains = HoverGains(), tines=None):
+    """Fork geometry and the rigid drone+fork body's mass properties, in the carry frame (mm, g).
+
+    ``tines`` are the tine centres (x, z) in the carry frame; by default each sits at the top of
+    its bore (tine top on bore top). Through openings they are the seats (issue #12)."""
     bodies = B.sim_bodies(family, p, part)
     D = family.lattice(p).D_mm
     r = fp.tine_d/2
-    tines = [(float(b.x_mm), float(b.z_mm + b.radius_mm - r)) for b in bores]
+    if tines is None:
+        tines = [(float(b.x_mm), float(b.z_mm + b.radius_mm - r)) for b in family.pickup(p, part).bores]
+    tines = [(float(x), float(z)) for x, z in tines]
     y_face, y_tip = -(D/2 + fp.gap), D/2 + fp.protrude
     top = max(float(np.max(c[:, 2])) for c in bodies.collision)
     drone_pos = np.array([bodies.com_mm[0], 0.0, top + fp.clear_guard - GUARD_BOTTOM])

@@ -260,9 +260,20 @@ def _check_rules(family, p, part):
 
 
 def _check_pickup(family, p, part):
-    bores = family.pickup(p, part).bores
-    _require(len(bores) >= 1, "pickup needs at least one bore for the fixed fork")
+    feats = family.pickup(p, part)
+    bores, openings = feats.bores, feats.openings
+    _require(len(bores) + len(openings) >= 1, "pickup needs at least one opening (or bore) for the fork")
     s = B.section(family, p, part)
+    for i, o in enumerate(openings):
+        _require(isinstance(o, Polygon) and o.is_valid and o.area > 0, f"opening {i} must be a valid polygon")
+        _require(s.outer.buffer(1e-6).contains(o), f"opening {i} breaks out of the section outline")
+    if openings and isinstance(family.geometry, Prismatic):
+        from brixzle.engine.predictor import pickup as PP  # the straight tine through the whole depth
+
+        try:
+            PP.geometry(family, p)
+        except ValueError as e:
+            _require(False, f"pickup openings: {e}")
     # Wall thickness around a bore is a margin (R13.bore_wall); here only broken geometry fails.
     for i, b in enumerate(bores):
         _require(B.math_finite(b.x_mm, b.z_mm, b.d_mm, b.clearance_mm) and b.d_mm > 0 and b.clearance_mm >= 0,

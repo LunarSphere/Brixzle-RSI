@@ -31,7 +31,7 @@ To mark a design as infeasible, for example a profile that can't be built, a fam
 | `insertion_axis(p, placement)` | The unit `(x, z)` direction of the final seating motion. |
 | `release_lift_mm(p)` | How far above the seat the drone releases the brick, so that nothing overlaps at release. |
 | `base(p, voxels, direction)` | The anchored base that receives course 0, in a frame where x = 0 is the first voxel's left edge. It can be a `Section`, a CadQuery solid (decomposed), or a list of exact convex vertex sets. A `Section` is extruded the same way as the family's bricks (Prismatic, e.g. the A/B gutter shear), or straight through D (Solid3D). |
-| `pickup(p, part)` | `PickupFeatures(bores=(Bore(x_mm, z_mm, d_mm, clearance_mm), ...))`: straight through-Y bores for the fixed fork. The builders cut them into the solid. |
+| `pickup(p, part)` | `PickupFeatures(openings=(Polygon, ...), bores=(Bore(x_mm, z_mm, d_mm, clearance_mm), ...))`. **`openings`** are large through-Y openings for the fork's tines: XZ polygons in the section frame that sweep with the extrusion like the section, usually some of its holes. The fork is picked up through these (#12); give one per tine. `bores` are tight straight through-Y bores, kept for the A/B baseline's CAD and R10/R13 rules; new families give openings instead. The builders cut bores into the solid; openings are already section holes. |
 | `extra_rules(p, part, bodies)` | Optional. Family-specific margins `{"R<n>.<name>": value}`, where a value ≥ 0 means satisfied. |
 
 ## Two ways to describe the geometry
@@ -78,13 +78,13 @@ The R9 and R10 formulas and all the constants come from aerial-assembly `rules.p
    - a seated brick doesn't overlap the brick above it, its neighbour in the course or the base. This is checked at key points, a quarter of the way from each collision corner to its piece's centre; contact closer than 0.5 mm counts as touching;
    - `part_for` returns a listed part.
 6. **rules:** every margin is finite and its key names a requirement that exists.
-7. **pickup:** there's at least one bore, and no bore breaks out of the section's outline or into a hole. The wall thickness round a bore is the `R13.bore_wall` margin, not a pass/fail check.
+7. **pickup:** there's at least one opening or bore. Every opening lies inside the section's outline, and a straight 2 mm tine clears it through the whole depth. No bore breaks out of the outline or into a hole. The wall thickness round a bore is the `R13.bore_wall` margin, not a pass/fail check.
 
 Each violation says which check failed, where (for example `defaults, part A`) and what to fix.
 
 ## Not covered yet
 
 - **Fork spacing:** checking the bores against the fixed fork's tine spacing comes with the pickup trial (#9).
-- **Pickup openings:** pickup is described only as tight straight bores. Error-tolerant openings, with a wide mouth tapering to a seat, need an interface change (a follow-up issue).
+- **Pickup openings:** openings are checked for capture and self-centring by translation only (`engine/predictor/pickup.py`); the hanging brick's rotation is checked only in the sim. R10's rules still use the bores, so a family without bores has no R10 pickup margins yet.
 - **Soft contact:** `SimBodies.soft_collision` is not built or simulated yet, so A/B's snap barbs (`barb_h > 0`) are rejected.
 - **Running agent-written families safely** belongs to the design agent (#18).

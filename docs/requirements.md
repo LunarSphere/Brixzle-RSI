@@ -64,10 +64,12 @@ Today's pickup (aerial-assembly `brixzle`) works like this:
 
 Measured drone error is far larger than ±5 mm (Exp 3, session exp3-r4: 1.5 cm mean, 3.9 cm worst approach), so R12 asks the brick to do the correcting.
 
+**Settled in issue #12: pickup goes through large openings, not tight bores.** Every brick gives large through-Y openings for the fork's tines, like A/B's two big windows. A tight bore captures almost nothing at this error: A/B's 0.3 mm clearance bores score 0 on every pickup box (#9). An opening must be judged by what a straight tine clears through the whole depth, which is its overlap across any sheared bands. A/B's 5.5 mm gutter shear halves its windows to 3.4 mm, which scores 0.031 on the mean pickup box; with the gutter off, it scores 0.156 (predicted and simulated alike, #12).
+
 Within the pickup box, a pickup succeeds when all four of these hold:
 
-1. **Capture.** The gripper engages the brick, guided only by passive features on the brick (funnels, chamfers, lead-ins), with no jams. Tine-in-bore jamming under yaw or tilt is the classic peg-in-hole problem; see Whitney 1982 and Whitney, Gustavson & Hennessey 1983.
-2. **Self-centring.** After the lift, the brick hangs within **2 mm and 3°** of its nominal carry pose. This is a starting value, to be revisited, slightly looser than the 1 mm, 3° seat tolerance. Any carry offset adds to placement error.
+1. **Capture.** Every tine passes through its opening along the whole depth, guided only by passive features on the brick, with no jams. With large openings this is geometric; peg-in-hole jamming (Whitney 1982) matters only for tight fits.
+2. **Self-centring.** After the lift, the brick hangs within **2 mm and 3°** of its nominal carry pose. An opening centres the brick if its ceiling slopes, steeper than friction, up to a corner the tine settles in (A/B's windows rise at 52° to an acute top corner). This is a starting value, to be revisited, slightly looser than the 1 mm, 3° seat tolerance. Any carry offset adds to placement error.
 3. **Gentle contact.** Peak contact force stays within half (50 %) of the drone's thrust margin: maximum thrust (4 × 0.2942 N, datasheet, `drone_params.py` in aerial-assembly) minus the weight of drone, gripper and brick. No neighbouring brick in the fixture moves.
 4. **Clean release.** After the brick seats, the gripper withdraws without moving it beyond the drift limit (2 mm). This covers the stuck-on-the-fork concern in aerial-assembly #12.
 

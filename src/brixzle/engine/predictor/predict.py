@@ -2,14 +2,20 @@
 
 For one release pose and one friction coefficient mu:
 
-1. drop straight down to the first contact (exact vertical distance);
+1. drop straight down to the first contact (exact vertical distance; a drop that would penetrate
+   is reported as a missed contact);
 2. classify the contact state (contact_modes, after Balkcom & Trinkle 2002 and Pang & Trinkle 2000);
    away from the seat, weak stability alone stops it (a possible jam, not further classified):
    - strongly stable: no solution moves (frictionless-stable, or weakly stable with no moving mode);
-   - indeterminate: weakly stable, but some solution moves: a possible jam, counted as a failure;
+   - indeterminate (only tested at the seat): weakly stable, but some solution moves. That motion
+     is followed for up to MAX_FOLLOW steps: into a strongly stable seat it is seated; still
+     indeterminate after that, a possible jam, counted as a failure (issue #40; #10 counted every
+     indeterminate seat as a failure, so the outcome hung on the exact arrival pose);
    - moving: no equilibrium; take the first feasible moving mode (the previous one first);
 3. step the pose along that mode's acceleration (velocity reset each step: the paper's model is at
-   rest), bisecting a step that would penetrate, then re-detect contacts;
+   rest), halving a step that would penetrate, then re-detect contacts. Steps grow from DS_MM to
+   DS_MAX_MM along an unchanged slide; residual penetration is projected out (issue #38); a
+   blocked step is retried with unmerged contacts (issue #36);
 4. stop when strongly stable or indeterminate, when it falls off, or at the step limit.
 
 A strongly stable end pose is classified like the sim (trials.classify): seated, wrong valley or
@@ -18,7 +24,8 @@ contacts, mode, sticking margin (P1: > 0 means gravity is outside the sticking c
 wedging and opposing-faces flags (P2); a seat records its stability margin (P4).
 
 Outputs are labelled "predicted, quasi-static 2D". No momentum, bounce or Y effects (the A/B gutter
-shear) are modelled.
+shear) are modelled, so it is only sound for Prismatic (2.5D) families. Where it agrees with the
+sim, and where not, is in docs/predictor-validation.md.
 """
 
 import math

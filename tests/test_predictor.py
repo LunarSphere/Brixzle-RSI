@@ -282,3 +282,36 @@ def test_pooled_box_gives_the_serial_scales():
     assert pooled["scale"] == serial["scale"] == again["scale"]
     assert [e["ok"] for e in pooled["courses"]["0"]["evaluations"]] == \
            [e["ok"] for e in serial["courses"]["0"]["evaluations"]]
+
+
+def test_an_indeterminate_seat_is_followed_into_the_seat(monkeypatch):
+    # Issue #40 / #41 changed #10's rule: at the seat, weakly but not strongly stable with a moving
+    # mode (indeterminate) is followed along that mode for up to MAX_FOLLOW steps, not judged on the
+    # arrival pose. This A/B pose (mean box, scale 0.6875, unit point 2) stops 0.017 mm short of
+    # full seat at mu 0.4; followed, it seats. MAX_FOLLOW = 0 restores the old rule.
+    from brixzle.engine import box_search as BS
+    from brixzle.engine import boxes as BX
+    from brixzle.engine.sim import trials as T
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
+
+    box = BX.default_boxes()["placement"]["mean"]
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    sample = BS.pose_sample(box, 0.6875, BS.unit_points(4, 0)[2], cfg)
+    followed = PR.predict_pose(AB, V0, sample, course=0, mus=(0.4,), trace=False)["per_mu"]["0.4"]
+    assert followed["outcome"] == "seated", followed["reason"]
+    monkeypatch.setattr(PR, "MAX_FOLLOW", 0)
+    old = PR.predict_pose(AB, V0, sample, course=0, mus=(0.4,), trace=False)["per_mu"]["0.4"]
+    assert old["outcome"] == "indeterminate"
+
+
+def test_ab_p95_box_matches_the_sim():
+    # Issue #38's criterion (boxes no worse than the sim) and docs/predictor-validation.md: the
+    # predicted A/B p95 box equals the sim's, 0.375 / 0.406 (runs/box-search-20261106T151148Z-
+    # ab-placement-p95, seed 0, simulated, uncalibrated contact). About 2 s without traces.
+    from brixzle.engine import boxes as BX
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
+
+    r = PR.predicted_box(AB, V0, BX.default_boxes()["placement"]["p95"], trace=False)
+    assert {c: v["scale"] for c, v in r["courses"].items()} == {"0": 0.375, "1": 0.40625}

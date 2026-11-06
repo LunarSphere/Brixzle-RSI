@@ -102,7 +102,16 @@ class Bore:
 
 @dataclass(frozen=True)
 class PickupFeatures:
-    bores: tuple[Bore, ...]
+    """Where the fixed fork's tines go through the brick.
+
+    ``openings`` are large through-Y openings, polygons in the XZ section frame that sweep with the
+    extrusion like the section itself: the fork is picked up through these (maintainer decision on
+    issue #12: large openings, not tight bores). ``bores`` are tight straight through-Y bores, kept
+    for the A/B baseline's CAD and R10/R13 rules; new families should give openings.
+    """
+
+    bores: tuple[Bore, ...] = ()
+    openings: tuple[Polygon, ...] = ()
 
 
 @dataclass(frozen=True)
