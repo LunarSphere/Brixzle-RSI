@@ -94,18 +94,16 @@ def _distances(P, A, B):
 
 def _ray_hits(P, A, B, down):
     """Vertical distance from each point to the segments along -z (down) or +z; inf if none."""
-    out = np.full(len(P), np.inf)
-    for (a, b) in zip(A, B):
-        dx = b[0] - a[0]
-        if abs(dx) < 1e-12:
-            continue
-        s = (P[:, 0] - a[0]) / dx
-        ok = (s >= 0) & (s <= 1)
-        z = a[1] + s * (b[1] - a[1])
-        gap = (P[:, 1] - z) if down else (z - P[:, 1])
-        ok &= gap >= -1e-9
-        out = np.where(ok, np.minimum(out, gap), out)
-    return out
+    dx = B[:, 0] - A[:, 0]
+    keep = np.abs(dx) >= 1e-12  # vertical segments are never hit by a vertical ray
+    A, B, dx = A[keep], B[keep], dx[keep]
+    if not len(A):
+        return np.full(len(P), np.inf)
+    s = (P[:, 0, None] - A[None, :, 0]) / dx[None]
+    z = A[None, :, 1] + s * (B[None, :, 1] - A[None, :, 1])
+    gap = (P[:, 1, None] - z) if down else (z - P[:, 1, None])
+    gap = np.where((s >= 0) & (s <= 1) & (gap >= -1e-9), gap, np.inf)
+    return gap.min(axis=1)
 
 
 def drop_distance(body: Body, pose, env):
@@ -160,7 +158,7 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
 
     - A vertex within eps of an edge's interior, and in front of it, touches that edge.
     - A vertex within eps of another vertex is a corner pair. In a concave (reflex) corner it touches
-      both faces. Convex on convex, the normal is undefined (a measure-zero balance): one contact
+      both faces (a pair is two vertices within sqrt(2) eps). Convex on convex, the normal is undefined (a measure-zero balance): one contact
       along the fixed corner's mean normal, with the four face normals as ``alternatives``.
     """
     V = place(body, pose)
@@ -170,18 +168,38 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
     rV, inV, outV = _body_data(body)
 
     def touching(P, A, B, n):
+        """(points x segments) mask: point within eps of the segment's interior, in front of it.
+        Only pairs whose bounding boxes come within eps are tested (the rest are too far apart)."""
+        out = np.zeros((len(P), len(A)), dtype=bool)
+        lo, hi = np.minimum(A, B) - eps, np.maximum(A, B) + eps
+        J = np.flatnonzero((hi[:, 0] >= P[:, 0].min()) & (lo[:, 0] <= P[:, 0].max())
+                           & (hi[:, 1] >= P[:, 1].min()) & (lo[:, 1] <= P[:, 1].max()))
+        if not len(J):
+            return out
+        I = np.flatnonzero((P[:, 0] >= lo[J, 0].min()) & (P[:, 0] <= hi[J, 0].max())
+                           & (P[:, 1] >= lo[J, 1].min()) & (P[:, 1] <= hi[J, 1].max()))
+        if not len(I):
+            return out
+        P, A, B, n = P[I], A[J], B[J], n[J]
         d = B - A
         L2 = (d * d).sum(-1)
-        t = ((P[:, None, :] - A[None]) * d[None]).sum(-1) / L2[None]
+        w = P[:, None, :] - A[None]
+        t = (w * d[None]).sum(-1) / L2[None]
         tiny = eps / np.sqrt(L2)[None]
         inner = (t > tiny) & (t < 1 - tiny)
-        front = ((P[:, None, :] - A[None]) * n[None]).sum(-1) >= -eps
-        return (_distances(P, A, B) <= eps) & front & inner
+        front = (w * n[None]).sum(-1) >= -eps
+        Q = A[None] + np.clip(t, 0, 1)[..., None] * d[None]
+        near = ((P[:, None, :] - Q) ** 2).sum(-1) <= eps * eps
+        out[np.ix_(I, J)] = near & front & inner
+        return out
 
     hit1 = touching(V, A, B, nA)        # moving vertex k on env edge j
     hit2 = touching(W, VA, VB, nV)      # env vertex w on moving edge j
     out = []
-    pairs = np.argwhere(np.linalg.norm(V[:, None] - W[None], axis=-1) <= eps)
+    # Corner pairs within sqrt(2) eps: an edge contact excludes the last eps of each edge (``inner``),
+    # where a vertex within eps of the edge lies up to sqrt(2) eps from its end vertex; a smaller pair
+    # radius would miss it entirely (issue #36: the body then dropped straight through the corner).
+    pairs = np.argwhere(np.linalg.norm(V[:, None] - W[None], axis=-1) <= math.sqrt(2) * eps)
     for k, w in pairs:
         hit1[k] = False
         hit2[w] = False
@@ -200,7 +218,12 @@ def contacts(body: Body, pose, env, eps=EPS_MM, merge=0.05):
         out.append(Contact(tuple(W[w]), tuple(-nV[j])))
     out = _line_extremes(out, eps)
     kept = []
-    for c in out:  # merge duplicates (the same contact found twice); a corner on two faces keeps both
+    # Merge near-duplicates (within ``merge``, normals within 2.6 deg); a corner on two faces keeps
+    # both. This keeps redundant pairs out of the mode analysis, but it can also merge two distinct
+    # features (a body vertex on a fixed face and that face's end corner on a near-parallel body
+    # face): predict.simulate then steps with ``merge=-1`` (nothing merged) if the merged motion
+    # penetrates (issue #36).
+    for c in out:
         if all(np.hypot(c.point[0] - q.point[0], c.point[1] - q.point[1]) > merge
                or np.dot(c.normal, q.normal) < 0.999 for q in kept):
             kept.append(c)
@@ -235,17 +258,73 @@ def _line_extremes(cs, eps):
     return out
 
 
+_FIXED = {}
+
+
+def _fixed(env):
+    """The fixed polygons' union (prepared), its boundary and their vertices (cached per env)."""
+    key = tuple(id(p) for p in env)
+    hit = _FIXED.get(key)
+    if hit is None or any(a is not b for a, b in zip(hit[0], env)):
+        fixed = shapely.union_all(env)
+        shapely.prepare(fixed)
+        W = np.vstack([np.asarray(orient(p).exterior.coords)[:-1] for p in env])
+        hit = _FIXED[key] = (list(env), (fixed, fixed.boundary, W))
+    return hit[1]
+
+
 def penetration(body: Body, pose, env):
     """Deepest vertex of either body inside the other (mm); 0 if nothing overlaps."""
-    poly = Polygon(place(body, pose))
-    fixed = shapely.union_all(env)
-    V = np.asarray(poly.exterior.coords)[:-1]
-    W = np.vstack([np.asarray(orient(p).exterior.coords)[:-1] for p in env])
+    V = place(body, pose)
+    poly = Polygon(V)
+    fixed, boundary, W = _fixed(env)
     depth = 0.
     inside = shapely.contains_xy(fixed, V[:, 0], V[:, 1])
     if inside.any():
-        depth = max(depth, float(shapely.distance(shapely.points(V[inside]), fixed.boundary).max()))
+        depth = max(depth, float(shapely.distance(shapely.points(V[inside]), boundary).max()))
     inside = shapely.contains_xy(poly, W[:, 0], W[:, 1])
     if inside.any():
         depth = max(depth, float(shapely.distance(shapely.points(W[inside]), poly.boundary).max()))
     return depth
+
+
+def _deepest_push(body: Body, pose, env):
+    """(depth, translation) that lifts the deepest penetrating vertex of either body to the other's
+    boundary; (0, None) if nothing overlaps."""
+    poly = Polygon(place(body, pose))
+    fixed = shapely.union_all(env)
+    best = (0., None)
+    V = np.asarray(poly.exterior.coords)[:-1]
+    for k in np.flatnonzero(shapely.contains_xy(fixed, V[:, 0], V[:, 1])):
+        q = np.asarray(shapely.shortest_line(shapely.Point(V[k]), fixed.boundary).coords[1])
+        d = float(np.linalg.norm(q - V[k]))
+        if d > best[0]:
+            best = (d, q - V[k])           # move the body vertex out to the fixed boundary
+    W = np.vstack([np.asarray(orient(p).exterior.coords)[:-1] for p in env])
+    for k in np.flatnonzero(shapely.contains_xy(poly, W[:, 0], W[:, 1])):
+        q = np.asarray(shapely.shortest_line(shapely.Point(W[k]), poly.boundary).coords[1])
+        d = float(np.linalg.norm(q - W[k]))
+        if d > best[0]:
+            best = (d, W[k] - q)           # move the body's boundary out past the fixed vertex
+    return best
+
+
+def depenetrate(body: Body, pose, env, tol=1e-6, iters=4):
+    """The pose translated out of a shallow overlap (issue #38: first-order steps drift into the
+    surface when pivoting). Each pass lifts the deepest vertex to the boundary; the pose with the
+    least penetration is returned, so it never makes things worse."""
+    pose = np.asarray(pose, float).copy()
+    best, best_pen = pose, penetration(body, pose, env)
+    for _ in range(iters):
+        if best_pen <= tol:
+            break
+        depth, t = _deepest_push(body, best, env)
+        if t is None:
+            break
+        trial = best.copy()
+        trial[:2] += t * (1 + 1e-6)  # a hair past the boundary, so it ends just outside
+        pen = penetration(body, trial, env)
+        if pen >= best_pen:
+            break
+        best, best_pen = trial, pen
+    return best
