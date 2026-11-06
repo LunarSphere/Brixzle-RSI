@@ -72,7 +72,7 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
 
 - The pickup trial (R12) doesn't exist in aerial-assembly yet. Its success test is defined in `docs/requirements.md` under "R12 in detail": capture, self-centring, gentle contact and clean release.
 - The Z and θ sides of the target box need real measurements of the drone's height and tilt error.
-- The analytic predictor is quasi-static and 2D. It must first be checked against existing sim drop maps before the loop relies on it.
+- The analytic predictor is quasi-static and 2D. Issue #11 checked it against the sim on the A/B baseline; [`predictor-validation.md`](predictor-validation.md) says where it can be trusted (seated or not and the capture edge, yes; the failure class, no).
 
 ## Future work
 
