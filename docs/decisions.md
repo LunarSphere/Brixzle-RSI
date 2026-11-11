@@ -110,3 +110,18 @@ Numbers are from A/B V0's mean-box analysis, `runs/map-20261111T200204588290Z-ab
   The issue asks for it "beside the map". A second analysis of the same map needs a new map run.
 - **Capture limits are left to #56.**
   This issue covers the failures inside the green zone. What stops capture at the zone's edge needs the same reduction on the first failing cell past each edge.
+
+## #56 Capture-limit analysis
+
+Numbers are from `runs/map-20261111T201408241278Z-ab-mean/jam_analysis.json`, A/B V0 on the mean box, measured on macOS arm64 (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D).
+
+- **A limit is taken in the row through the aim, from the green band that holds the aim.**
+  That is the row the target box is centred on. A stray green cell further out does not move the limit.
+- **Only the X edges are analysed.**
+  X is the measured error and the axis the zone is too narrow on. In release height and pitch A/B's zone runs past the map's limits, so there is no edge to explain.
+- **A capture limit is not re-run with seeds.**
+  The edge is by definition where the outcome changes, so a small shift of the pose would flip it and say nothing. It is dropped once at each friction instead. On A/B all eight limits give the same outcome at μ 0.2, 0.3, 0.4 and 0.5.
+- **If the aim itself fails, there is one entry, at the aim.**
+  There is then no band to have edges.
+- **The X–Z and X–θ slices both report their limits, even where they nearly coincide.**
+  Their rows through the aim differ only in release height (5 mm against 3.1 mm on A/B's mean box). Reporting both keeps the rule simple, and it costs eight drops.

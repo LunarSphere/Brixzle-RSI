@@ -32,6 +32,12 @@ jam: both sticking (Balkcom & Trinkle 2002), and wedged if they push from opposi
 the line between them inside both friction cones (Whitney 1982). Three or more are reported as
 found.
 
+**Capture limits (issue #56).** A jam inside the zone is one thing; a zone too narrow for the
+target box is another, and on the A/B baseline it is the one that caps the score. So on each
+slice with an X axis, in the row through the aim, the first failing cell past each end of the
+green band is dropped again and reduced the same way. It is not re-run for repeatability: the
+capture edge is where the outcome changes, so the cell is checked once at each friction instead.
+
 jam_analysis.json is written beside the map. Sim results are simulated, uncalibrated contact;
 predictor results are predicted, quasi-static 2D. Placement only for now (issue #46).
 
@@ -475,6 +481,47 @@ def analyse_pose(family, p, course, sample, sim_cfg=None, cfg: JamConfig = JamCo
             **reduce_row(family, p, course, row, float(sim_cfg.physics.friction), cfg)}
 
 
+# --- capture limits: the first failures past the green zone's X edges (issue #56) ---
+
+
+def capture_limits(sim_map):
+    """Where capture stops in X: per slice with an X axis and per course, in the row through the
+    aim, the first failing cell past each end of the green band that holds the aim.
+
+    Each entry has the side ('x-' or 'x+'), the cell and its coordinates, its outcome in the map,
+    and ``edge_mm``: the last seated X on that side. If the aim itself fails there is one entry,
+    side 'aim', with no edge. An end of the band that reaches the end of the row has no entry."""
+    out = []
+    names = sim_map.get("codes", {})
+    for g in sim_map["grids"]:
+        a, b = g["axes"]
+        if a != "x" or "rows" not in g:
+            continue
+        (i0, i1), (j0, j1) = g["index_extent"][a], g["index_extent"][b]
+        j = min(range(j0, j1 + 1), key=lambda k: (abs(k * g["step"][b] - sim_map["aim"][b]), k))
+        row = g["rows"][j - j0]
+
+        def entry(side, i, edge):
+            return {"slice": g["slice"], "course": g["course"], "side": side, "cell": [i, j], a: i * g["step"][a],
+                    b: j * g["step"][b], "outcome": names.get(row[i - i0], row[i - i0]),
+                    "edge_mm": None if edge is None else edge * g["step"][a]}
+
+        if not i0 <= 0 <= i1 or row[-i0] != "S":
+            if i0 <= 0 <= i1:
+                out.append(entry("aim", 0, None))
+            continue
+        lo = hi = 0
+        while lo - 1 >= i0 and row[lo - 1 - i0] == "S":
+            lo -= 1
+        while hi + 1 <= i1 and row[hi + 1 - i0] == "S":
+            hi += 1
+        if lo - 1 >= i0:
+            out.append(entry("x-", lo - 1, lo))
+        if hi + 1 <= i1:
+            out.append(entry("x+", hi + 1, hi))
+    return out
+
+
 # --- the analysis of a map ---
 
 
@@ -538,9 +585,28 @@ def analyse(family, p, sim_map, cfg: JamConfig = JamConfig(), sim_cfg=None, work
                 "representative": {"cell": rep["cell"], **{a: rep[a] for a in axes},
                                    "sample": {q: v for q, v in job[1].items() if q != "vel"}},
                 **reduce_row(family, p, rep["course"], row, sim_mu, cfg)})
+        # Capture limits (issue #56): the first failing cell past each X edge, reduced the same way,
+        # and dropped once more at each friction to show whether the edge moves with it.
+        limits = capture_limits(sim_map)
+        grid_of = {(g["slice"], g["course"]): g for g in sim_map["grids"]}
+        lim_jobs, mu_jobs = [], []
+        for lim in limits:
+            g = grid_of[(lim["slice"], lim["course"])]
+            steps = {**SM.MapConfig().steps(float(family.lattice(p).U_mm)), **g["step"]}
+            sample = SM.cell_sample(sim_cfg, lim["slice"], lim["cell"], steps, aim)
+            lim_jobs.append((lim["course"], sample, {"rest": True, "trace": False}))
+            mu_jobs += [(lim["course"], sample, {"friction": float(mu), "trace": False}) for mu in cfg.mus]
+        mu_rows = list(pool.imap(mu_jobs))
+        out_limits = []
+        for k, (lim, job, row) in enumerate(zip(limits, lim_jobs, pool.imap(lim_jobs))):
+            per = mu_rows[k * len(cfg.mus):(k + 1) * len(cfg.mus)]
+            out_limits.append({**{q: v for q, v in lim.items() if q != "outcome"}, "map_outcome": lim["outcome"],
+                               "per_mu": {_mu_key(mu): r["outcome"] for mu, r in zip(cfg.mus, per)},
+                               "sample": {q: v for q, v in job[1].items() if q != "vel"},
+                               **reduce_row(family, p, lim["course"], row, sim_mu, cfg)})
         # A seated drop at the aim on each course, for comparison: its Y force share shows what a
         # clean seat looks like on this family (a V gutter leans its faces across Y).
-        courses = sorted({c["course"] for c in cells})
+        courses = sorted({c["course"] for c in cells} | {lim["course"] for lim in limits})
         aim_jobs = [(course, SM.cell_sample(sim_cfg, "xz", (0, 0), {"x": 1.0, "z": 1.0, "t": 1.0}, aim),
                      {"rest": True, "trace": False}) for course in courses]
         for course, row in zip(courses, pool.imap(aim_jobs)):
@@ -555,10 +621,10 @@ def analyse(family, p, sim_map, cfg: JamConfig = JamConfig(), sim_cfg=None, work
         "labels": dict(LABELS), "family": family.name, "family_version": family.version, "params": p.to_dict(),
         "box": sim_map["box"], "config": {**asdict(cfg), "mus": list(cfg.mus)}, "sim_mu": sim_mu,
         "cells": cells, "bands": out_bands, "one_offs": [c for c in cells if not c["repeatable"]],
-        "seated_reference": references,
+        "capture_limits": out_limits, "seated_reference": references,
         "counts": {"inside_failures": len(cells), "repeatable": sum(c["repeatable"] for c in cells),
                    "bands": len(out_bands), "three_d": sum(b["three_d"] for b in out_bands),
-                   "reruns": len(jobs)},
+                   "reruns": len(jobs), "capture_limits": len(out_limits)},
         "workers": n_workers, "seconds": time.time() - t0,
     }
 
@@ -579,10 +645,7 @@ def summary(result):
              f"green zone, {c['repeatable']} repeatable in {c['bands']} bands ({c['three_d']} of them 3D effects), "
              f"{len(result['one_offs'])} one-off; {c['reruns']} re-runs, {result['seconds']:.1f} s "
              f"(sim: {LABELS['sim']}; mechanism: {LABELS['pred']})"]
-    for b in result["bands"]:
-        ext = ", ".join(f"{a} {lo:+g} to {hi:+g} {SM.AXIS_UNITS[a]}" for a, (lo, hi) in b["extent"].items())
-        lines.append(f"  band {b['id']} ({b['slice']} course {b['course']}, {ext}; {len(b['cells'])} cells): "
-                     f"{b['failure_type']}, repeat rate {b['repeat_rate']:.0%} {b['per_mu']}")
+    def detail(b):
         lines.append(f"    {b['mechanism']}")
         show = b["sites"] if b["holding"] is None else [b["sites"][i] for i in b["holding"]["sites"]]
         for s in show:
@@ -593,6 +656,19 @@ def summary(result):
             h = b["holding"]
             lines.append(f"    holding set of {h['size']}: stick margin {h['stick_margin']:+.3f}, wedged {h['wedged']}, "
                          f"needs friction {h['needs_friction']}")
+
+    for b in result["bands"]:
+        ext = ", ".join(f"{a} {lo:+g} to {hi:+g} {SM.AXIS_UNITS[a]}" for a, (lo, hi) in b["extent"].items())
+        lines.append(f"  band {b['id']} ({b['slice']} course {b['course']}, {ext}; {len(b['cells'])} cells): "
+                     f"{b['failure_type']}, repeat rate {b['repeat_rate']:.0%} {b['per_mu']}")
+        detail(b)
+    for lim in result.get("capture_limits", []):
+        second = SM.SLICES[lim["slice"]][1]
+        edge = "the aim itself fails" if lim["edge_mm"] is None else f"seats to x {lim['edge_mm']:+g} mm"
+        lines.append(f"  capture limit {lim['side']} ({lim['slice']} course {lim['course']}, {second} "
+                     f"{lim[second]:+g} {SM.AXIS_UNITS[second]}): {edge}; at x {lim['x']:+g} mm {lim['map_outcome']} "
+                     f"in the map, per mu {lim['per_mu']}")
+        detail(lim)
     return "\n".join(lines)
 
 
