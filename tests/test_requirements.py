@@ -100,6 +100,41 @@ def test_check_kinds_are_the_four_agreed_kinds():
     assert CHECK_KINDS == frozenset({"rule", "sim", "design", "predictor"})
 
 
+# --- Deferred requirements (issue #46) ---
+
+
+def md_deferred_ids():
+    """Ids listed in the table under '## Deferred requirements' in requirements.md."""
+    text = REQUIREMENTS_MD.read_text(encoding="utf-8")
+    section = text.split("## Deferred requirements", 1)[1].split("\n## ", 1)[0]
+    return re.findall(r"^\| (R\d+) \|", section, flags=re.MULTILINE)
+
+
+def test_r12_is_deferred_and_every_other_requirement_is_active():
+    status = {r.id: r.status for r in load_requirements()}
+    assert status.pop("R12") == "deferred"
+    assert set(status.values()) == {"active"}
+
+
+def test_markdown_lists_the_same_deferred_requirements():
+    assert md_deferred_ids() == [r.id for r in load_requirements() if r.status == "deferred"]
+
+
+def test_status_defaults_to_active(tmp_path):
+    assert {r.status for r in load_requirements(write_yaml(tmp_path, full_yaml()))} == {"active"}
+
+
+def test_a_requirement_can_be_marked_deferred(tmp_path):
+    body = full_yaml().replace("checks: [rule]", "checks: [rule]\n    status: deferred", 1)
+    assert load_requirements(write_yaml(tmp_path, body))[0].status == "deferred"
+
+
+def test_rejects_unknown_status(tmp_path):
+    body = full_yaml().replace("checks: [rule]", "checks: [rule]\n    status: someday", 1)
+    with pytest.raises(RequirementsError, match="status.*someday"):
+        load_requirements(write_yaml(tmp_path, body))
+
+
 # --- Loader validation ---
 
 

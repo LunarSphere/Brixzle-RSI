@@ -8,8 +8,10 @@ The orchestrator runs each iteration without a person prompting it, and enforces
 
 The loop stops when either of these holds:
 
-- the design's boxes cover the target error with no jams, for both pickup and placement;
+- the design's placement box covers the target error with no jams;
 - the score stops improving, or the budget runs out.
+
+The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 
 ## Intake page
 
@@ -38,7 +40,7 @@ For each conflict or unclear item, it asks the person to choose. Nothing reaches
 
 ## Evaluation engine (no LLM)
 
-It runs once for each target box: the drone's mean, 95th-percentile and worst error. It scores both placement (R11) and pickup (R12).
+It runs once for each target box: the drone's mean, 95th-percentile and worst error. For now it scores placement (R11) only. The pickup trial and the pickup predictor (R12) stay in the code with their tests, but the loop does not run them (issue #46).
 
 1. **Analytic predictor.** It takes a 2D section of the brick in X, Z and θ. For each pose, it steps through the contacts:
    - find the first contact (configuration-space geometry);
@@ -52,11 +54,11 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
    - then a short Py-BOBYQA run on the simulated box.
 3. **Sim verifier.** MuJoCo drops (and pickups) at the box's corners and faces, plus a few interior points. Bisection on the box's scale finds the largest box in which every trial succeeds. Every contact is logged.
 4. **Scorer and diagnoser.**
-   - **Score:** the sim box scale for each target, where 1 or more passes. A target's overall score is the smaller of placement and pickup. A failed clean-release check scores pickup 0.
-   - **Failures:** placement failures are sorted into jam, fall and wrong valley. Pickup failures are sorted into jam, pickup miss, off-centre and forceful, plus a failed release. The limiting failures, which cap each box, keep their contact traces.
+   - **Score:** the sim box scale for each target, where 1 or more passes. A target's overall score is the smallest over the tasks that were scored. By default that is placement alone (`tasks`, issue #46). With `--tasks placement pickup` it is the smaller of the two, and a failed clean-release check scores pickup 0.
+   - **Failures:** placement failures are sorted into jam, fall and wrong valley. Pickup failures, when pickup is scored, are sorted into jam, pickup miss, off-centre and forceful, plus a failed release. The limiting failures, which cap each box, keep their contact traces.
    - **Cross-check:** the predictor is run on the poses the sim dropped, and the report flags where they disagree. *Optimistic* means only the predictor succeeds; *conservative* means only the sim does. The scale gap is recorded for each target. When both fail, their failure classes are compared but not trusted.
 
-   `engine/report.py` writes `report.json` to a new run directory. The full sim and predictor results are written beside it.
+   `engine/report.py` writes `report.json` to a new run directory. The report names the tasks it scored. The full sim and predictor results are written beside it.
 
 ## Files
 

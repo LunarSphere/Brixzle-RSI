@@ -49,20 +49,21 @@ def _pred(task, scale):
 RELEASE_OK = {"passed": True, "drift_mm": 0.1, "withdrawn": True, "peak_N": 0.0, "label": BS.LABEL}
 
 
-def _report(place_scale=1.2, pick_scale=1.5, release=RELEASE_OK, checks=None, stats=("mean",)):
+def _report(place_scale=1.2, pick_scale=1.5, release=RELEASE_OK, checks=None, stats=("mean",), tasks=BX.TASKS):
     sims, preds = {}, {}
     for stat in stats:
         sims[("placement", stat)] = _sim("placement", stat, place_scale, {
             "0": [_drop(1.0, 0, "seated"), _drop(1.5, 1, "jammed"), _drop(1.25, 1, "wrong_valley")],
             "1": [_drop(1.0, 0, "seated"), _drop(1.5, 2, "fell")]},
             evals=[(1.0, True), (2.0, False), (1.5, False), (1.25, False)])
-        sims[("pickup", stat)] = _sim("pickup", stat, pick_scale, {
-            "pick": [_drop(1.0, 0, "picked"), _drop(2.0, 3, "missed"), _drop(2.0, 4, "off_centre")]},
-            evals=[(1.0, True), (2.0, False)])
         preds[("placement", stat)] = _pred("placement", place_scale)
-        preds[("pickup", stat)] = _pred("pickup", 1.0)
-    return R.build_report(AB, V0, sims, preds, release=release, checks=checks or [],
-                          timing={"total": 5.0}, files={}, seed=0)
+        if "pickup" in tasks:
+            sims[("pickup", stat)] = _sim("pickup", stat, pick_scale, {
+                "pick": [_drop(1.0, 0, "picked"), _drop(2.0, 3, "missed"), _drop(2.0, 4, "off_centre")]},
+                evals=[(1.0, True), (2.0, False)])
+            preds[("pickup", stat)] = _pred("pickup", 1.0)
+    return R.build_report(AB, V0, sims, preds, release=release if "pickup" in tasks else None,
+                          checks=checks or [], timing={"total": 5.0}, files={}, seed=0, tasks=tasks)
 
 
 # --- categories ---
@@ -215,6 +216,84 @@ def _report_inputs():
     return sims, preds
 
 
+# --- tasks: placement only by default (issue #46) ---
+
+
+def test_the_loop_scores_placement_only_by_default():
+    assert R.DEFAULT_TASKS == ("placement",)
+    assert R.parser().parse_args([]).tasks == ["placement"]
+    assert R.parser().parse_args(["--tasks", "placement", "pickup"]).tasks == ["placement", "pickup"]
+
+
+def test_a_placement_only_report_passes_the_schema():
+    rep = _report(place_scale=1.2, stats=BX.STATISTICS, tasks=("placement",))
+    R.validate_report(rep)
+    json.dumps(rep, allow_nan=False)
+    assert rep["tasks"] == ["placement"]
+    for stat in BX.STATISTICS:
+        assert rep["score"][stat] == {"placement": 1.2, "overall": 1.2}
+        assert set(rep["targets"][stat]) == {"placement"}
+        assert set(rep["failure_counts"][stat]) == {"placement"}
+        assert set(rep["disagreement_counts"][stat]) == {"placement"}
+    assert rep["covers_all_targets"] is True
+    assert all(f["task"] == "placement" for f in rep["failures"])
+    assert not any("pickup predictor" in flag for flag in rep["flags"])
+    assert R.NOT_SCORED in rep["flags"]  # the report says pickup was left out, and why
+
+
+def test_placement_only_coverage_ignores_pickup():
+    assert _report(place_scale=0.6, tasks=("placement",))["covers_all_targets"] is False
+    # A pickup result that would fail the target no longer matters when pickup is not scored.
+    assert _report(place_scale=1.2, pick_scale=0.0, tasks=("placement",))["covers_all_targets"] is True
+
+
+def test_the_full_report_is_unchanged_apart_from_naming_its_tasks():
+    rep = _report(stats=BX.STATISTICS)
+    R.validate_report(rep)
+    assert rep["tasks"] == ["placement", "pickup"]
+    for stat in BX.STATISTICS:
+        assert set(rep["score"][stat]) == {"placement", "pickup", "overall"}
+        assert set(rep["targets"][stat]) == {"placement", "pickup"}
+        assert "release" in rep["targets"][stat]["pickup"]
+    assert any("pickup predictor" in flag for flag in rep["flags"])
+
+
+def test_tasks_are_inferred_from_the_results_when_not_given():
+    sims, preds = _report_inputs()
+    rep = R.build_report(AB, V0, sims, preds, release=RELEASE_OK, checks=[], timing={"total": 1.0}, files={},
+                         seed=0)
+    assert rep["tasks"] == ["placement", "pickup"]
+    place = {k: v for k, v in sims.items() if k[0] == "placement"}
+    rep = R.build_report(AB, V0, place, preds, release=None, checks=[], timing={"total": 1.0}, files={}, seed=0)
+    assert rep["tasks"] == ["placement"]
+
+
+@pytest.mark.parametrize("tasks", [(), ("pickup", "pickup"), ("placement", "painting"), "placement"])
+def test_bad_tasks_are_rejected(tasks, tmp_path):
+    with pytest.raises(ValueError):
+        R.score_family(AB, V0, statistics=("mean",), tasks=tasks, runs=tmp_path)
+    assert list(tmp_path.iterdir()) == []  # rejected before a run directory is made
+
+
+@pytest.mark.parametrize("break_it", [
+    lambda r: r.pop("tasks"),
+    lambda r: r.__setitem__("tasks", []),
+    lambda r: r.__setitem__("tasks", ["placement", "pickup"]),  # names a task the report does not hold
+    lambda r: r["score"]["mean"].__setitem__("overall", 0.5),    # not the smallest of its task scores
+])
+def test_schema_rejects_a_report_whose_tasks_do_not_match(break_it):
+    rep = _report(tasks=("placement",))
+    break_it(rep)
+    with pytest.raises(ValueError):
+        R.validate_report(rep)
+
+
+def test_the_summary_lists_only_the_scored_tasks():
+    text = R.summary(_report(tasks=("placement",)))
+    assert "placement" in text and "pickup" not in text
+    assert "pickup" in R.summary(_report())
+
+
 # --- end to end, A/B V0 (coarse on purpose, as tests/test_box_search.py) ---
 
 
@@ -224,22 +303,39 @@ def test_box_search_can_skip_the_release_check():
     assert "release" not in out
 
 
-@pytest.fixture(scope="module")
-def scored(tmp_path_factory):
+@pytest.fixture(scope="module", params=[None, BX.TASKS], ids=["default", "placement+pickup"])
+def scored(request, tmp_path_factory):
     runs = tmp_path_factory.mktemp("runs")
-    out = R.score_family(AB, V0, statistics=("mean",), seed=0, tol=0.5, n_interior=0, workers=1, runs=runs)
-    return runs, out
+    kw = {} if request.param is None else {"tasks": request.param}
+    out = R.score_family(AB, V0, statistics=("mean",), seed=0, tol=0.5, n_interior=0, workers=1, runs=runs, **kw)
+    return request.param or R.DEFAULT_TASKS, out
 
 
 def test_score_family_writes_a_valid_report_with_its_full_results(scored):
-    runs, out = scored
+    tasks, out = scored
     rep = json.loads((out / "report.json").read_text(encoding="utf-8"))
     R.validate_report(rep)
     assert rep["family"] == "ab" and rep["seed"] == 0 and set(rep["targets"]) == {"mean"}
+    assert rep["tasks"] == list(tasks) and set(rep["targets"]["mean"]) == set(tasks)
     for rel in rep["files"].values():
         assert (out / rel).is_file()
     assert all(f["contacts"] for f in rep["failures"] if f["category"] != "release")
     assert {"predict", "cross_check", "total"} <= set(rep["timing"])
+
+
+def test_placement_only_scoring_runs_no_pickup_stage(scored):
+    """Issue #46: with pickup deferred, its predictor, sim, release check and cross-check are skipped."""
+    tasks, out = scored
+    rep = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    pickup_stages = {k for k in rep["timing"] if "pickup" in k or "release" in k}
+    pickup_files = {p.name for p in out.iterdir() if "pickup" in p.name or "release" in p.name}
+    if "pickup" in tasks:
+        assert pickup_stages == {"sim_release", "sim_pickup_mean"}
+        assert pickup_files == {"release.json", "sim-pickup-mean.json", "pred-pickup-mean.json"}
+        assert any(r["task"] == "pickup" for r in json.loads((out / "cross-check.json").read_text()))
+    else:
+        assert pickup_stages == set() and pickup_files == set()
+        assert all(r["task"] == "placement" for r in json.loads((out / "cross-check.json").read_text()))
 
 
 def test_run_directories_are_never_reused(tmp_path):

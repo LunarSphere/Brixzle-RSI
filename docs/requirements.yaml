@@ -7,6 +7,11 @@
 #   sim        a simulated trial
 #   design     a fixed design choice
 #   predictor  the analytic predictor (quasi-static, 2D)
+#
+# status (optional): active (the default) or deferred. A deferred requirement
+# stays in the list, but the loop does not score it and the design agent does
+# not design for it yet. docs/requirements.md says why, under "Deferred
+# requirements".
 
 requirements:
   - id: R1
@@ -68,6 +73,7 @@ requirements:
     name: Coarse pickup
     text: "The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail)."
     checks: [predictor, sim]
+    status: deferred
 
   - id: R13
     name: Printable

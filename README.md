@@ -2,7 +2,7 @@
 
 **Brixzle recursive self-improvement.** A recursive, self-improving loop for designing families of bricks that a drone can pick up and place imprecisely.
 
-Given a concept sketch and a set of requirements, two AI agents keep redesigning the brick. The goal is to make the region of drone error it tolerates as large as possible, with no jams inside it, for both pickup and placement.
+Given a concept sketch and a set of requirements, two AI agents keep redesigning the brick. The goal is to make the region of drone error it tolerates when placing a brick as large as possible, with no jams inside it. Pickup is deferred until a gripper is designed for the chosen brick.
 
 > **Status:** planning. The architecture and requirements are written down; no loop code exists yet.
 
