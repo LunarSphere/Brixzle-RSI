@@ -321,6 +321,70 @@ def test_an_ab_jam_at_the_capture_edge_is_reduced_and_its_faces_named():
     json.dumps(out, allow_nan=False)
 
 
+# --- capture limits: the first failures past the green zone's X edges (issue #56) ---
+
+
+def _x_grid(slice_name, course, rows, x0, second, step2, inside=()):
+    """A map grid with an X axis, from row strings (lowest row first), as sim_map writes them."""
+    return {"slice": slice_name, "course": course, "axes": ["x", second], "step": {"x": 1.0, second: step2},
+            "index_extent": {"x": [x0, x0 + len(rows[0]) - 1], second: [0, len(rows) - 1]}, "rows": list(rows),
+            "fixed": {}, "inside_failures": list(inside)}
+
+
+CODES = {"S": "seated", "J": "jammed", "W": "wrong_valley", "F": "fell", "?": "other"}
+AIM = {"x": 0.0, "z": 3.1, "t": 0.0}
+
+
+def test_capture_limits_are_the_first_failures_past_the_green_band_in_the_aim_row():
+    grid = _x_grid("xz", 1, ["WWSSSSSJJ",    # z = 0 mm
+                             "WSSSSSSFJ"],   # z = 5 mm: the row nearest the aim's 3.1 mm
+                   x0=-4, second="z", step2=5.0)
+    lo, hi = JA.capture_limits({"grids": [grid], "aim": AIM, "codes": CODES})
+    assert (lo["side"], lo["cell"], lo["x"], lo["z"], lo["outcome"], lo["edge_mm"]) == ("x-", [-4, 1], -4.0, 5.0, "wrong_valley", -3.0)
+    assert (hi["side"], hi["cell"], hi["x"], hi["outcome"], hi["edge_mm"]) == ("x+", [3, 1], 3.0, "fell", 2.0)
+    assert lo["slice"] == hi["slice"] == "xz" and lo["course"] == hi["course"] == 1
+
+
+def test_the_band_is_the_one_that_holds_the_aim_not_a_stray_green_cell():
+    grid = _x_grid("xt", 0, ["SWWSSSJSS"], x0=-4, second="t", step2=2.0)  # green at -1 to +1 holds the aim
+    lo, hi = JA.capture_limits({"grids": [grid], "aim": AIM, "codes": CODES})
+    assert (lo["cell"], lo["edge_mm"], hi["cell"], hi["edge_mm"]) == ([-2, 0], -1.0, [2, 0], 1.0)
+
+
+def test_a_design_that_fails_at_the_aim_has_one_limit_there():
+    grid = _x_grid("xz", 0, ["SSJSS"], x0=-2, second="z", step2=5.0)
+    (only,) = JA.capture_limits({"grids": [grid], "aim": {**AIM, "z": 0.0}, "codes": CODES})
+    assert (only["side"], only["cell"], only["outcome"], only["edge_mm"]) == ("aim", [0, 0], "jammed", None)
+
+
+def test_slices_without_an_x_axis_and_edges_still_green_have_no_capture_limit():
+    zt = {"slice": "zt", "course": 0, "axes": ["z", "t"], "step": {"z": 5.0, "t": 2.0},
+          "index_extent": {"z": [0, 1], "t": [0, 0]}, "rows": ["SS"], "fixed": {}, "inside_failures": []}
+    all_green = _x_grid("xz", 0, ["SSSSS"], x0=-2, second="z", step2=5.0)  # green to both ends of the row
+    assert JA.capture_limits({"grids": [zt, all_green], "aim": {**AIM, "z": 0.0}, "codes": CODES}) == []
+
+
+def test_the_ab_analysis_explains_its_capture_limits():
+    """A/B V0, course 1, the X-Z row at 5 mm from the real mean-box map of 2026-11-11
+    (runs/map-20261111T200204588290Z-ab-mean): green from -11 to +13 mm about the aim."""
+    grid = _x_grid("xz", 1, ["WWWWSSSSSSSSSSSSSSSSSSSSSSSSSJJ", "WWWWSSSSSSSSSSSSSSSSSSSSSSSSSJJ"], x0=-15,
+                   second="z", step2=5.0)
+    grid["fixed"] = {"t": 0.0}
+    sim_map = {"family": "ab", "family_version": AB.version, "params": V0.to_dict(), "box": BOX.to_dict(),
+               "aim": {"x": 0.0, "z": BOX.half_widths["z_mm"], "t": 0.0}, "grids": [grid], "codes": CODES}
+    a = JA.analyse(AB, V0, sim_map, cfg=JA.JamConfig(seeds=1, mus=(0.2, 0.5)), sim_cfg=SIM_CFG, workers=1)
+    assert a["bands"] == [] and a["counts"]["capture_limits"] == 2
+    lo, hi = a["capture_limits"]
+    assert (lo["side"], lo["x"], hi["side"], hi["x"]) == ("x-", -12.0, "x+", 14.0)
+    for lim in (lo, hi):
+        assert lim["map_outcome"] in ("wrong_valley", "jammed") and lim["outcome"] != "seated"
+        assert set(lim["per_mu"]) == {"0.2", "0.5"} and lim["mechanism"]
+        assert lim["sites"] and all(s["on_brick"]["label"] and s["on_support"]["label"] for s in lim["sites"])
+        assert lim["three_d"] or lim["holding"] is None or lim["holding"]["size"] >= 1
+    assert "capture limit" in JA.summary(a)
+    json.dumps(a, allow_nan=False)
+
+
 def test_the_analysis_is_written_beside_the_map_and_never_overwritten(ab_analysis, tmp_path):
     path = JA.write_analysis(ab_analysis, tmp_path)
     assert path == tmp_path / "jam_analysis.json" and json.loads(path.read_text(encoding="utf-8"))["bands"] is not None

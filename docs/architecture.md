@@ -124,6 +124,8 @@ The check is not the score. A design that seats every drop in the box always pas
    - three or more: reported as found;
    - a set that holds without friction is a stable rest away from the seat, not a friction jam.
 
+**Capture limits (issue #56).** A zone with no jam inside it can still be too narrow for the target box. So on each slice with an X axis, in the row through the aim, the first failing cell past each end of the green band is dropped again and reduced the same way. It is also dropped once at each friction coefficient, to show whether the edge moves with friction. The result is under `capture_limits`, one entry per slice, course and side.
+
 **Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
 
 ## Files
