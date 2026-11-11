@@ -52,3 +52,30 @@ The maintainer answered the issue's open question on 2026-11-11: bricks do not h
   A design whose simulation blows up should go back to the design agent with that reason. It should not stop the loop, and NaN is never written to JSON.
 - **The poses use the same mapping as the box search, at scale 1.**
   X is about the aim, Z is the release height above the minimum clearance, and θ is pitch (`box_search.pose_sample`). The error model is otherwise ideal, as it is for the score.
+
+## #48 Full sim map on a fitted grid
+
+All numbers here are simulated, uncalibrated contact, on A/B V0 with the mean target box.
+
+- **Three slices through the aim, on both courses, each fitted on its own.**
+  The issue asks for X–Z, X–θ and Z–θ slices around the aim. Each slice holds the third coordinate at the aim: zero pitch, the box's centre height, or zero X offset.
+- **For fitting, "red" means any cell that did not seat.**
+  Jammed and wrong valley stop an edge growing just as fell does. What matters to the fit is where the green zone ends.
+- **Cells are U/25 in X, U/5 in Z and 2° in θ.**
+  X is the measured error and where the capture edges and jam bands are, so it keeps the old map's 1 mm at U = 25 mm. Z and θ are coarser because A/B's outcomes barely change along them.
+- **Release height stops at 1 U and pitch at ±10°, and an edge still green there is marked `limit`.**
+  The issue says to grow an edge "until it is red". On A/B the green zone still reached 2 U and ±15°, the largest values tried, on every slice (`runs/map-20261111T193029503482Z-ab-mean`: 4,734 drops, 169 s on 4 workers, 104 MB of traces). Growing those axes further only spends drops. The worst target box is 7.2 mm and 0.4°, so the limits are still far outside it. In X every edge closes on red.
+- **The target box wins over a limit.**
+  If a box is wider than a limit, the grid covers the box. The guardrail comes first.
+- **An override is either a zoom or a change of grid settings, and both need a reason.**
+  A zoom is an extra grid, so it cannot shrink a fitted slice inside the target box. Both kinds are listed in `overrides` in `map.json`.
+- **A failing cell is "inside the green zone" if the zone lies on both sides of it along its row and its column, or along one of them when the other has no green at all.**
+  That keeps holes and bands that cut across the zone, and leaves out a ragged capture edge (green above and below, but only on one side). A grid edge marked `limit` counts as green, because the zone runs on past it.
+- **Every drop's contact trace is kept, in `drops.json.gz` with floats rounded to 4 decimals.**
+  The issue asks for every trace. As plain JSON the first map's traces took 104 MB; rounded and compressed, the fitted map's take 1.8 MB (`runs/map-20261111T193806246752Z-ab-mean`).
+- **Six worker processes by default.**
+  The same 1,254-drop map took 48.8 s on 4 workers, 40.1 s on 6 and 37.8 s on 8 (`runs/map-20261111T193311241213Z-ab-mean`, `…193402487600Z…`, `…193451515332Z…`). The grids are identical for any count.
+- **The fixed-grid comparison uses the same rows and cell sizes, with X spanning ±30 mm.**
+  The old grid had no Z or θ axis, so the Z–θ slice counts as it is.
+- **The map refuses a design that failed the quick check, unless the caller says otherwise.**
+  The issue says the map runs only for designs that pass. The command line has `--even-if-check-fails` for looking at a baseline.
