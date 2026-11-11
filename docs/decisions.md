@@ -64,7 +64,7 @@ All numbers here are simulated, uncalibrated contact, on A/B V0 with the mean ta
 - **Cells are U/25 in X, U/5 in Z and 2° in θ.**
   X is the measured error and where the capture edges and jam bands are, so it keeps the old map's 1 mm at U = 25 mm. Z and θ are coarser because A/B's outcomes barely change along them.
 - **Release height stops at 1 U and pitch at ±10°, and an edge still green there is marked `limit`.**
-  The issue says to grow an edge "until it is red". On A/B the zone was still green at 2 U and ±15°, the largest values tried, on every row (`runs/map-20261111T193029503482Z-ab-mean`: 4,734 drops, 169 s on 4 workers, 104 MB of traces). Growing those axes further only spends drops. The worst target box is 7.2 mm and 0.4°, so the limits are still far outside it. In X every edge closes on red.
+  The issue says to grow an edge "until it is red". On A/B the green zone still reached 2 U and ±15°, the largest values tried, on every slice (`runs/map-20261111T193029503482Z-ab-mean`: 4,734 drops, 169 s on 4 workers, 104 MB of traces). Growing those axes further only spends drops. The worst target box is 7.2 mm and 0.4°, so the limits are still far outside it. In X every edge closes on red.
 - **The target box wins over a limit.**
   If a box is wider than a limit, the grid covers the box. The guardrail comes first.
 - **An override is either a zoom or a change of grid settings, and both need a reason.**

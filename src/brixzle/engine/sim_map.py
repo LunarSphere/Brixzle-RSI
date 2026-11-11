@@ -73,7 +73,7 @@ class MapConfig:
     theta_step_deg: float = 2.0
     x_limit_U: float = 2.0          # the grid never grows past +-2 U about the aim (a whole brick)
     # Release height and pitch are capped well past the worst target box (7.2 mm, 0.4 deg). On A/B
-    # V0 the green zone ran on to 2 U and +-15 deg, the largest values tried, on every row
+    # V0 the green zone still reached 2 U and +-15 deg, the largest values tried, on every slice
     # (runs/map-20261111T193029503482Z-ab-mean), so growing these axes "until red" only spends drops.
     z_limit_U: float = 1.0          # nor above 1 U of release height
     theta_limit_deg: float = 10.0   # nor past +-10 deg of pitch
