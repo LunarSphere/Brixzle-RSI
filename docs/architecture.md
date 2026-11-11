@@ -1,6 +1,18 @@
 # Architecture
 
-Planned. Nothing here is built yet.
+The evaluation engine is built. The agents, the intake page and the orchestrator are planned.
+
+## Loop order
+
+Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
+
+1. **Design.** The design agent makes a new CAD model as a brick family (issue #18).
+2. **Quick random check.** 40 evenly spread sim drops inside the target box. Fewer than 32 seated sends the design straight back to step 1 (issue #47, built).
+3. **Full sim map** on a grid fitted to the brick (issue #48).
+4. **Jam analysis** inside the green zone (issue #49).
+5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
+
+The loop's score is the scorer's box scale for the target (see [Evaluation engine](#evaluation-engine-no-llm)). When it reaches 1, or stops improving, a short tune finishes the design (issue #14).
 
 ## Orchestrator
 
@@ -59,6 +71,18 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
    - **Cross-check:** the predictor is run on the poses the sim dropped, and the report flags where they disagree. *Optimistic* means only the predictor succeeds; *conservative* means only the sim does. The scale gap is recorded for each target. When both fail, their failure classes are compared but not trusted.
 
    `engine/report.py` writes `report.json` to a new run directory. The report names the tasks it scored. The full sim and predictor results are written beside it.
+
+### Quick random check
+
+`engine/quick_check.py` is the go/no-go gate before the full map. It exists so that a weak design is turned back in seconds.
+
+- **Poses:** 40 poses inside the target box, from one seeded Latin hypercube over X, Z, θ and the course. Each axis has one pose in each of its 40 equal slices, and each course gets 20 poses.
+- **Physics:** the MuJoCo drop trial, not the predictor.
+- **Pass rule:** at least 32 of 40 seated. The check stops at the 9th failure, because 32 is then out of reach. Poses are judged in order, so the result does not depend on how many processes ran it.
+- **On a fail:** the failing poses go back to the design agent with their outcomes and contact traces.
+- **Output:** `runs/check-<UTC>-<family>-<target>/check.json`, labelled "simulated, uncalibrated contact".
+
+The check is not the score. A design that seats every drop in the box always passes it, so it never turns back a design that would score 1.
 
 ## Files
 

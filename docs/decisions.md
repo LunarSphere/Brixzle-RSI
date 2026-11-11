@@ -35,3 +35,20 @@ The maintainer answered the issue's open question on 2026-11-11: bricks do not h
   The design agent reads the requirements as data, so a note in the prose would not reach it. `status` is optional and defaults to `active`. `docs/requirements.md` lists the deferred requirements with the reason, and a test keeps the two files in step.
 - **R12's wording is unchanged.**
   Only its status changed. Its text and "R12 in detail" describe the pickup trial as built, and they will be revisited with the gripper (#24).
+
+## #47 Quick random check
+
+- **The poses come from one Latin hypercube in four dimensions: X, Z, θ and the course.**
+  The issue allows Sobol or a Latin hypercube. 40 is not a power of two, so a Sobol sequence would lose its balance. A Latin hypercube puts exactly one pose in each of the 40 equal slices of every axis.
+- **40 drops in total, 20 on each course.**
+  The issue asks for 40 poses and both courses, and its binomial numbers assume 40 drops. The fourth dimension of the hypercube picks the course, so the split is exact and each course still covers the box evenly.
+- **Poses are judged in order, and the check stops at the 9th failure in that order.**
+  The verdict and the drops in `check.json` are then the same for any number of worker processes.
+- **One process by default.**
+  Measured on A/B V0 on 2026-11-11: the 40 drops of the mean box took 5.2 s in one process and 8.6 s on 4 workers, because each worker takes several seconds to start (`runs/check-20261111T191401341107Z-ab-mean`, `runs/check-20261111T191303900392Z-ab-mean`).
+- **Only failing drops keep their contact traces.**
+  The design agent needs the traces of the failures. Leaving out the seated ones keeps `check.json` small.
+- **A non-finite sim result is a failure called `unstable`.**
+  A design whose simulation blows up should go back to the design agent with that reason. It should not stop the loop, and NaN is never written to JSON.
+- **The poses use the same mapping as the box search, at scale 1.**
+  X is about the aim, Z is the release height above the minimum clearance, and θ is pitch (`box_search.pose_sample`). The error model is otherwise ideal, as it is for the score.
