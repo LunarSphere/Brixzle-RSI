@@ -71,10 +71,14 @@ def test_a_flat_top_does_not_centre():
 # --- the interface ---
 
 
-def test_pickup_features_have_openings():
-    from brixzle.families.interface import PickupFeatures
+def test_the_fork_reads_bores_and_openings_out_of_the_grip_features():
+    from brixzle.families import interface as I
 
-    assert PickupFeatures().openings == () and PickupFeatures().bores == ()
+    window = box(0, 0, 10, 20)
+    feats = (I.bore(1.0, 2.0, 2.6), I.opening(window), I.GripFeature("lip", 5.0, 5.0, (4.0, 2.0)))
+    assert I.grip_bores(feats) == (feats[0],) and feats[0].radius_mm == pytest.approx(1.3)
+    assert I.grip_openings(feats) == (window,)
+    assert I.grip_bores(()) == () and I.grip_openings(()) == ()
 
 
 # --- A/B ---

@@ -6,7 +6,7 @@ See docs/family-interface.md for the prose version the design agent reads.
 
 Units: geometry in mm and degrees (fields carry ``_mm``/``_deg``), mass in g; conversion to SI
 happens at the MuJoCo boundary. Quaternions are [w, x, y, z]. The brick frame has X along the
-lattice, Y across it (the fork's tines slide along Y) and Z up; z = 0 is the seat.
+lattice, Y across it and Z up; z = 0 is the seat.
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -67,7 +67,7 @@ class Section:
     """The brick's 2D profile in the XZ plane, used by the predictor and the pickup check."""
 
     outer: Polygon
-    holes: tuple[Polygon, ...] = ()        # through-Y lightening holes (not the fork bores)
+    holes: tuple[Polygon, ...] = ()        # through-Y lightening holes (not the round grip bores)
     guide_faces: tuple[GuideFace, ...] = ()
 
 
@@ -86,32 +86,56 @@ class Extrusion:
         return self.bands or ((-self.depth_mm / 2, self.depth_mm / 2, 0.0, 0.0),)
 
 
-@dataclass(frozen=True)
-class Bore:
-    """A straight through-Y bore for one tine of the fixed fork."""
+BORE = "bore"        # the one kind the builders act on: a round hole straight through Y, cut into the solid
+OPENING = "opening"  # a through-Y opening that is already one of the section's holes
 
-    x_mm: float
+
+@dataclass(frozen=True)
+class GripFeature:
+    """Something on the brick that a non-actuated gripper could hold (R10 grippable, issue #50).
+
+    The gripper is designed after the brick (issue #24), so a feature only says what it is, where
+    it is and how big: no tine diameter, no clearance, no fork. ``kind`` is free text ('bore',
+    'opening', 'slot', 'lip', ...) with one reserved meaning: a 'bore' is a round hole straight
+    through Y, of diameter ``size_mm[0]``, which the builders cut into the solid. Every other
+    kind is already part of the family's own geometry; give its XZ ``outline`` (section frame) if
+    it has one, as for an opening that is one of the section's holes.
+    """
+
+    kind: str
+    x_mm: float                     # centre, in the XZ section frame
     z_mm: float
-    d_mm: float          # tine diameter
-    clearance_mm: float  # radial clearance around the tine
+    size_mm: tuple[float, float]    # extent in X and in Z (a bore: its diameter, twice)
+    outline: Polygon | None = None  # the feature's XZ outline, if it has one
 
     @property
     def radius_mm(self) -> float:
-        return self.d_mm / 2 + self.clearance_mm
+        """Half the X extent: a bore's radius."""
+        return self.size_mm[0] / 2
 
 
-@dataclass(frozen=True)
-class PickupFeatures:
-    """Where the fixed fork's tines go through the brick.
+def bore(x_mm, z_mm, d_mm) -> GripFeature:
+    """A round through-Y bore of diameter ``d_mm``, which the builders cut."""
+    return GripFeature(kind=BORE, x_mm=float(x_mm), z_mm=float(z_mm), size_mm=(float(d_mm), float(d_mm)))
 
-    ``openings`` are large through-Y openings, polygons in the XZ section frame that sweep with the
-    extrusion like the section itself: the fork is picked up through these (maintainer decision on
-    issue #12: large openings, not tight bores). ``bores`` are tight straight through-Y bores, kept
-    for the A/B baseline's CAD and R10/R13 rules; new families should give openings.
-    """
 
-    bores: tuple[Bore, ...] = ()
-    openings: tuple[Polygon, ...] = ()
+def opening(outline: Polygon, kind=OPENING) -> GripFeature:
+    """A feature with an XZ outline that the geometry already has (a section hole, a slot);
+    its centre and size are the outline's bounding box."""
+    x0, z0, x1, z1 = outline.bounds
+    return GripFeature(kind=kind, x_mm=(x0 + x1) / 2, z_mm=(z0 + z1) / 2, size_mm=(x1 - x0, z1 - z0),
+                       outline=outline)
+
+
+def grip_bores(features) -> tuple[GripFeature, ...]:
+    """The round through-Y bores among a part's grip features."""
+    return tuple(f for f in features if f.kind == BORE)
+
+
+def grip_openings(features) -> tuple[Polygon, ...]:
+    """The outlines of the through-Y openings among a part's grip features. Today's fixed fork is
+    picked up through these (issue #12); the pickup trial and its predictor read them."""
+    return tuple(f.outline for f in features if f.kind == OPENING and f.outline is not None)
 
 
 @dataclass(frozen=True)
@@ -134,7 +158,7 @@ class Prismatic:
 
 @dataclass(frozen=True)
 class Solid3D:
-    """Full 3D geometry: a CadQuery solid per part, without the fork bores (builders cut them).
+    """Full 3D geometry: a CadQuery solid per part, without the grip bores (builders cut them).
 
     ``collision`` optionally gives exact convex vertex sets (mm, brick frame); otherwise the solid
     is convex-decomposed. ``section`` optionally gives the predictor's 2D section; otherwise the
@@ -177,7 +201,7 @@ class Family:
     insertion_axis: Callable[[Any, Placement], np.ndarray]   # unit (x, z) of final seating motion
     release_lift_mm: Callable[[Any], float]                  # release height above the seat
     base: Callable[[Any, int, int], Any]  # (p, voxels, direction) -> Section | cq shape | pieces
-    pickup: Callable[[Any, str], PickupFeatures]
+    pickup: Callable[[Any, str], tuple[GripFeature, ...]]    # (p, part) -> the part's grip features (R10)
     extra_rules: Callable[[Any, str, SimBodies], dict[str, float]] | None = None  # (p, part, bodies)
 
     @property

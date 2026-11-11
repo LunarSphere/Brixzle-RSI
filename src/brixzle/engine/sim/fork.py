@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/gripper.py @ a649663
-# Changed: only the fork's collision and mass are built (capsule tines as in build_gripper, a plate box, and a bracket box for its mass); no CadQuery solid, pressed pins, COM-balancing shift or gripper rules. Tines come from family.pickup bores; the frame is the carried brick's (tine tops on the bore tops), and the drone sits on the vertical through the brick's centre of mass, clear_guard + 15.3 mm above the brick top as in carried_pose.
+# Changed: only the fork's collision and mass are built (capsule tines as in build_gripper, a plate box, and a bracket box for its mass); no CadQuery solid, pressed pins, COM-balancing shift or gripper rules. Tines come from the bores among family.pickup's grip features; the frame is the carried brick's (tine tops on the bore tops), and the drone sits on the vertical through the brick's centre of mass, clear_guard + 15.3 mm above the brick top as in carried_pose.
 """The fixed passive fork (R12): two straight Y tines, a plate behind them, the drone above.
 
 Frame (mm): the carried brick's own frame at its nominal carry pose. The tines run along +Y from
@@ -15,6 +15,7 @@ import numpy as np
 
 from brixzle.engine.sim.drone import DroneConfig, HoverGains
 from brixzle.families import builders as B
+from brixzle.families.interface import grip_bores
 
 PLA_DENSITY = B.PLA_DENSITY
 GUARD_BOTTOM = -15.3     # mm, prop-guard bottom below the drone origin (aerial-assembly gripper.py)
@@ -63,7 +64,7 @@ def build_fork(family, p, part, fp: ForkParams = ForkParams(), drone: DroneConfi
     D = family.lattice(p).D_mm
     r = fp.tine_d/2
     if tines is None:
-        tines = [(float(b.x_mm), float(b.z_mm + b.radius_mm - r)) for b in family.pickup(p, part).bores]
+        tines = [(float(b.x_mm), float(b.z_mm + b.radius_mm - r)) for b in grip_bores(family.pickup(p, part))]
     tines = [(float(x), float(z)) for x, z in tines]
     y_face, y_tip = -(D/2 + fp.gap), D/2 + fp.protrude
     top = max(float(np.max(c[:, 2])) for c in bodies.collision)

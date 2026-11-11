@@ -17,6 +17,7 @@ from brixzle.engine.sim import fork as FK
 from brixzle.engine.sim import pickup as PK
 from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import V0
+from brixzle.families.interface import grip_bores
 
 
 # --- pure parts (no sim) ---
@@ -43,7 +44,7 @@ def test_pickup_pose_sample_is_symmetric_about_the_bore_axis():
 
 def test_fork_tines_sit_on_the_bores_and_carry_the_brick_by_the_bore_tops():
     fork = FK.build_fork(AB, V0, "A")
-    bores = AB.pickup(V0, "A").bores
+    bores = grip_bores(AB.pickup(V0, "A"))
     assert len(fork["tines"]) == len(bores)
     for (x, z), b in zip(fork["tines"], bores):
         assert x == pytest.approx(b.x_mm)
@@ -66,11 +67,11 @@ def test_bored_collision_leaves_the_bores_open():
     from brixzle.families import builders as B
 
     pieces = PK.bored_collision(AB, V0, "A")
-    for b in AB.pickup(V0, "A").bores:
+    for b in grip_bores(AB.pickup(V0, "A")):
         axis = np.array([[b.x_mm, y, b.z_mm] for y in np.linspace(-V0.D / 2, V0.D / 2, 11)])
         assert not B.inside_any(axis, pieces).any()
     # The material just outside a bore is still solid.
-    b = AB.pickup(V0, "A").bores[0]
+    b = grip_bores(AB.pickup(V0, "A"))[0]
     assert B.inside_any(np.array([[b.x_mm, 0.0, b.z_mm - b.radius_mm - 0.5]]), pieces).all()
 
 

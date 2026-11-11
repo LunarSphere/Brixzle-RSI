@@ -6,7 +6,7 @@ Prismatic families give a section and an extrusion; the solid is the section swe
 extrusion's Y bands, and collision is exact (convex parts of the outline, each swept through one
 band, are convex because the sweep is affine). Solid3D families give a CadQuery solid; collision
 is their exact convex pieces if given, otherwise a CoACD convex decomposition. In both cases the
-fork bores from ``family.pickup`` are cut here, so pickup features and geometry cannot disagree.
+round grip bores from ``family.pickup`` are cut here, so grip features and geometry cannot disagree.
 Collision covers the unbored outline: other bricks never touch the inside of a bore.
 """
 
@@ -22,7 +22,7 @@ from shapely.ops import polygonize, unary_union
 
 from brixzle.families.convex import convex_parts
 from brixzle.families.interface import (
-    Extrusion, Family, GuideFace, Prismatic, Section, SimBodies,
+    Extrusion, Family, GuideFace, Prismatic, Section, SimBodies, grip_bores,
 )
 
 PLA_DENSITY = 1.24e-3  # g/mm^3, from aerial-assembly brixzle/src/brixzle/params.py @ a649663
@@ -85,12 +85,12 @@ def _unbored_solid(family: Family, p, part):
 
 
 def solid(family: Family, p, part, bored=True):
-    """The printable CadQuery solid of one part (mm), with the fork bores cut if ``bored``."""
+    """The printable CadQuery solid of one part (mm), with the grip bores cut if ``bored``."""
     def build():
         shape = _unbored_solid(family, p, part)
         if bored:
             bb = shape.BoundingBox()
-            for b in family.pickup(p, part).bores:
+            for b in grip_bores(family.pickup(p, part)):
                 bore = cq.Solid.makeCylinder(b.radius_mm, bb.ymax - bb.ymin + 2,
                                              cq.Vector(b.x_mm, bb.ymin - 1, b.z_mm), cq.Vector(0, 1, 0))
                 shape = shape.cut(bore)
@@ -103,7 +103,7 @@ def solid_mesh(family: Family, p, part, bored=True):
 
 
 def shell_mesh(family: Family, p, part):
-    """The solid's outer shell: no fork bores and, for Prismatic, no lightening holes.
+    """The solid's outer shell: no grip bores and, for Prismatic, no lightening holes.
 
     Collision covers this shell (other bricks never touch the inside of a hole), so collision
     coverage is measured against it.

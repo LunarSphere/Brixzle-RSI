@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from brixzle.families import builders as B
+from brixzle.families import interface as I
 from brixzle.families import rules as R
 from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import V0
@@ -51,11 +52,17 @@ AERIAL_TO_KEY = {
     "tines_straddle_com": "R10.tines_straddle_com",
 }
 MESH_DEPENDENT = {"mass_min", "mass_max", "tooth_strength", "hangs_stable", "tines_straddle_com"}
+# Checks against today's fork: out of the loop's rule set since issue #50, kept for the gripper step (#24).
+FORK_KEYS = {"R10.hangs_stable", "R10.tines_straddle_com"}
 PARTS = ("A", "B")
 
 
 def _margins(part):
     return R.margins(AB, V0, part, B.sim_bodies(AB, V0, part))
+
+
+def _fork_margins(part):
+    return R.fork_margins(AB, V0, part, B.sim_bodies(AB, V0, part), tine_d_mm=V0.fork_d)
 
 
 def test_reference_is_sourced():
@@ -66,13 +73,16 @@ def test_reference_is_sourced():
 @pytest.mark.parametrize("part", PARTS)
 def test_every_aerial_margin_has_a_key_and_nothing_else_is_reported(part):
     assert set(REFERENCE["parts"][part]["margins"]) == set(AERIAL_TO_KEY)
-    # The shared R6.guide_slides (shallowest guide face) and R13.bore_wall are reported as well.
-    assert set(_margins(part)) == set(AERIAL_TO_KEY.values()) | {"R6.guide_slides", "R13.bore_wall"}
+    # The loop's rule set: every aerial margin except the two fork checks, plus the shared
+    # R6.guide_slides (shallowest guide face), R13.bore_wall and the R10 grippable rules (#50).
+    assert set(_margins(part)) == (set(AERIAL_TO_KEY.values()) - FORK_KEYS) | {
+        "R6.guide_slides", "R13.bore_wall", "R10.grippable", "R10.within_payload"}
+    assert set(_fork_margins(part)) == FORK_KEYS
 
 
 @pytest.mark.parametrize("part", PARTS)
 def test_rule_margins_match_aerial_assembly(part):
-    ours, ref = _margins(part), REFERENCE["parts"][part]["margins"]
+    ours, ref = {**_margins(part), **_fork_margins(part)}, REFERENCE["parts"][part]["margins"]
     for aerial, key in AERIAL_TO_KEY.items():
         tol = 0.05 if aerial in MESH_DEPENDENT else 1e-9
         assert ours[key] == pytest.approx(ref[aerial], abs=tol), (aerial, key)
@@ -81,7 +91,7 @@ def test_rule_margins_match_aerial_assembly(part):
 @pytest.mark.skipif(not ON_REFERENCE_PLATFORM, reason="bit-exact mesh values only on the reference platform")
 @pytest.mark.parametrize("part", PARTS)
 def test_rule_margins_match_aerial_assembly_exactly(part):
-    ours, ref = _margins(part), REFERENCE["parts"][part]["margins"]
+    ours, ref = {**_margins(part), **_fork_margins(part)}, REFERENCE["parts"][part]["margins"]
     for aerial, key in AERIAL_TO_KEY.items():
         assert ours[key] == pytest.approx(ref[aerial], abs=1e-9), (aerial, key)
 
@@ -103,9 +113,20 @@ def test_guide_slides_is_the_shallower_ramp():
 
 
 def test_pickup_bores_are_the_aerial_fork_channels():
-    bores = AB.pickup(V0, "A").bores
+    bores = I.grip_bores(AB.pickup(V0, "A"))
     assert [[b.x_mm, b.z_mm] for b in bores] == REFERENCE["parts"]["A"]["channels"]
-    assert all(b.d_mm == V0.fork_d and b.clearance_mm == V0.fork_clearance for b in bores)
+    hole_d = V0.fork_d + 2 * V0.fork_clearance  # the tine plus its radial clearance, both sides
+    assert all(b.size_mm == pytest.approx((hole_d, hole_d)) for b in bores)
+
+
+@pytest.mark.parametrize("part", PARTS)
+def test_ab_grip_features_are_its_two_bores_and_two_windows(part):
+    feats = AB.pickup(V0, part)
+    assert [f.kind for f in feats] == ["bore", "bore", "opening", "opening"]
+    holes = AB.geometry.section(V0, part).holes
+    assert all(any(o.equals(h) for h in holes) for o in I.grip_openings(feats))  # the windows are section holes
+    assert _margins(part)["R10.grippable"] == 3.0
+    assert _margins(part)["R10.within_payload"] == pytest.approx(35.0 - B.sim_bodies(AB, V0, part).mass_g)
 
 
 def test_barbs_are_rejected_until_soft_contact_is_supported():

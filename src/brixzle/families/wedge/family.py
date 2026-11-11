@@ -2,7 +2,7 @@
 
 A chevron of constant vertical thickness H0 spanning two voxels: a V-groove on top at
 ``groove_deg`` from horizontal and the matching V-ridge underneath, so a brick dropped on another
-slides to the groove's centre in X. Straight extrusion through D, two Y bores for the fork. Its
+slides to the groove's centre in X. Straight extrusion through D, two Y bores as grip features. Its
 area (2 U H0) and centroid can be worked out by hand. Not a design proposal.
 """
 
@@ -13,8 +13,7 @@ import numpy as np
 from shapely.geometry import Polygon
 
 from brixzle.families.interface import (
-    Bore, Extrusion, Family, FamilyParams, GuideFace, Lattice, Placement, PickupFeatures,
-    Prismatic, Section,
+    Extrusion, Family, FamilyParams, GuideFace, Lattice, Placement, Prismatic, Section, bore,
 )
 
 BASE_THICKNESS_MM = 6.0
@@ -27,8 +26,8 @@ class WedgeParams(FamilyParams):
     D: float = 25.0             # depth in Y
     H0: float = 15.0            # course pitch (vertical thickness)
     groove_deg: float = 35.0    # groove and ridge flank angle from horizontal
-    bore_d: float = 2.0         # fork tine diameter (fixed fork)
-    bore_clearance: float = 0.3  # radial clearance around each tine
+    bore_d: float = 2.0         # bore diameter before clearance
+    bore_clearance: float = 0.3  # extra radius on each bore
     bore_x_frac: float = 0.6    # bore |x| as a fraction of U
     bore_z_frac: float = 0.55   # bore height above the ridge flank, as a fraction of H0
 
@@ -70,8 +69,7 @@ def extrusion(p: WedgeParams):
 def pickup(p: WedgeParams, part):
     x = p.bore_x_frac * p.U
     z = x * math.tan(math.radians(p.groove_deg)) + p.bore_z_frac * p.H0
-    return PickupFeatures(bores=tuple(Bore(x_mm=s * x, z_mm=z, d_mm=p.bore_d, clearance_mm=p.bore_clearance)
-                                      for s in (-1, 1)))
+    return tuple(bore(s * x, z, p.bore_d + 2 * p.bore_clearance) for s in (-1, 1))
 
 
 def lattice(p: WedgeParams):

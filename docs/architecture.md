@@ -78,4 +78,4 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
 
 ## Future work
 
-- **Co-design the gripper.** Let the loop redesign the passive gripper together with the brick. This covers forks, hooks or any other non-actuated type, and the pick fixture's guides. For now the fork is fixed and only the brick is redesigned.
+- **Design the gripper for the chosen brick (issue #24).** The gripper is designed after the loop has settled on a brick, not together with it. It can be any non-actuated type (a fork, a hook or something else), and it uses the brick's grip features (R10, issue #50). The pickup trial, the pickup predictor and the checks against today's fork are kept in the code for that step.
