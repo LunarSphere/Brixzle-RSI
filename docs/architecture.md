@@ -9,7 +9,7 @@ Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
 1. **Design.** The design agent makes a new CAD model as a brick family (issue #18).
 2. **Quick random check.** 40 evenly spread sim drops inside the target box. Fewer than 32 seated sends the design straight back to step 1 (issue #47, built).
 3. **Full sim map** on a grid fitted to the brick (issue #48, built).
-4. **Jam analysis** inside the green zone (issue #49).
+4. **Jam analysis** inside the green zone (issue #49, built).
 5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
 
 The loop's score is the scorer's box scale for the target (see [Evaluation engine](#evaluation-engine-no-llm)). When it reaches 1, or stops improving, a short tune finishes the design (issue #14).
@@ -105,6 +105,26 @@ The check is not the score. A design that seats every drop in the box always pas
 - **Overrides:** a caller may add a zoom (an extra, finer grid over part of a slice) or change the grid settings. Either needs a reason, and both are written to `overrides` in `map.json` for the design log (issue #20). A zoom never replaces a fitted slice.
 - **Inside the green zone:** each grid lists its failing cells that lie inside the zone, for the jam analysis (issue #49). A failure beyond the zone's edge is the capture limit, not a jam inside it.
 - **Output:** `runs/map-<UTC>-<family>-<target>/map.json` holds the grids. `drops.json.gz` beside it holds every drop with its contact trace. Both are labelled "simulated, uncalibrated contact".
+
+### Jam analysis
+
+`engine/jam_analysis.py` takes the failing cells inside the map's green zone and tells the critic which are real and what holds the brick. The failure type (jammed, wrong valley, fell) comes from the sim. The mechanism comes from the predictor's stability tests, applied to the sim's contacts.
+
+1. **Repeatable or one-off.** Each cell is re-run with 3 seeds at each friction coefficient (0.2, 0.3, 0.4, 0.5). A seed shifts the pose by up to 5% of a map cell. A cell is repeatable if it fails at least two thirds of the seeds at some friction; otherwise it is a one-off (solver noise).
+2. **Bands.** Repeatable cells that touch, on one slice and course, form a band.
+3. **Contacts.** The drop nearest each band's centre is run again, and its contacts at rest are reduced:
+   - keep the contacts between the brick and what it rests on that still touch;
+   - flatten them to the X–Z plane and merge points that lie together into sites. A flat patch becomes its two end points, the rule the predictor uses. A site must carry more than 5% of the brick's weight;
+   - if the brick rests out of plane (more than 1 mm in Y, or rolled or yawed more than 2°), or more than a quarter of the sites' force is along Y, the band is a **3D effect** and the reduction stops;
+   - otherwise find the smallest set of sites whose friction can balance gravity, with the predictor's weak-stability test at the sim's friction. MuJoCo's own split of the load is not trusted;
+   - name each contact: which face or corner of the falling brick touches which face or corner below, with the predictor's stick margin and the Whitney (1982) wedging test.
+4. **Reading the result:**
+   - one contact: stuck on a face too shallow for its friction (R6);
+   - two contacts: both sticking (Balkcom & Trinkle 2002), and wedged if they push from opposite sides with the line between them inside both friction cones (Whitney 1982);
+   - three or more: reported as found;
+   - a set that holds without friction is a stable rest away from the seat, not a friction jam.
+
+**Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
 
 ## Files
 

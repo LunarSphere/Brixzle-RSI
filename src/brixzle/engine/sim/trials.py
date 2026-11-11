@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
-# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
+# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once), which can also return the contacts at rest (rest_contacts, issue #49); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -247,6 +247,34 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
             'time': (still_since if settled else data.time) - t0, 'settled': settled}
 
 
+def rest_contacts(model, data, info, owner, names, j):
+    """Brick j's contacts in the current (settled) state, against the bricks and base it rests on
+    (never the floor): one row per MuJoCo contact point, in the world frame.
+
+    ``normal`` points into brick j and ``force_N`` is the contact force on brick j (normal plus
+    friction); ``normal_N`` is its normal part. MuJoCo's split of the load between redundant
+    contacts is one of many valid ones (issue #49), so treat the forces as indicative."""
+    mujoco.mj_forward(model, data)
+    force = np.zeros(6)
+    rows = []
+    for i in range(data.ncon):
+        c = data.contact[i]
+        mine2 = owner.get(c.geom2) == j
+        if not mine2 and owner.get(c.geom1) != j:
+            continue
+        mine, other = (c.geom2, c.geom1) if mine2 else (c.geom1, c.geom2)
+        if other == info['floor']:
+            continue
+        mujoco.mj_contactForce(model, data, i, force)
+        frame = np.asarray(c.frame).reshape(3, 3)  # rows: the normal (geom1 -> geom2) and two tangents
+        sign = 1. if mine2 else -1.
+        rows.append({'pos_mm': (np.asarray(c.pos)/MM).tolist(), 'normal': (sign*frame[0]).tolist(),
+                     'force_N': (sign*(frame.T @ force[:3])).tolist(), 'normal_N': float(force[0]),
+                     'dist_mm': float(c.dist/MM), 'piece': int(names[mine].rsplit('_c', 1)[1]),
+                     'other': _contact_name(names, owner, other), 'other_geom': names[other]})
+    return rows
+
+
 class DropRig:
     """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 onto
     an ideally seated course-0 brick), so many poses don't rebuild the model."""
@@ -269,8 +297,11 @@ class DropRig:
         self.owner = _brick_geoms(self.model, self.info)
         self.names = [self.model.geom(g).name for g in range(self.model.ngeom)]
 
-    def drop(self, sample, trace=True):
-        """Drop at a sample pose (ErrorModel.sample keys) and judge the seat; returns one row."""
+    def drop(self, sample, trace=True, rest=False):
+        """Drop at a sample pose (ErrorModel.sample keys) and judge the seat; returns one row.
+
+        ``rest`` adds the settled state under 'rest': the brick's contacts (rest_contacts), its
+        pose and weight, and the pose of the brick it landed on (None on the base)."""
         model, data, info, family, p = self.model, self.data, self.info, self.family, self.p
         mujoco.mj_resetData(model, data)
         if self.support is not None:
@@ -290,6 +321,15 @@ class DropRig:
         row = {**sample, **m, 'outcome': outcome, 'err_mm': err.tolist(), 'angle_deg': angle}
         if trace:
             row['contacts'] = _trace_rows(contacts)
+        if rest:
+            pos, quat = body_pose(data, info, self.j)
+            support = None
+            if self.support is not None:
+                spos, squat = body_pose(data, info, 0)
+                support = {'pos_mm': spos.tolist(), 'quat': squat.tolist()}
+            row['rest'] = {'contacts': rest_contacts(model, data, info, self.owner, self.names, self.j),
+                           'pos_mm': pos.tolist(), 'quat': quat.tolist(), 'support': support,
+                           'weight_N': float(model.body_mass[info['bodies'][self.j]]*9.81)}
         if self.record:
             row['frames'] = frames
         return row

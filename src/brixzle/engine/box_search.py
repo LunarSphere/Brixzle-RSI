@@ -35,6 +35,7 @@ Results are simulated, uncalibrated contact. Run it from the command line to rec
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import math
@@ -124,16 +125,27 @@ def _init_worker(family, p, cfg, bodies):
 
 def _drop(job):
     """Run one pose in this process's rig for the course (built once, from the shared bodies):
-    course 0 or 1 is a placement drop, 'pick' a pickup."""
-    course, sample = job
+    course 0 or 1 is a placement drop, 'pick' a pickup.
+
+    A placement job may carry options as a third item (the jam analysis, issue #49): 'friction'
+    drops in a rig built with that friction coefficient, and 'rest' and 'trace' are passed to
+    DropRig.drop."""
+    course, sample, *rest = job
+    opts = rest[0] if rest else {}
     w = _WORKER
-    if course not in w["rigs"]:
+    key = (course, opts["friction"]) if "friction" in opts else course
+    if key not in w["rigs"]:
         if course == "pick":
-            w["rigs"][course] = PK.PickRig(w["family"], w["p"], w["cfg"], bodies=w["bodies"])
+            w["rigs"][key] = PK.PickRig(w["family"], w["p"], w["cfg"], bodies=w["bodies"])
         else:
-            w["rigs"][course] = DropRig(w["family"], w["p"], w["cfg"], course=course, bodies=w["bodies"])
-    rig = w["rigs"][course]
-    return rig.pick(sample) if course == "pick" else rig.drop(sample)
+            cfg = w["cfg"]
+            if "friction" in opts:
+                cfg = replace(cfg, physics=replace(cfg.physics, friction=float(opts["friction"])))
+            w["rigs"][key] = DropRig(w["family"], w["p"], cfg, course=course, bodies=w["bodies"])
+    rig = w["rigs"][key]
+    if course == "pick":
+        return rig.pick(sample)
+    return rig.drop(sample, trace=opts.get("trace", True), rest=opts.get("rest", False))
 
 
 class DropPool:
@@ -161,7 +173,7 @@ class DropPool:
             _init_worker(family, p, cfg, bodies)
 
     def imap(self, jobs):
-        """Rows for (course, sample) jobs, in order."""
+        """Rows for (course, sample) or (course, sample, options) jobs, in order (see _drop)."""
         jobs = list(jobs)
         if self._ex is None:
             return (_drop(job) for job in jobs)
