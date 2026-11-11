@@ -24,9 +24,19 @@ Each requirement is checked one of three ways:
 | R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
 | R13 | **Printable.** A brick must print as one piece in PLA, with walls of at least 1.2 mm. | Rules: single piece, minimum wall |
 
+## Deferred requirements
+
+A deferred requirement stays in the list, but the loop does not score it, and the design agent does not design for it yet. `docs/requirements.yaml` marks it `status: deferred`.
+
+| ID | Deferred until | Why |
+|---|---|---|
+| R12 | The gripper is designed for the chosen brick (issue #24) | Issue #46. The loop gets placement (R11) right first. On the A/B baseline, pickup scores 0 or close to 0 on every target, so it would hide whether placement is improving. The pickup trial and the pickup predictor stay in the code with their tests, but the loop does not run them. |
+
 ## Design target
 
 Both R11 and R12 use the same score. Find the largest box of drone error around the aim point where every trial succeeds with no jams. Then scale it against three targets, sized to the drone's mean, 95th-percentile and worst measured error.
+
+For now the loop scores placement (R11) only, because R12 is deferred.
 
 - **Placement (R11):** the box is in X, Z and θ, the brick's profile plane.
 - **Pickup (R12):** the box is in X (across the tines), Z (vertical) and ψ (yaw).
@@ -55,6 +65,8 @@ The angle column is θ (pitch) for placement and ψ (yaw) for pickup.
   - Real measurements are aerial-assembly#27.
 
 ## R12 in detail
+
+**Deferred (issue #46).** This section describes the pickup trial as it is built, with the fixed fork. The loop does not score it for now. It comes back, and may change, when the gripper is designed for the chosen brick (issue #24).
 
 Today's pickup (aerial-assembly `brixzle`) works like this:
 

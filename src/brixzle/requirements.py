@@ -9,6 +9,10 @@ DEFAULT_PATH = Path(__file__).resolve().parents[2] / "docs" / "requirements.yaml
 REQUIRED_IDS = tuple(f"R{n}" for n in range(1, 14))
 CHECK_KINDS = frozenset({"rule", "sim", "design", "predictor"})
 FIELDS = ("id", "name", "text", "checks")
+OPTIONAL_FIELDS = ("status",)
+# 'deferred': kept in the list, but the loop does not score it and the design agent does not
+# design for it yet (R12, issue #46). The reason is in docs/requirements.md.
+STATUSES = ("active", "deferred")
 
 
 class RequirementsError(ValueError):
@@ -21,14 +25,15 @@ class Requirement:
     name: str
     text: str
     checks: tuple[str, ...]
+    status: str = "active"
 
 
 def load_requirements(path: Path | str = DEFAULT_PATH) -> list[Requirement]:
     """Read a requirements file and return its entries in file order.
 
     Raises RequirementsError if the file is malformed, an entry is missing a
-    field or has an extra one, an id is missing, duplicated or unknown, or a
-    check kind is unknown, repeated or absent.
+    field or has an extra one, an id is missing, duplicated or unknown, a
+    check kind is unknown, repeated or absent, or a status is unknown.
     """
     path = Path(path)
     with path.open(encoding="utf-8") as f:
@@ -62,7 +67,7 @@ def _parse_entry(entry: object, index: int) -> Requirement:
     if not isinstance(entry, dict):
         raise RequirementsError(f"{where}: expected a mapping, got {type(entry).__name__}")
 
-    extra = sorted(str(key) for key in entry if key not in FIELDS)
+    extra = sorted(str(key) for key in entry if key not in FIELDS + OPTIONAL_FIELDS)
     if extra:
         raise RequirementsError(f"{where}: unexpected field(s): {', '.join(extra)}")
     for field in FIELDS:
@@ -88,4 +93,8 @@ def _parse_entry(entry: object, index: int) -> Requirement:
     if repeated:
         raise RequirementsError(f"{where}: repeated check kind(s): {', '.join(repeated)}")
 
-    return Requirement(id=rid, name=entry["name"], text=entry["text"], checks=tuple(checks))
+    status = entry.get("status", "active")
+    if status not in STATUSES:
+        raise RequirementsError(f"{where}: unknown status {status!r} (expected one of {list(STATUSES)})")
+
+    return Requirement(id=rid, name=entry["name"], text=entry["text"], checks=tuple(checks), status=status)

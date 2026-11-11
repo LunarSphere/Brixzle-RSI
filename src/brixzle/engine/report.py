@@ -1,12 +1,17 @@
 """Scorer and diagnoser (issue #13): one family's scores, failures and predictor cross-check, as report.json.
 
-For each target box (the drone's mean, p95 and worst error; engine/boxes.py) and each task,
-placement (R11) and pickup (R12):
+The loop scores placement (R11) only for now (issue #46): ``tasks`` defaults to ('placement',), and
+then the pickup predictor, sim, release check and cross-check are not run at all. Pickup (R12) comes
+back once the gripper is designed for the chosen brick (#24); ``--tasks placement pickup`` gives the
+full report.
+
+For each target box (the drone's mean, p95 and worst error; engine/boxes.py) and each scored task:
 
 - **Score:** the sim box scale (engine/box_search.py); a target passes at scale >= 1. Placement is the
   smaller over the two courses. Pickup also needs the clean-release check, which does not depend
   on the box, so it runs once per design; a failed release scores pickup 0 at every target (no
-  box in which every trial succeeds). The overall score of a target is the smaller of the two.
+  box in which every trial succeeds). The overall score of a target is the smallest over the
+  scored tasks, so with placement only it is the placement score.
 - **Failures:** every failing sim drop, counted by category: jam, fall and wrong_valley
   (placement); jam, pickup_miss, off_centre and forceful (pickup); and release. Counts are of the
   drops the bisection ran, not rates. The limiting failures, the failing drops at the smallest
@@ -25,6 +30,7 @@ are written next to it and named under 'files'. Every run writes a new directory
 Sim results are simulated, uncalibrated contact; predictor results are predicted, quasi-static 2D.
 
     uv run python -m brixzle.engine.report --family ab --seed 0
+    uv run python -m brixzle.engine.report --family ab --seed 0 --tasks placement pickup
 """
 
 import argparse
@@ -42,7 +48,8 @@ from brixzle.engine.sim import pickup as PK
 from brixzle.engine.sim import trials as T
 from brixzle.engine.validate import outcome_class
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: 'tasks' names the scored tasks; targets, scores and counts hold only those (#46)
+DEFAULT_TASKS = ("placement",)  # pickup (R12) is deferred until the gripper is designed (#46, #24)
 LABELS = {"sim": BS.LABEL, "pred": PR.LABEL}
 BUDGET_S = 30 * 60  # a family should take no more than 30 min (CLAUDE.md, Speed)
 CATEGORIES = {
@@ -56,8 +63,25 @@ FLAGS = (
     "failure counts are of the drops the bisection ran, not rates",
     "the predictor's failure class is not trusted; take classes and traces from the sim "
     "(docs/predictor-validation.md)",
-    *(f"pickup predictor: {f}" for f in PP.FLAGS),
 )
+PICKUP_FLAGS = tuple(f"pickup predictor: {f}" for f in PP.FLAGS)
+NOT_SCORED = "pickup (R12) was not scored: it is deferred until the gripper is designed (issue #46)"
+
+
+def scored_tasks(tasks):
+    """``tasks`` checked and put in boxes.TASKS order; raises ValueError unless it is a non-empty
+    collection of distinct task names."""
+    if isinstance(tasks, str) or not tasks:
+        raise ValueError(f"tasks must be a non-empty collection from {BX.TASKS}, got {tasks!r}")
+    tasks = list(tasks)
+    if len(set(tasks)) != len(tasks) or any(t not in BX.TASKS for t in tasks):
+        raise ValueError(f"tasks must be distinct names from {BX.TASKS}, got {tasks}")
+    return tuple(t for t in BX.TASKS if t in tasks)
+
+
+def flags(tasks):
+    """The report's caveats for the tasks it scored."""
+    return [*FLAGS, *(PICKUP_FLAGS if "pickup" in tasks else (NOT_SCORED,))]
 
 
 def category(task, outcome):
@@ -138,16 +162,20 @@ def _failure(task, stat, course, d):
     return {"task": task, "statistic": stat, "course": course, "category": category(task, d["outcome"]), **row}
 
 
-def build_report(family, p, sims, preds, release, checks, timing, files, seed):
+def build_report(family, p, sims, preds, release, checks, timing, files, seed, tasks=None):
     """report.json as a dict, from the sim and predicted results ({(task, statistic): result}), the
     pickup release check (or None if pickup was not scored), the cross-check rows, the stage
-    timings (seconds; 'total' required) and the full-result files (name -> relative path)."""
+    timings (seconds; 'total' required) and the full-result files (name -> relative path).
+
+    ``tasks`` names the tasks to report (default: those the sim results hold). Only they appear
+    under targets, score and the counts, and a target's overall score is the smallest of theirs."""
+    tasks = scored_tasks(tasks if tasks is not None else {k[0] for k in sims})
     stats = [s for s in BX.STATISTICS if any(k[1] == s for k in sims)]
     targets, score, counts, fails, dcounts, mismatches = {}, {}, {}, [], {}, {}
     config = {}
     for stat in stats:
         targets[stat], counts[stat], dcounts[stat], mismatches[stat] = {}, {}, {}, {}
-        for task in BX.TASKS:
+        for task in tasks:
             sim, pred = sims[(task, stat)], preds[(task, stat)]
             success = BS.SUCCESS[task]
             config.setdefault(task, sim.get("config", {}))
@@ -177,28 +205,27 @@ def build_report(family, p, sims, preds, release, checks, timing, files, seed):
             dcounts[stat][task] = {k: sum(r["kind"] == k for r in rows) for k in KINDS}
             mismatches[stat][task] = sum(r["kind"] == "agree_failed" and outcome_class(r["pred_outcome"])
                                          != r["sim_outcome"] for r in rows)
-        place = targets[stat]["placement"]["sim"]
-        pick = targets[stat]["pickup"]["sim"]
-        pick_score = pick["scale"] if release["passed"] else 0.0
-        score[stat] = {"placement": place["scale"], "pickup": pick_score,
-                       "overall": min(place["scale"], pick_score)}
+        per = {task: targets[stat][task]["sim"]["scale"] for task in tasks}
+        if "pickup" in tasks and not release["passed"]:
+            per["pickup"] = 0.0
+        score[stat] = {**per, "overall": min(per.values())}
     timing = {**timing, "over_budget": bool(timing["total"] > BUDGET_S)}
     return {
         "schema_version": SCHEMA_VERSION, "labels": dict(LABELS),
         "family": family.name, "family_version": family.version, "params": p.to_dict(), "seed": seed,
-        "config": config, "statistics": stats,
+        "config": config, "statistics": stats, "tasks": list(tasks),
         "score": score,
-        "covers_all_targets": all(targets[s][t]["sim"]["passed"] for s in stats for t in BX.TASKS),
+        "covers_all_targets": all(targets[s][t]["sim"]["passed"] for s in stats for t in tasks),
         "targets": targets,
         "failure_counts": counts, "failures": fails,
         "disagreements": [r for r in checks if r["kind"] in DISAGREE],
         "disagreement_counts": dcounts, "class_mismatches": mismatches, "class_trusted": False,
-        "timing": timing, "flags": list(FLAGS), "files": dict(files),
+        "timing": timing, "flags": flags(tasks), "files": dict(files),
     }
 
 
 _REQUIRED = ("schema_version", "labels", "family", "family_version", "params", "seed", "config", "statistics",
-             "score", "covers_all_targets", "targets", "failure_counts", "failures", "disagreements",
+             "tasks", "score", "covers_all_targets", "targets", "failure_counts", "failures", "disagreements",
              "disagreement_counts", "class_mismatches", "class_trusted", "timing", "flags", "files")
 
 
@@ -232,10 +259,18 @@ def validate_report(d):
     _need(d["labels"] == LABELS, f"labels must be {LABELS}")
     _need(d["class_trusted"] is False and isinstance(d["covers_all_targets"], bool), "bad flags")
     _need(d["statistics"] and set(d["statistics"]) <= set(BX.STATISTICS), "bad statistics")
+    _need(isinstance(d["tasks"], list), "tasks must be a list")
+    tasks = scored_tasks(d["tasks"])
+    _need(list(tasks) == d["tasks"], f"tasks must be in the order of {BX.TASKS}")
     for stat in d["statistics"]:
-        _need(set(d["targets"].get(stat, {})) == set(BX.TASKS), f"targets[{stat}] needs {BX.TASKS}")
-        _need(set(d["score"].get(stat, {})) == {*BX.TASKS, "overall"}, f"score[{stat}] is incomplete")
-        for task in BX.TASKS:
+        _need(set(d["targets"].get(stat, {})) == set(tasks), f"targets[{stat}] needs exactly {tasks}")
+        _need(set(d["score"].get(stat, {})) == {*tasks, "overall"}, f"score[{stat}] needs {tasks} and overall")
+        _need(d["score"][stat]["overall"] == min(d["score"][stat][t] for t in tasks),
+              f"score[{stat}].overall must be the smallest of its task scores")
+        _need(set(d["failure_counts"].get(stat, {})) == set(tasks), f"failure_counts[{stat}] needs exactly {tasks}")
+        _need(set(d["disagreement_counts"].get(stat, {})) == set(tasks),
+              f"disagreement_counts[{stat}] needs exactly {tasks}")
+        for task in tasks:
             t = d["targets"][stat][task]
             for side in ("sim", "pred"):
                 s = t[side]["scale"]
@@ -246,7 +281,7 @@ def validate_report(d):
             _need(set(d["disagreement_counts"][stat][task]) == set(KINDS), f"disagreement_counts[{stat}][{task}]")
     for f in d["failures"]:
         _need(f.get("category") in ALL_CATEGORIES, f"unknown failure category {f.get('category')!r}")
-        _need(f.get("task") in BX.TASKS and f.get("statistic") in d["statistics"], "bad failure row")
+        _need(f.get("task") in tasks and f.get("statistic") in d["statistics"], "bad failure row")
     for r in d["disagreements"]:
         _need(r.get("kind") in DISAGREE, f"a disagreement must be {DISAGREE}, got {r.get('kind')!r}")
     _need(isinstance(d["timing"].get("total"), (int, float)) and isinstance(d["timing"].get("over_budget"), bool),
@@ -272,41 +307,51 @@ def new_run_dir(root, family_name):
 
 
 def score_family(family, p, statistics=BX.STATISTICS, seed=0, tol=0.05, n_interior=4, workers=None,
-                 runs="runs", boxes=None):
+                 runs="runs", boxes=None, tasks=DEFAULT_TASKS):
     """Score one family against every target (predictor, sim, cross-check); writes a new run
-    directory with report.json and the full results, and returns its path."""
+    directory with report.json and the full results, and returns its path.
+
+    ``tasks``: the tasks to score, placement only by default (issue #46). A task that is not
+    scored is not run: without 'pickup' there is no pickup predictor, sim, release check or
+    cross-check."""
     bad = [s for s in statistics if s not in BX.STATISTICS]
     _need(statistics and not bad, f"statistics must be from {BX.STATISTICS}, got {list(statistics)}")
+    tasks = scored_tasks(tasks)
+    pickup = "pickup" in tasks
     boxes = boxes or BX.default_boxes()
     out = new_run_dir(runs, family.name)
     t_all = time.time()
     timing, files, sims, preds, checks = {}, {}, {}, {}, []
     place_cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
-    pick_cfg = PK.PickConfig()
+    cfgs = {"placement": place_cfg, "pickup": PK.PickConfig()}
+    release = None
     n_workers = workers or BS.DEFAULT_WORKERS
     pool = PR.PosePool(n_workers) if n_workers > 1 else None
     try:
         t = time.time()
         for stat in statistics:
-            preds[("placement", stat)] = PR.predicted_box(family, p, boxes["placement"][stat], seed=seed, tol=tol,
-                                                          n_interior=n_interior, cfg=place_cfg, trace=False,
-                                                          pool=pool)
-            preds[("pickup", stat)] = PP.predicted_pickup_box(family, p, boxes["pickup"][stat], seed=seed, tol=tol,
-                                                              n_interior=n_interior)
+            if "placement" in tasks:
+                preds[("placement", stat)] = PR.predicted_box(family, p, boxes["placement"][stat], seed=seed,
+                                                              tol=tol, n_interior=n_interior, cfg=place_cfg,
+                                                              trace=False, pool=pool)
+            if pickup:
+                preds[("pickup", stat)] = PP.predicted_pickup_box(family, p, boxes["pickup"][stat], seed=seed,
+                                                                  tol=tol, n_interior=n_interior)
         timing["predict"] = time.time() - t
-        t = time.time()
-        release = PK.release_check(family, p, pick_cfg)
-        timing["sim_release"] = time.time() - t
-        _write_json(out / "release.json", release)
-        files["release"] = "release.json"
+        if pickup:
+            t = time.time()
+            release = PK.release_check(family, p, cfgs["pickup"])
+            timing["sim_release"] = time.time() - t
+            _write_json(out / "release.json", release)
+            files["release"] = "release.json"
         for stat in statistics:
-            for task, cfg in (("placement", place_cfg), ("pickup", pick_cfg)):
+            for task in tasks:
                 t = time.time()
-                sims[(task, stat)] = BS.box_search(family, p, boxes[task][stat], cfg=cfg, seed=seed, tol=tol,
+                sims[(task, stat)] = BS.box_search(family, p, boxes[task][stat], cfg=cfgs[task], seed=seed, tol=tol,
                                                    n_interior=n_interior, workers=workers, release=False)
                 timing[f"sim_{task}_{stat}"] = time.time() - t
         t = time.time()
-        geo = PP.geometry(family, p)
+        geo = PP.geometry(family, p) if pickup else None
         for (task, stat), sim in sims.items():
             checks += cross_check(family, p, boxes[task][stat], sim, cfg=place_cfg, pool=pool, geo=geo)
         timing["cross_check"] = time.time() - t
@@ -322,7 +367,7 @@ def score_family(family, p, statistics=BX.STATISTICS, seed=0, tol=0.05, n_interi
     files["cross_check"] = "cross-check.json"
     _write_json(out / "cross-check.json", checks)
     timing["total"] = time.time() - t_all
-    rep = build_report(family, p, sims, preds, release, checks, timing, files, seed)
+    rep = build_report(family, p, sims, preds, release, checks, timing, files, seed, tasks=tasks)
     rep.update(tol=tol, n_interior=n_interior, workers=n_workers)
     validate_report(rep)
     _write_json(out / "report.json", rep)
@@ -331,16 +376,17 @@ def score_family(family, p, statistics=BX.STATISTICS, seed=0, tol=0.05, n_interi
 
 def summary(rep):
     """A short text table of a report, for the terminal."""
-    lines = [f"{rep['family']} ({LABELS['sim']}; predictor {LABELS['pred']}), seed {rep['seed']}",
-             f"{'target':<6} {'placement':>9} {'pickup':>7} {'overall':>7}  pred place/pick  failures",
-             ]
+    tasks = rep["tasks"]
+    lines = [f"{rep['family']} ({LABELS['sim']}; predictor {LABELS['pred']}), seed {rep['seed']}, "
+             f"tasks {' + '.join(tasks)}",
+             f"{'target':<6} " + " ".join(f"{t:>9}" for t in (*tasks, "overall")) + f"  pred {'/'.join(tasks)}  failures"]
     for stat in rep["statistics"]:
         s, t = rep["score"][stat], rep["targets"][stat]
         fc = "; ".join(f"{task}: " + ", ".join(f"{k} {n}" for k, n in sorted(rep["failure_counts"][stat][task].items()))
-                       for task in BX.TASKS if rep["failure_counts"][stat][task])
-        lines.append(f"{stat:<6} {s['placement']:>9.3f} {s['pickup']:>7.3f} {s['overall']:>7.3f}  "
-                     f"{t['placement']['pred']['scale']:>5.3f}/{t['pickup']['pred']['scale']:<5.3f}    {fc or 'none'}")
-    n = {k: sum(c[t][k] for c in rep["disagreement_counts"].values() for t in BX.TASKS) for k in DISAGREE}
+                       for task in tasks if rep["failure_counts"][stat][task])
+        lines.append(f"{stat:<6} " + " ".join(f"{s[k]:>9.3f}" for k in (*tasks, "overall")) + "  "
+                     + "/".join(f"{t[task]['pred']['scale']:.3f}" for task in tasks) + f"    {fc or 'none'}")
+    n = {k: sum(c[t][k] for c in rep["disagreement_counts"].values() for t in tasks) for k in DISAGREE}
     lines.append(f"covers all targets: {rep['covers_all_targets']}; disagreements: "
                  f"{n['optimistic']} optimistic, {n['conservative']} conservative")
     tm = rep["timing"]
@@ -349,21 +395,27 @@ def summary(rep):
     return "\n".join(lines)
 
 
-def main(argv=None):
-    from brixzle.families import registry
-
+def parser():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--family", default="ab")
     ap.add_argument("--statistics", nargs="+", choices=BX.STATISTICS, default=list(BX.STATISTICS))
+    ap.add_argument("--tasks", nargs="+", choices=BX.TASKS, default=list(DEFAULT_TASKS),
+                    help="tasks to score (default: placement only, issue #46)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tol", type=float, default=0.05)
     ap.add_argument("--n-interior", type=int, default=4)
     ap.add_argument("--workers", type=int, default=None, help=f"parallel processes (default {BS.DEFAULT_WORKERS})")
     ap.add_argument("--runs", default="runs")
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None):
+    from brixzle.families import registry
+
+    args = parser().parse_args(argv)
     family = registry.get(args.family)
     out = score_family(family, family.defaults, statistics=tuple(args.statistics), seed=args.seed, tol=args.tol,
-                       n_interior=args.n_interior, workers=args.workers, runs=args.runs)
+                       n_interior=args.n_interior, workers=args.workers, runs=args.runs, tasks=tuple(args.tasks))
     print(summary(json.loads((out / "report.json").read_text(encoding="utf-8"))))
     print(f"-> {out}")
 
