@@ -79,3 +79,34 @@ All numbers here are simulated, uncalibrated contact, on A/B V0 with the mean ta
   The old grid had no Z or θ axis, so the Z–θ slice counts as it is.
 - **The map refuses a design that failed the quick check, unless the caller says otherwise.**
   The issue says the map runs only for designs that pass. The command line has `--even-if-check-fails` for looking at a baseline.
+
+## #49 Jam analysis inside the green zone
+
+Numbers are from A/B V0's mean-box analysis, `runs/map-20261111T200204588290Z-ab-mean/jam_analysis.json` (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D). They were measured on macOS arm64. Contact details differ between platforms: on the Linux CI runner the seated brick's most loaded point carried 7.4% of the weight, and the hand-picked edge jam below came out as a 3D effect.
+
+- **A "seed" is a small seeded shift of the pose: up to 5% of a map cell on each axis.**
+  The sim gives the same result for the same pose, so re-running a pose unchanged tests nothing. A shift that small asks whether the failure survives noise, without moving off a thin band.
+- **A cell is repeatable if it fails at least two thirds of the seeds at some friction coefficient.**
+  A design has to seat at every friction, so a failure that is reliable at one of them is real. A/B's one repeatable cell fails 2 of 3 seeds at μ 0.3 and none at 0.2, 0.4 or 0.5, so an overall rate (17%) would have hidden it.
+- **The 5% force threshold applies to a site, after merging.**
+  The issue's step 1 puts it on each contact. A seated A/B brick touches at 193 points, and the most loaded one carries 3.0% of its weight (`seated_reference`), so a per-point threshold would leave a seated face with no contacts at all.
+- **Contacts are flattened to X–Z before they are merged, and the Y share is measured on the merged sites.**
+  A/B's faces lean across Y (its V gutter), so every contact on them has a Y force, and mirror-image contacts cancel. Measured raw, a clean seat has 22% of its force along Y, more than the real jam (15%). Measured on merged sites, the seat has 1%.
+- **"A large share" along Y is more than a quarter.**
+  A/B's in-plane jam at its +X capture edge has 10% on macOS arm64 (the pose of test `test_an_ab_jam_at_the_capture_edge_is_reduced_and_its_faces_named`), and its 2D reduction is sound. A quarter leaves room above that.
+- **A brick resting out of plane is also a 3D effect: more than 1 mm in Y, or rolled or yawed more than 2°.**
+  The issue only names the force share. A/B's repeatable jam ends rolled 5.5° and 2.2 mm off its plane with a Y share of only 15%, so the share alone would have sent a clearly 3D jam into the 2D analysis.
+- **A leaning face gets more friction in plane: `mu_scale`.**
+  Two mirror-image contacts press harder than their in-plane resultant shows. The holding-set test scales each site's friction by the summed normal force over its in-plane part (1.00 to 1.07 on a seated A/B brick).
+- **Among holding sets of the same size, the one the sim loads most is reported,** with a count of the alternatives.
+  The smallest set is not always unique, and the sim's forces are the best hint about which one is acting.
+- **`needs_friction` separates a friction jam from a stable rest.**
+  If the set's normal forces alone balance gravity, steeper faces or less friction will not free the brick; the geometry has to change. A wrong valley is the usual case.
+- **A 3D-effect band still lists its named contact sites.**
+  The reduction stops, as the issue says, but the critic still needs to see what touches what.
+- **Face names are built from the geometry:** the part, corner or face, its angle and which way it faces, whether it is a guide face, and its end points in the section frame.
+  The family interface has no names for faces, and the names have to work for a brick the design agent has just invented.
+- **`jam_analysis.json` is written into the map's run directory and never overwrites one.**
+  The issue asks for it "beside the map". A second analysis of the same map needs a new map run.
+- **Capture limits are left to #56.**
+  This issue covers the failures inside the green zone. What stops capture at the zone's edge needs the same reduction on the first failing cell past each edge.
