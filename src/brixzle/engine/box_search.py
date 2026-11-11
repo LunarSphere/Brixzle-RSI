@@ -60,7 +60,7 @@ CORNERS = np.array([(x, z, a) for x in (-1, 1) for z in (-1, 1) for a in (-1, 1)
 SUCCESS = {"placement": "seated", "pickup": "picked"}
 FACES = np.array([v for i in range(3) for v in (np.eye(3)[i], -np.eye(3)[i])], dtype=float)
 
-__all__ = ["DropRig", "unit_points", "pose_sample", "bisect_scale", "box_search"]
+__all__ = ["DropRig", "DropPool", "unit_points", "pose_sample", "bisect_scale", "box_search"]
 
 
 def unit_points(n_interior=4, seed=0):
@@ -134,6 +134,48 @@ def _drop(job):
             w["rigs"][course] = DropRig(w["family"], w["p"], w["cfg"], course=course, bodies=w["bodies"])
     rig = w["rigs"][course]
     return rig.pick(sample) if course == "pick" else rig.drop(sample)
+
+
+class DropPool:
+    """Drop processes for one design, for callers that run many poses in a row (the quick check,
+    issue #47). Each worker builds one rig per course from the shared bodies, as box_search does.
+
+        with DropPool(family, p, cfg, workers=4) as pool:
+            rows = list(pool.imap([(course, sample), ...]))
+
+    ``imap`` yields one row per job, in job order. With one worker the drops run lazily in this
+    process, so a caller that stops reading stops the drops; with more, closing the pool cancels
+    the drops that have not started. A one-worker pool uses this module's worker state, so keep
+    only one open at a time."""
+
+    def __init__(self, family, p, cfg, workers=None, bodies=None):
+        if workers is not None and (not isinstance(workers, int) or isinstance(workers, bool) or workers < 1):
+            raise ValueError(f"workers must be an integer >= 1, got {workers!r}")
+        self.workers = min(workers or DEFAULT_WORKERS, os.cpu_count() or 1)
+        bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}  # built once, here
+        self._ex = None
+        if self.workers > 1:
+            self._ex = ProcessPoolExecutor(self.workers, mp_context=multiprocessing.get_context("spawn"),
+                                           initializer=_init_worker, initargs=(family, p, cfg, bodies))
+        else:
+            _init_worker(family, p, cfg, bodies)
+
+    def imap(self, jobs):
+        """Rows for (course, sample) jobs, in order."""
+        jobs = list(jobs)
+        if self._ex is None:
+            return (_drop(job) for job in jobs)
+        return self._ex.map(_drop, jobs)
+
+    def close(self):
+        if self._ex is not None:
+            self._ex.shutdown(wait=True, cancel_futures=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 def _search_course(box, cfg, course, unit, s_max, tol, pool):
