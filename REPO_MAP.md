@@ -25,6 +25,6 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `scripts/` | One-off data generators, e.g. `make_hover_estimates.py` (Z, pitch and yaw estimates from aerial-assembly's Exp 3 logs) |
 | `tests/` | pytest suite (`uv run pytest`) |
 | `tests/fixtures/` | Reference results recorded from aerial-assembly, and the scripts that recorded them |
-| `docs/` | Requirements (R1–R13) as prose (`requirements.md`) and data (`requirements.yaml`), the family interface (`family-interface.md`), architecture, and the predictor validation report (`predictor-validation.md`) |
+| `docs/` | Requirements (R1–R13) as prose (`requirements.md`) and data (`requirements.yaml`), the family interface (`family-interface.md`), architecture, the predictor validation report (`predictor-validation.md`), and the decisions made where an issue left something open (`decisions.md`) |
 | `.github/workflows/ci.yml` | CI: runs the tests on every PR and on pushes to `main` |
 | `runs/` | Git-ignored. One folder per loop run, one subfolder per iteration |
