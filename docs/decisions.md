@@ -82,7 +82,7 @@ All numbers here are simulated, uncalibrated contact, on A/B V0 with the mean ta
 
 ## #49 Jam analysis inside the green zone
 
-Numbers are from A/B V0's mean-box analysis, `runs/map-20261111T200204588290Z-ab-mean/jam_analysis.json` (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D).
+Numbers are from A/B V0's mean-box analysis, `runs/map-20261111T200204588290Z-ab-mean/jam_analysis.json` (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D). They were measured on macOS arm64. Contact details differ between platforms: on the Linux CI runner the seated brick's most loaded point carried 7.4% of the weight, and the hand-picked edge jam below came out as a 3D effect.
 
 - **A "seed" is a small seeded shift of the pose: up to 5% of a map cell on each axis.**
   The sim gives the same result for the same pose, so re-running a pose unchanged tests nothing. A shift that small asks whether the failure survives noise, without moving off a thin band.
@@ -93,7 +93,7 @@ Numbers are from A/B V0's mean-box analysis, `runs/map-20261111T200204588290Z-ab
 - **Contacts are flattened to X–Z before they are merged, and the Y share is measured on the merged sites.**
   A/B's faces lean across Y (its V gutter), so every contact on them has a Y force, and mirror-image contacts cancel. Measured raw, a clean seat has 22% of its force along Y, more than the real jam (15%). Measured on merged sites, the seat has 1%.
 - **"A large share" along Y is more than a quarter.**
-  A/B's in-plane jam at its +X capture edge has 10% (test `test_an_in_plane_ab_jam_reduces_to_a_holding_set_with_named_faces`), and its 2D reduction is sound. A quarter leaves room above that.
+  A/B's in-plane jam at its +X capture edge has 10% on macOS arm64 (the pose of test `test_an_ab_jam_at_the_capture_edge_is_reduced_and_its_faces_named`), and its 2D reduction is sound. A quarter leaves room above that.
 - **A brick resting out of plane is also a 3D effect: more than 1 mm in Y, or rolled or yawed more than 2°.**
   The issue only names the force share. A/B's repeatable jam ends rolled 5.5° and 2.2 mm off its plane with a Y share of only 15%, so the share alone would have sent a clearly 3D jam into the 2D analysis.
 - **A leaning face gets more friction in plane: `mu_scale`.**
