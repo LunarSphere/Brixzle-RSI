@@ -241,3 +241,14 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **Credentials: an API key, else the `ant` profile.** The maintainer logged in with the `ant` CLI. Claude Code does not read that profile itself, so the runner passes the profile's short-lived access token to it as `ANTHROPIC_AUTH_TOKEN`, with the OAuth beta header. The token is never printed or written. Claude Code reports the credential it used. A call fails on anything but an API credential, so spend cannot land on a claude.ai subscription that the ledger does not track.
 - **A call whose cost the SDK does not report counts as its whole budget** in the ledger, so an unknown cost errs toward stopping early.
 - **`fixed.U_mm`** records a voxel pitch fixed at intake (R2), which the end tune then leaves alone.
+
+## #15 Report renders
+
+The maintainer added `RSI_RESULTS/` to this issue on 2026-11-12 (comment on #15).
+
+- **Wrong valley gets its own colour, purple.** The figure style is aerial-assembly's drop grid: seated green, jammed orange, fell red. That figure had no wrong valley, but on A/B it is the most common failure (wrong valley 279 of 622 drops in the worst box), so folding it into red would hide what the critic most needs.
+- **The jam bands are outlined, and the target box is drawn dashed.** A box thinner than one map cell in pitch (±0.2° against 2° cells) is drawn one cell tall so it can be seen.
+- **The jam map is drawn from map.json alone.** It does not need the 2 MB of traces in `drops.json.gz`, so the render takes a second or two.
+- **`summary.md` includes held-out Z.** It is for people. The critic reads the design log, never `RSI_RESULTS/`, so it still never sees held-out results.
+- **matplotlib is a dependency.** Renders run in every loop iteration, and the tests draw them.
+- **`RSI_RESULTS/` is git-ignored,** like `runs/`. Figures for the repo go through #25.
