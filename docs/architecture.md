@@ -1,6 +1,18 @@
 # Architecture
 
-Planned. Nothing here is built yet.
+The evaluation engine is built. The agents, the intake page and the orchestrator are planned.
+
+## Loop order
+
+Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
+
+1. **Design.** The design agent makes a new CAD model as a brick family (issue #18).
+2. **Quick random check.** 40 evenly spread sim drops inside the target box. Fewer than 32 seated sends the design straight back to step 1 (issue #47, built).
+3. **Full sim map** on a grid fitted to the brick (issue #48, built).
+4. **Jam analysis** inside the green zone (issue #49, built).
+5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
+
+The loop's score is the scorer's box scale for the target (see [Evaluation engine](#evaluation-engine-no-llm)). When it reaches 1, or stops improving, a short tune finishes the design (issue #14).
 
 ## Orchestrator
 
@@ -59,6 +71,62 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
    - **Cross-check:** the predictor is run on the poses the sim dropped, and the report flags where they disagree. *Optimistic* means only the predictor succeeds; *conservative* means only the sim does. The scale gap is recorded for each target. When both fail, their failure classes are compared but not trusted.
 
    `engine/report.py` writes `report.json` to a new run directory. The report names the tasks it scored. The full sim and predictor results are written beside it.
+
+### Quick random check
+
+`engine/quick_check.py` is the go/no-go gate before the full map. It exists so that a weak design is turned back in seconds.
+
+- **Poses:** 40 poses inside the target box, from one seeded Latin hypercube over X, Z, θ and the course. Each axis has one pose in each of its 40 equal slices, and each course gets 20 poses.
+- **Physics:** the MuJoCo drop trial, not the predictor.
+- **Pass rule:** at least 32 of 40 seated. The check stops at the 9th failure, because 32 is then out of reach. Poses are judged in order, so the result does not depend on how many processes ran it.
+- **On a fail:** the failing poses go back to the design agent with their outcomes and contact traces.
+- **Output:** `runs/check-<UTC>-<family>-<target>/check.json`, labelled "simulated, uncalibrated contact".
+
+The check is not the score. A design that seats every drop in the box always passes it, so it never turns back a design that would score 1.
+
+### Full sim map
+
+`engine/sim_map.py` maps a design that passed the quick check. It drops the brick over three slices through the aim point, on both courses, and records seated, jammed, wrong valley and fell for every cell.
+
+| Slice | Axes | Held at the aim |
+|---|---|---|
+| `xz` | X offset against release height | zero pitch |
+| `xt` | X offset against pitch | the target box's centre height |
+| `zt` | release height against pitch | zero X offset |
+
+- **Coordinates:** X is the offset about the aim. Z is the release height above the minimum release clearance, so it never goes below 0. θ is pitch.
+- **Cells:** U/25 in X (1 mm for a 25 mm voxel), U/5 in Z and 2° in θ. Sizes in X and Z follow the voxel pitch U, so bricks of different sizes get maps with about the same number of cells. Extents are reported in U as well as in mm.
+- **Fitting,** in code (`GridFit`):
+  1. start from the quick check's drops, widened to the target box, plus a one-cell margin;
+  2. grow any edge that still has a seated cell on it, until it has none or reaches the axis limit;
+  3. trim outer rows and columns with no seated cell, keeping one such row past the last green one. Where the misses start is the capture limit.
+- **Limits:** ±2 U in X, 1 U of release height and ±10° of pitch. An edge that is still green at a limit is marked `limit` in the map, not left looking closed.
+- **Guardrail:** the grid never shrinks inside the target box, and the target box wins over a limit. The score stays the scorer's box scale over the target box, whatever the map covers, so cropping the map cannot raise a score.
+- **Overrides:** a caller may add a zoom (an extra, finer grid over part of a slice) or change the grid settings. Either needs a reason, and both are written to `overrides` in `map.json` for the design log (issue #20). A zoom never replaces a fitted slice.
+- **Inside the green zone:** each grid lists its failing cells that lie inside the zone, for the jam analysis (issue #49). A failure beyond the zone's edge is the capture limit, not a jam inside it.
+- **Output:** `runs/map-<UTC>-<family>-<target>/map.json` holds the grids. `drops.json.gz` beside it holds every drop with its contact trace. Both are labelled "simulated, uncalibrated contact".
+
+### Jam analysis
+
+`engine/jam_analysis.py` takes the failing cells inside the map's green zone and tells the critic which are real and what holds the brick. The failure type (jammed, wrong valley, fell) comes from the sim. The mechanism comes from the predictor's stability tests, applied to the sim's contacts.
+
+1. **Repeatable or one-off.** Each cell is re-run with 3 seeds at each friction coefficient (0.2, 0.3, 0.4, 0.5). A seed shifts the pose by up to 5% of a map cell. A cell is repeatable if it fails at least two thirds of the seeds at some friction; otherwise it is a one-off (solver noise).
+2. **Bands.** Repeatable cells that touch, on one slice and course, form a band.
+3. **Contacts.** The drop nearest each band's centre is run again, and its contacts at rest are reduced:
+   - keep the contacts between the brick and what it rests on that still touch;
+   - flatten them to the X–Z plane and merge points that lie together into sites. A flat patch becomes its two end points, the rule the predictor uses. A site must carry more than 5% of the brick's weight;
+   - if the brick rests out of plane (more than 1 mm in Y, or rolled or yawed more than 2°), or more than a quarter of the sites' force is along Y, the band is a **3D effect** and the reduction stops;
+   - otherwise find the smallest set of sites whose friction can balance gravity, with the predictor's weak-stability test at the sim's friction. MuJoCo's own split of the load is not trusted;
+   - name each contact: which face or corner of the falling brick touches which face or corner below, with the predictor's stick margin and the Whitney (1982) wedging test.
+4. **Reading the result:**
+   - one contact: stuck on a face too shallow for its friction (R6);
+   - two contacts: both sticking (Balkcom & Trinkle 2002), and wedged if they push from opposite sides with the line between them inside both friction cones (Whitney 1982);
+   - three or more: reported as found;
+   - a set that holds without friction is a stable rest away from the seat, not a friction jam.
+
+**Capture limits (issue #56).** A zone with no jam inside it can still be too narrow for the target box. So on each slice with an X axis, in the row through the aim, the first failing cell past each end of the green band is dropped again and reduced the same way. It is also dropped once at each friction coefficient, to show whether the edge moves with friction. The result is under `capture_limits`, one entry per slice, course and side.
+
+**Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
 
 ## Files
 
