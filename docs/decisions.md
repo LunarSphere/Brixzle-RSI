@@ -200,3 +200,24 @@ The maintainer reviewed the R10 wording on 2026-11-11 and changed the mass sente
   A lip sits on the outline's edge, so "inside the outline" would reject it. The extent check still catches a feature placed off the brick.
 - **A/B's own `R10.fork_fits` stays in its `extra_rules`.**
   It only says that A/B found room for its two bores, which are its grip features.
+
+## #61 Objective Z
+
+The maintainer set the definition on 2026-11-12: for each target box, Z = (S − J) / N over every drop of the full sim map inside the box, across all slices and both courses; seated +1, jammed −1, fell and wrong valley 0; Z = 1 passes. Z replaces the box scale in the report, the loop's stop rule, the acceptance rule (#21) and the end tune. The choices below are where the definition left something open.
+
+Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each from the run directory named with it.
+
+- **Map limits accepted (maintainer, 2026-11-12):** 1 U of release height and ±10° of pitch, as merged in #55.
+- **R10's 5 g gripper allowance stays (maintainer, 2026-11-12),** marked in `docs/requirements.md` as an estimate until #24.
+- **One map covers all three target boxes.** Z is counted per box, and the map's grid only promises to cover the box it was run for. So `sim_map(..., cover=...)` widens the guardrail to every box the scorer counts, and the scorer passes the mean, p95 and worst boxes. The slices still cross at the run's target's aim, so a held coordinate (the X–θ slice's release height) is the target box's centre. A report refuses a box the map did not cover, because Z would miss drops.
+- **Every drop counts, duplicates included.** The X–Z and Z–θ slices share their cells at zero offset and zero pitch. The definition says every drop, so both count. On A/B's mean box that is 2 of 89 drops per course.
+- **Zoom drops do not count.** A zoom is an override at a finer step; counting it would let a caller weight Z.
+- **Pitch: only the zero row is inside a box.** Map cells are 2° apart and the boxes are ±0.2–0.4°, so each box holds the zero-pitch row of the X–θ and Z–θ slices. The cell sizes are #48's and were not changed here.
+- **The report lives beside the map.** `report.json` (schema 4) is written into the map's run directory, as the jam analysis is. It holds Z per target with S, J, N, fell, wrong valley and other. The pickup report (`--tasks pickup`), the predictor, the cross-check and the box scale are gone from the report. The box search, the pickup trial and the predictor validation stay in the code with their tests.
+- **The tune and the acceptance rule get Z without the full map.** A drop depends only on its pose, so dropping only the map's cells inside the boxes (`zscore.ZScore`) gives the map's Z exactly (test `test_the_direct_z_matches_the_full_maps_z`). On A/B that is 622 drops for the three boxes, against 2,000 to 3,000 for a fitted map.
+- **The tune refuses a candidate that lowers Z on any other target box** below the untuned design's (`lowers_other`, a penalty worse than any score), so it can never be the result. This reverses the #14 entry "The tune raises the target box only, and can lower another".
+- **Penalties sit above 1,** because Z can be negative: −Z lies in [−1, 1], so lowering another box is 1.5, breaking a rule 2.0 and failing to build 3.0.
+- **Held-out Z.** "Different seeds" is read as different poses: each in-box cell is shifted by a seeded amount, up to half a cell or the box's half-width if that is smaller (pitch), clipped to the box, and dropped at friction 0.2 and at 0.5. The seed is the run seed + 1. Without the shift, a new seed would change nothing, because the map's cells have no seed.
+- **A/B V0's Z,** `runs/map-20261112T202420460668Z-ab-mean/report.json` (quick check seed 0): mean +0.848 (S 154, J 3, wrong valley 21, N 178), p95 +0.336 (S 206, J 56, wrong valley 184, N 446), worst +0.114 (S 206, J 135, fell 2, wrong valley 279, N 622). Check 7.6 s, map 65.5 s, total 74.4 s.
+- **A/B V0's end tune on Z found nothing better,** `runs/tune-20261112T202915149550Z-ab-mean/` (seed 0, default settings): Z on the mean box stayed +0.848 in 269.3 s of search; 19 candidates, 7 scored, 7 broke a rule, and 5 were refused for lowering Z on p95 or worst (for example p95 0.336 to 0.323) while holding the mean at +0.848. The U step that raised the old box scale (25 to 26.4 mm) lowered Z on the mean box (+0.843). Each of the first probes took about 70 s, scored serially in six processes side by side; later candidates took about 28 s on six workers.
+- **R11 is checked by the sim alone** in `docs/requirements.md` and `docs/requirements.yaml` (`checks: [sim]`), since the predictor is no longer part of the score.

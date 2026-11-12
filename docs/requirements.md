@@ -19,8 +19,8 @@ Each requirement is checked one of three ways:
 | R7 | **Alternating angles.** Alternating the lean between courses may improve stability. | Design: alternating parts by course |
 | R8 | **Stiffness.** I-beam-like sections may be used to stop the brick from flexing. The first course sits on a stable base. | Design: rib frame, anchored base |
 | R9 | **Mass.** A brick must weigh between 1 g and 25 g in PLA; lighter is preferred. | Rule: mass window |
-| R10 | **Grippable.** Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. The combined mass of the brick and the gripper must not be more than 35 g, the drone's payload limit. Which gripper uses the feature is decided after the brick design is settled. | Rules: at least one grip feature, brick plus gripper within the payload |
-| R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Analytic predictor and sim: placement box score |
+| R10 | **Grippable.** Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. The combined mass of the brick and the gripper must not be more than 35 g, the drone's payload limit. Which gripper uses the feature is decided after the brick design is settled. | Rules: at least one grip feature, brick plus gripper within the payload (the gripper counts as 5 g, an estimate until #24) |
+| R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Sim: Z over each placement target box (issue #61) |
 | R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
 | R13 | **Printable.** A brick must print as one piece in PLA, with walls of at least 1.2 mm. | Rules: single piece, minimum wall |
 
@@ -34,9 +34,15 @@ A deferred requirement stays in the list, but the loop does not score it, and th
 
 ## Design target
 
-Both R11 and R12 use the same score. Find the largest box of drone error around the aim point where every trial succeeds with no jams. Then scale it against three targets, sized to the drone's mean, 95th-percentile and worst measured error.
+The loop scores placement (R11) only, because R12 is deferred. Its objective is **Z** (issue #61): for each target box, sized to the drone's mean, 95th-percentile and worst measured error, take every drop of the full sim map whose pose lies inside the box, and
 
-For now the loop scores placement (R11) only, because R12 is deferred.
+  Z = (seated − jammed) / drops in the box.
+
+Z runs from −1 to 1. Z = 1, every drop in the box seated with no jams, passes. Z is counted over the target box, not the zone where the brick seats, so a design cannot raise it by narrowing that zone.
+
+The pickup trial (R12) was scored by the largest scaling of its box where every trial succeeds. It is kept for when R12 returns (#24).
+
+**R10's gripper allowance is an estimate.** R10 limits the brick and the gripper together to 35 g. The gripper is designed after the brick (#24), so the rules count it as 5 g. That figure is the fork model's mass rounded up (`docs/decisions.md`, #50), not a measured gripper, until #24 replaces it.
 
 - **Placement (R11):** the box is in X, Z and θ, the brick's profile plane.
 - **Pickup (R12):** the box is in X (across the tines), Z (vertical) and ψ (yaw).

@@ -12,7 +12,7 @@ Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
 4. **Jam analysis** inside the green zone (issue #49, built).
 5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
 
-The loop's score is the scorer's box scale for the target (see [Evaluation engine](#evaluation-engine-no-llm)). When it reaches 1, or stops improving, a short tune finishes the design (issue #14).
+The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). When Z reaches 1 on the target box, or stops improving, a short tune finishes the design (issue #14).
 
 ## Orchestrator
 
@@ -20,8 +20,8 @@ The orchestrator runs each iteration without a person prompting it, and enforces
 
 The loop stops when either of these holds:
 
-- the design's placement box covers the target error with no jams;
-- the score stops improving, or the budget runs out.
+- Z reaches 1 on the target box: every drop inside it seated;
+- Z stops improving, or the budget runs out.
 
 The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 
@@ -52,25 +52,32 @@ For each conflict or unclear item, it asks the person to choose. Nothing reaches
 
 ## Evaluation engine (no LLM)
 
-It runs once for each target box: the drone's mean, 95th-percentile and worst error. For now it scores placement (R11) only. The pickup trial and the pickup predictor (R12) stay in the code with their tests, but the loop does not run them (issue #46).
+It scores each target box: the drone's mean, 95th-percentile and worst error. For now it scores placement (R11) only. The pickup trial and the pickup predictor (R12) stay in the code with their tests, but the loop does not run them (issue #46).
 
-1. **Analytic predictor.** It takes a 2D section of the brick in X, Z and θ. For each pose, it steps through the contacts:
+1. **Analytic predictor.** It is not part of the score (issue #61). The jam analysis uses its stability tests to explain jams, and `engine/validate.py` checks it against the sim. It takes a 2D section of the brick in X, Z and θ. For each pose, it steps through the contacts:
    - find the first contact (configuration-space geometry);
    - decide slide or stick, from the friction cone;
    - find the next contact;
    - at two or more contacts, run a jam test, which asks whether friction can hold the part still.
 
    It repeats this across μ ≈ 0.2–0.5, and returns a predicted box and contact traces in seconds.
-2. **Tuner.** One short, gradient-free Py-BOBYQA run on the simulated box, at the end of the loop and not inside an iteration. See [End tune](#end-tune).
-3. **Sim verifier.** MuJoCo drops (and pickups) at the box's corners and faces, plus a few interior points. Bisection on the box's scale finds the largest box in which every trial succeeds. Every contact is logged.
-4. **Scorer and diagnoser.**
-   - **Score:** the sim box scale for each target, where 1 or more passes. A target's overall score is the smallest over the tasks that were scored. By default that is placement alone (`tasks`, issue #46). With `--tasks placement pickup` it is the smaller of the two, and a failed clean-release check scores pickup 0.
-   - **Failures:** placement failures are sorted into jam, fall and wrong valley. Pickup failures, when pickup is scored, are sorted into jam, pickup miss, off-centre and forceful, plus a failed release. The limiting failures, which cap each box, keep their contact traces.
-   - **Cross-check:** the predictor is run on the poses the sim dropped, and the report flags where they disagree. *Optimistic* means only the predictor succeeds; *conservative* means only the sim does. The scale gap is recorded for each target. When both fail, their failure classes are compared but not trusted.
+2. **Tuner.** One short, gradient-free Py-BOBYQA run on Z, at the end of the loop and not inside an iteration. See [End tune](#end-tune).
+3. **Sim verifier.** MuJoCo drops through the full sim map (below). The older box search (`engine/box_search.py`: bisection on the scale of a box until every drop at its corners, faces and a few interior points succeeds) is kept for the pickup trial and the predictor validation; it is no longer the score.
+4. **Scorer (`engine/report.py`).** It runs the quick check, then the full sim map with its grid covering all three target boxes (aimed at the run's target), and counts Z on each box. It writes `map.json`, `drops.json.gz` and `report.json` (schema 4) to one new `runs/map-<UTC>-<family>-<target>/` directory; the jam analysis is written beside them. The report holds Z per target with S, J, N and the fell, wrong-valley and other counts behind it. It holds no box scale and no predictor term.
 
-   - **Sim only for `Solid3D`:** the predictor works on a 2D section, so a `Solid3D` family is scored by the sim alone (issue #51). The predictor and the cross-check are not run. The report says so under `predictor`, with the reason, and holds no predicted scale, scale gap or disagreement.
+### Objective Z
 
-   `engine/report.py` writes `report.json` to a new run directory. The report names the tasks it scored and says whether the predictor was used. The full sim and predictor results are written beside it. A run that raises removes its run directory again.
+Issue #61. For each target box (mean, p95, worst), every drop of the full sim map whose pose lies inside the box counts, across all slices and both courses:
+
+- S = seated, J = jammed, N = every drop in the box;
+- **Z = (S − J) / N**: a seated drop counts +1, a jammed one −1, and a fall, a wrong valley or any other outcome 0;
+- Z runs from −1 to 1, and **Z = 1 passes**: every drop in the box seated.
+
+Z is counted over the target box, not over the green zone. The box is fixed by the drone's measured error, so a design cannot raise Z by shrinking its green zone. Zoom drops, which are overrides at a finer step, are not counted.
+
+- **Cells in a box.** The map's cells are 1 mm in X, 5 mm in release height and 2° in pitch at U = 25 mm, so the target boxes' ±0.2–0.4° of pitch hold only the zero-pitch row. On A/B the mean box holds 29 X columns: 89 drops per course over the three slices, 178 in all; p95 holds 446 and the worst box 622.
+- **Without the full map.** A drop depends only on its pose, so dropping the map's cells inside the boxes alone gives the same Z (`zscore.ZScore`), in about a third of the drops and with no grid fitting. The end tune and the loop's acceptance rule use it.
+- **Held-out Z.** Each in-box pose is shifted by a seeded amount (up to half a cell, or the box's half-width if smaller) and kept inside the box, and dropped at friction 0.2 and 0.5 (`zscore.HeldOutZ`). The critic never sees it.
 
 ### Quick random check
 
@@ -82,7 +89,7 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
 - **On a fail:** the failing poses go back to the design agent with their outcomes and contact traces.
 - **Output:** `runs/check-<UTC>-<family>-<target>/check.json`, labelled "simulated, uncalibrated contact".
 
-The check is not the score. A design that seats every drop in the box always passes it, so it never turns back a design that would score 1.
+The check is not the score. A design that seats every drop in the box always passes it, so it never turns back a design with Z = 1.
 
 ### Full sim map
 
@@ -101,7 +108,8 @@ The check is not the score. A design that seats every drop in the box always pas
   2. grow any edge that still has a seated cell on it, until it has none or reaches the axis limit;
   3. trim outer rows and columns with no seated cell, keeping one such row past the last green one. Where the misses start is the capture limit.
 - **Limits:** ±2 U in X, 1 U of release height and ±10° of pitch. An edge that is still green at a limit is marked `limit` in the map, not left looking closed.
-- **Guardrail:** the grid never shrinks inside the target box, and the target box wins over a limit. The score stays the scorer's box scale over the target box, whatever the map covers, so cropping the map cannot raise a score.
+- **Guardrail:** the grid never shrinks inside the target boxes it covers (`cover`; the scorer passes all three), and a target box wins over a limit. Z is counted over the target box, whatever else the map covers, so cropping the map cannot raise it.
+- **Limits accepted:** the maintainer accepted 1 U of release height and ±10° of pitch on 2026-11-12 (#61).
 - **Overrides:** a caller may add a zoom (an extra, finer grid over part of a slice) or change the grid settings. Either needs a reason, and both are written to `overrides` in `map.json` for the design log (issue #20). A zoom never replaces a fitted slice.
 - **Inside the green zone:** each grid lists its failing cells that lie inside the zone, for the jam analysis (issue #49). A failure beyond the zone's edge is the capture limit, not a jam inside it.
 - **Output:** `runs/map-<UTC>-<family>-<target>/map.json` holds the grids. `drops.json.gz` beside it holds every drop with its contact trace. Both are labelled "simulated, uncalibrated contact".
@@ -133,13 +141,13 @@ The check is not the score. A design that seats every drop in the box always pas
 `engine/tune.py` runs once, on the family the loop settled on (issue #14). The loop itself changes shapes, not numbers; this last step moves the numbers.
 
 - **Variables:** the parameters in the family's `bounds`, each scaled to 0–1 over its range. A caller can fix any of them, for example the cell size U when it was set at intake (R2).
-- **Objective:** the scorer's sim box scale for the run's target box, placement only. The untuned design is scored first, and no point is scored twice.
+- **Objective:** Z on the run's target box, placement only, from the map's cells inside the boxes (`zscore.ZScore`). The untuned design is scored first, and no point is scored twice.
+- **Other targets:** a candidate that lowers Z on any other target box below the untuned design's is refused (`lowers_other`) and can never be the result.
 - **Search:** Py-BOBYQA, which fits a model through n + 1 points for n parameters. It starts with a step of 10 % of each range and stops at 1 %.
 - **Budget:** 24 scored candidates and 7 minutes of search by default. A candidate is not started if it would run past the time cap. The search also stops once 4 scored candidates in a row, after the first probes, bring no gain.
 - **First probes together:** the search begins by stepping each parameter once. Those candidates are scored side by side in 6 processes, and the search then reuses the results.
 - **Infeasible candidates:** one that cannot be built, or that breaks a rule margin (R6, R9, R10, R13 or the family's own), is not simulated and can never be the result.
-- **Held-out check:** a tuned design that scores higher is scored again, with the untuned one, on the next seed's interior points at friction 0.2 and 0.5. The search itself runs at the trial's default friction. The tuned design is accepted only if neither score got worse; otherwise the untuned design is kept.
-- **One target:** the tune raises the score of the run's target box. It does not check the other two boxes, and on A/B it lowered the p95 score by one step while raising the mean (see `docs/decisions.md`, #14).
+- **Held-out check:** a tuned design that scores higher is scored again, with the untuned one, on held-out Z: the target box's poses shifted by the next seed, at friction 0.2 and 0.5. The search itself runs on the map's own cells at the trial's default friction. The tuned design is accepted only if neither held-out Z got worse; otherwise the untuned design is kept.
 - **Not used:** the analytic predictor. A first stage on the predictor (CMA-ES or random search) was planned and then dropped on 2026-11-11, so `Prismatic` and `Solid3D` families are tuned the same way.
 - **Output:** `runs/tune-<UTC>-<family>-<target>/tune.json`: every candidate with its score or the reason it was skipped, the untuned and tuned parameters, the held-out scores, why the search stopped, and the wall-clock of the search and the held-out check. Labelled "simulated, uncalibrated contact".
 
