@@ -1,4 +1,4 @@
-"""End tune (issue #14): a short Py-BOBYQA run on the sim box scale, once, on the final family.
+"""End tune (issues #14, #61): a short Py-BOBYQA run on Z, once, on the final family.
 
 Most tests inject the score and the rule check, so they need no sim and no CAD. One test runs the
 default sim score once at coarse settings. Sim results are simulated, uncalibrated contact.
@@ -11,9 +11,7 @@ import pickle
 import pytest
 
 from brixzle.engine import boxes as BX
-from brixzle.engine import box_search as BS
 from brixzle.engine import tune as TU
-from brixzle.engine.sim import trials as T
 from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import BOUNDS, V0
 
@@ -24,7 +22,7 @@ SETTINGS = TU.TuneSettings(fixed=FIXED, maxfun=24, parallel=1)
 
 def bowl(p):
     """A smooth score with its best point (1.0) at U = 28, theta = 44, inside the bounds."""
-    return {"scale": 1.0 - ((p.U - 28.0) / 14.0) ** 2 - ((p.theta - 44.0) / 35.0) ** 2}
+    return {"score": 1.0 - ((p.U - 28.0) / 14.0) ** 2 - ((p.theta - 44.0) / 35.0) ** 2}
 
 
 def no_rules(p):
@@ -83,7 +81,7 @@ def test_bad_settings_are_rejected(settings):
 
 def test_the_tuned_design_beats_the_untuned_one_on_a_smooth_score():
     res = TU.tune(AB, V0, SETTINGS, score_fn=bowl, check_fn=no_rules)
-    assert res["baseline"]["score"] == pytest.approx(bowl(V0)["scale"])
+    assert res["baseline"]["score"] == pytest.approx(bowl(V0)["score"])
     assert res["tuned"]["score"] > res["baseline"]["score"] + 0.03
     assert res["improved"] and res["accepted"]
     assert res["params"] == res["tuned"]["params"]
@@ -147,7 +145,7 @@ def test_unbuildable_and_rule_breaking_candidates_are_penalised_and_never_simula
                for e in by_status["infeasible"])
     assert all(e["objective"] == TU.PENALTY_RULE and "R9.mass_max" in e["reason"] for e in by_status["rule"])
     assert all(e["score"] is None for e in by_status["rule"] + by_status["infeasible"])
-    assert TU.PENALTY_INFEASIBLE > TU.PENALTY_RULE > 0.0  # both worse than any score, which is >= 0
+    assert TU.PENALTY_INFEASIBLE > TU.PENALTY_RULE > TU.PENALTY_OTHER > 1.0  # worse than any Z, which is >= -1
     tuned = AB.params_type.from_dict(res["params"])
     assert tuned.U <= 26.0 and tuned.theta >= 49.0
     assert res["sim_evaluations"] == len(scored) == len(by_status["scored"])
@@ -165,9 +163,9 @@ def test_a_baseline_already_at_the_best_point_is_kept():
     assert res["params"] == best.to_dict() == res["baseline"]["params"]
 
 
-def test_a_score_must_be_a_finite_scale():
+def test_a_score_must_be_finite():
     with pytest.raises(ValueError, match="finite"):
-        TU.tune(AB, V0, SETTINGS, score_fn=lambda p: {"scale": float("nan")}, check_fn=no_rules)
+        TU.tune(AB, V0, SETTINGS, score_fn=lambda p: {"score": float("nan")}, check_fn=no_rules)
 
 
 def test_the_time_of_the_rule_check_counts_towards_the_cap():
@@ -250,7 +248,7 @@ def test_the_probes_scored_together_stay_within_maxfun():
 
 def test_a_tuned_design_that_is_worse_held_out_is_not_accepted():
     def held_out(p):  # a second look that dislikes anything but the baseline
-        return {"scale": 0.9 if p == V0 else 0.2}
+        return {"score": 0.9 if p == V0 else 0.2}
 
     res = TU.tune(AB, V0, SETTINGS, score_fn=bowl, check_fn=no_rules, held_out_fns={"seed 1": held_out})
     assert res["improved"] and not res["accepted"]
@@ -274,7 +272,7 @@ def test_held_out_scores_are_run_together_when_there_is_a_map():
         return [fn(i) for i in batches[-1]]
 
     res = TU.tune(AB, V0, replace(SETTINGS, parallel=4), score_fn=bowl, check_fn=no_rules, map_fn=map_fn,
-                  held_out_fns={"a": bowl, "b": lambda p: {"scale": 0.9 if p == V0 else 0.95}})
+                  held_out_fns={"a": bowl, "b": lambda p: {"score": 0.9 if p == V0 else 0.95}})
     assert [len(b) for b in batches] == [len(FREE), 4]  # the first probes, then 2 designs x 2 held-out scores
     assert res["held_out"]["b"] == {"baseline": 0.9, "tuned": 0.95, "not_worse": True}
     assert res["held_out"]["a"]["tuned"] == res["tuned"]["score"] and res["accepted"]
@@ -310,13 +308,38 @@ def test_the_default_rule_check_passes_the_baseline(ab_bodies):
     assert TU.rule_violations(AB, V0) == []
 
 
-def test_the_default_score_is_the_sim_box_scale():
-    """One coarse box search (9 drops a scale, serial); the scorer's settings give 0.719 on this box."""
-    box = BX.default_boxes()["placement"]["mean"]
-    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
-    score = TU.sim_score(AB, box, cfg=cfg, seed=0, tol=0.5, n_interior=0, workers=1)
+def test_the_default_score_is_z_on_the_target_with_every_target_box_for_the_guard():
+    """The default score is zscore.ZScore (its sim run is tested in test_zscore.py)."""
+    from brixzle.engine import zscore as ZS
+
+    boxes = BX.default_boxes()["placement"]
+    score = TU.z_score(AB, boxes["p95"], workers=1)
+    assert isinstance(score, ZS.ZScore) and score.aim_box == boxes["p95"]
+    assert set(score.boxes) == {"mean", "p95", "max"}
     assert pickle.loads(pickle.dumps(score)) == score  # it has to reach another process
-    out = score(V0)
-    ref = BS.box_search(AB, V0, box, cfg=cfg, seed=0, tol=0.5, n_interior=0, workers=1)
-    assert out["scale"] == ref["scale"] and out["drop_count"] == ref["drop_count"]
-    assert out["limiting_course"] == ref["limiting_course"]
+    held = TU.held_out_scores(AB, boxes["mean"], replace(SETTINGS, seed=3))
+    assert sorted(held) == ["seed 4, friction 0.2", "seed 4, friction 0.5"]
+    assert all(isinstance(h, ZS.HeldOutZ) and h.seed == 4 and h.box == boxes["mean"] for h in held.values())
+
+
+# --- Z on the other target boxes (issue #61) ---
+
+
+def bowl_with_targets(p):
+    """``bowl`` on the target, and a p95 Z that falls as U rises above 25 (the baseline's U)."""
+    return {"score": bowl(p)["score"], "targets": {"mean": bowl(p)["score"], "p95": 0.5 - max(0.0, p.U - 25.0) / 10,
+                                                   "max": {"Z": 0.2}}}
+
+
+def test_a_candidate_that_lowers_z_on_another_target_is_refused_and_never_the_result():
+    res = TU.tune(AB, V0, SETTINGS, score_fn=bowl_with_targets, check_fn=no_rules)
+    refused = [e for e in res["evaluations"] if e["status"] == "lowers_other"]
+    assert refused and all(e["objective"] == TU.PENALTY_OTHER and "p95" in e["reason"] for e in refused)
+    assert res["tuned"]["params"]["U"] <= 25.0  # the bowl's best U (28) would lower p95
+    assert res["tuned"]["targets"]["p95"] >= res["baseline"]["targets"]["p95"]
+    assert res["baseline"]["targets"] == {"mean": bowl(V0)["score"], "p95": 0.5, "max": 0.2}
+
+
+def test_without_targets_the_guard_has_nothing_to_compare():
+    res = TU.tune(AB, V0, SETTINGS, score_fn=bowl, check_fn=no_rules)
+    assert not any(e["status"] == "lowers_other" for e in res["evaluations"])

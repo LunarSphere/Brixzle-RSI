@@ -1,439 +1,125 @@
-"""Scorer and diagnoser (issue #13): report.json from the sim box search and the predictor.
+"""Scorer (issues #13, #61): report.json schema 4, Z per target box from the full sim map.
 
-Sim results are simulated, uncalibrated contact; predictor results are predicted, quasi-static 2D.
-Most tests use synthetic results (no sim); one small run scores A/B V0 end to end.
+Most tests build a report from made-up map drops, so they need no sim. One test scores the A/B
+baseline at coarse map settings. Sim results are simulated, uncalibrated contact.
 """
 
 import json
-import math
 
 import pytest
 
-from brixzle.engine import box_search as BS
 from brixzle.engine import boxes as BX
-from brixzle.engine import report as R
-from brixzle.families.ab.family import FAMILY as AB
-from brixzle.families.ab.params import V0
-from brixzle.families.pyramid.family import FAMILY as PYRAMID
-from brixzle.families.wedge.family import FAMILY as WEDGE
+from brixzle.engine import report as RP
+from brixzle.engine import sim_map as SM
+
+BOXES = BX.default_boxes()["placement"]
+C0 = 5.0
 
 
-# --- synthetic results ---
+def _drop(outcome, x=0.0, z=1.0, t=0.0):
+    return {"outcome": outcome, "dx_mm": x, "clear_mm": C0 + z, "pitch_deg": t, "slice": "xz", "course": 0}
 
 
-def _drop(scale, point, outcome, **extra):
-    return {"scale": scale, "point": point, "unit": [0.0, 0.0, 0.0], "dx": 0.0, "outcome": outcome,
-            "contacts": [{"piece": 0, "other": "base", "start_s": 0.0}], **extra}
+def _map(cover=("mean", "p95", "max")):
+    return {"label": SM.LABEL, "family": "ab", "family_version": "1", "params": {"U": 25.0},
+            "box": BOXES["mean"].to_dict(), "cover": list(cover), "config": {"error": {"clearance": [C0, 30.0]}},
+            "check": {"passed": True, "seated": 36, "dropped": 40, "seed": 0}, "drops": 5, "seconds": 1.0,
+            "grids": [], "inside_failures": 0}
 
 
-def _course(scale, evals, drops):
-    return {"scale": scale, "passed": scale >= 1.0, "evaluations": [{"scale": s, "ok": ok} for s, ok in evals],
-            "failure_outcomes": sorted({d["outcome"] for d in drops if d["outcome"] not in ("seated", "picked")}),
-            "drops": drops, "drop_count": len(drops), "simulated_count": len(drops)}
+DROPS = [_drop("seated", x=0.0), _drop("jammed", x=10.0), _drop("seated", x=20.0), _drop("fell", x=30.0),
+         _drop("wrong_valley", x=-35.0)]
 
 
-def _sim(task, stat, scale, drops_by_course, evals=None, release_ok=True):
-    box = BX.default_boxes()[task][stat]
-    evals = evals or [(1.0, scale >= 1.0)]
-    courses = {c: _course(scale, evals, d) for c, d in drops_by_course.items()}
-    out = {"label": BS.LABEL, "task": task, "family": "ab", "family_version": "x", "params": {},
-           "box": box.to_dict(), "seed": 0, "config": {}, "scale": scale, "passed": scale >= 1.0,
-           "limiting_course": next(iter(courses)), "courses": courses, "seconds": 1.0}
-    if task == "pickup":
-        out["passed"] = scale >= 1.0 and release_ok
-    return out
+def _report(cover=("mean", "p95", "max"), drops=DROPS, total=10.0):
+    return RP.build_report(_map(cover), drops, BOXES, {"total": total}, map_dir="map-x-ab-mean")
 
 
-def _pred(task, scale):
-    return {"label": "predicted, quasi-static 2D", "scale": scale, "passed": scale >= 1.0, "seconds": 0.1}
+def test_the_report_holds_z_per_target_with_its_counts():
+    rep = _report()
+    assert rep["schema_version"] == 4 and rep["label"] == "simulated, uncalibrated contact"
+    assert rep["statistics"] == ["mean", "p95", "max"] and rep["statistic"] == "mean"
+    assert rep["z"]["mean"] == {"Z": 0.0, "S": 1, "J": 1, "N": 2, "fell": 0, "wrong_valley": 0, "other": 0,
+                                "passed": False}
+    assert rep["z"]["p95"]["N"] == 3 and rep["z"]["p95"]["Z"] == pytest.approx(1 / 3)
+    assert rep["z"]["max"] == {"Z": pytest.approx(1 / 5), "S": 2, "J": 1, "N": 5, "fell": 1, "wrong_valley": 1,
+                               "other": 0, "passed": False}
+    assert rep["covers_all_targets"] is False
+    assert "Z = (S - J) / N" in rep["objective"]
 
 
-RELEASE_OK = {"passed": True, "drift_mm": 0.1, "withdrawn": True, "peak_N": 0.0, "label": BS.LABEL}
+def test_no_box_scale_or_predictor_term_is_left_in_the_report():
+    text = json.dumps(_report())
+    for gone in ("scale", "pred", "disagree", "cross_check"):
+        assert gone not in text
 
 
-def _report(place_scale=1.2, pick_scale=1.5, release=RELEASE_OK, checks=None, stats=("mean",), tasks=BX.TASKS):
-    sims, preds = {}, {}
-    for stat in stats:
-        sims[("placement", stat)] = _sim("placement", stat, place_scale, {
-            "0": [_drop(1.0, 0, "seated"), _drop(1.5, 1, "jammed"), _drop(1.25, 1, "wrong_valley")],
-            "1": [_drop(1.0, 0, "seated"), _drop(1.5, 2, "fell")]},
-            evals=[(1.0, True), (2.0, False), (1.5, False), (1.25, False)])
-        preds[("placement", stat)] = _pred("placement", place_scale)
-        if "pickup" in tasks:
-            sims[("pickup", stat)] = _sim("pickup", stat, pick_scale, {
-                "pick": [_drop(1.0, 0, "picked"), _drop(2.0, 3, "missed"), _drop(2.0, 4, "off_centre")]},
-                evals=[(1.0, True), (2.0, False)])
-            preds[("pickup", stat)] = _pred("pickup", 1.0)
-    return R.build_report(AB, V0, sims, preds, release=release if "pickup" in tasks else None,
-                          checks=checks or [], timing={"total": 5.0}, files={}, seed=0, tasks=tasks)
-
-
-# --- categories ---
-
-
-@pytest.mark.parametrize("task, outcome, category", [
-    ("placement", "jammed", "jam"), ("placement", "fell", "fall"), ("placement", "wrong_valley", "wrong_valley"),
-    ("pickup", "jammed", "jam"), ("pickup", "missed", "pickup_miss"), ("pickup", "off_centre", "off_centre"),
-    ("pickup", "forceful", "forceful"),
-])
-def test_every_failure_outcome_has_a_category(task, outcome, category):
-    assert R.category(task, outcome) == category
-
-
-def test_an_unknown_outcome_is_rejected():
-    with pytest.raises(ValueError):
-        R.category("placement", "exploded")
-    with pytest.raises(ValueError):
-        R.category("placement", "seated")  # a success is not a failure
-
-
-# --- limiting failures ---
-
-
-def test_limiting_failures_are_the_failures_at_the_first_failing_scale_above_the_score():
-    course = _course(1.0, [(1.0, True), (2.0, False), (1.5, False), (1.25, False)],
-                     [_drop(1.0, 0, "seated"), _drop(2.0, 1, "jammed"), _drop(1.5, 2, "jammed"),
-                      _drop(1.25, 3, "wrong_valley"), _drop(1.25, 4, "seated")])
-    rows = R.limiting_failures(course, "seated")
-    assert [(d["scale"], d["point"], d["outcome"]) for d in rows] == [(1.25, 3, "wrong_valley")]
-    assert rows[0]["contacts"]  # the trace is kept
-
-
-def test_a_design_failing_at_the_aim_is_limited_at_scale_zero():
-    course = _course(0.0, [(1.0, False), (0.0, False)], [_drop(1.0, 0, "jammed"), _drop(0.0, 0, "fell")])
-    assert [(d["scale"], d["outcome"]) for d in R.limiting_failures(course, "seated")] == [(0.0, "fell")]
-
-
-def test_a_design_capped_at_s_max_has_no_limiting_failure():
-    course = _course(2.0, [(1.0, True), (2.0, True)], [_drop(1.0, 0, "seated"), _drop(2.0, 0, "seated")])
-    assert R.limiting_failures(course, "seated") == []
-
-
-# --- cross-check ---
-
-
-@pytest.mark.parametrize("sim, pred, kind", [
-    ("seated", "seated", "agree_ok"), ("jammed", "wrong_valley", "agree_failed"),
-    ("seated", "jammed", "conservative"), ("fell", "seated", "optimistic"),
-])
-def test_cross_check_kinds(sim, pred, kind):
-    assert R.agreement("placement", sim, pred) == kind
-
-
-def test_pickup_kinds_use_picked_as_success():
-    assert R.agreement("pickup", "picked", "off_centre") == "conservative"
-    assert R.agreement("pickup", "missed", "picked") == "optimistic"
-
-
-def test_only_disagreements_reach_the_report_and_classes_are_untrusted():
-    checks = [
-        {"task": "placement", "statistic": "mean", "course": "0", "scale": 1.0, "point": 0, "unit": [0, 0, 0],
-         "sim_outcome": "seated", "pred_outcome": "seated", "kind": "agree_ok"},
-        {"task": "placement", "statistic": "mean", "course": "0", "scale": 1.5, "point": 1, "unit": [1, 1, 1],
-         "sim_outcome": "jammed", "pred_outcome": "seated", "kind": "optimistic"},
-        {"task": "placement", "statistic": "mean", "course": "1", "scale": 1.5, "point": 2, "unit": [1, 1, 1],
-         "sim_outcome": "fell", "pred_outcome": "jammed", "kind": "agree_failed"},
-    ]
-    rep = _report(checks=checks)
-    assert [d["kind"] for d in rep["disagreements"]] == ["optimistic"]
-    counts = rep["disagreement_counts"]["mean"]["placement"]
-    assert counts == {"agree_ok": 1, "agree_failed": 1, "optimistic": 1, "conservative": 0}
-    assert rep["class_mismatches"]["mean"]["placement"] == 1  # fell vs jammed
-    assert rep["class_trusted"] is False
-
-
-# --- scores ---
-
-
-def test_the_target_score_is_the_smaller_of_placement_and_pickup():
-    rep = _report(place_scale=1.2, pick_scale=1.5)
-    s = rep["score"]["mean"]
-    assert (s["placement"], s["pickup"], s["overall"]) == (1.2, 1.5, 1.2)
-    assert rep["targets"]["mean"]["placement"]["scale_gap"] == pytest.approx(0.0)
-    assert rep["targets"]["mean"]["pickup"]["scale_gap"] == pytest.approx(1.0 - 1.5)
+def test_every_target_passes_only_when_every_drop_in_every_box_seats():
+    rep = _report(drops=[_drop("seated", x=x) for x in range(-38, 39)])
+    assert all(rep["z"][s]["Z"] == 1.0 and rep["z"][s]["passed"] for s in rep["statistics"])
     assert rep["covers_all_targets"] is True
 
 
-def test_a_failed_release_fails_pickup_even_above_scale_one():
-    bad = {**RELEASE_OK, "passed": False, "drift_mm": 3.0}
-    rep = _report(pick_scale=1.5, release=bad)
-    assert rep["targets"]["mean"]["pickup"]["sim"]["passed"] is False
-    assert rep["score"]["mean"]["pickup"] == 0.0  # no box in which every trial succeeds
-    assert rep["covers_all_targets"] is False
-    assert rep["failure_counts"]["mean"]["pickup"]["release"] == 1
-    assert any(f["category"] == "release" for f in rep["failures"])
-
-
-def test_failures_are_counted_by_category_and_limiting_ones_carry_traces():
-    rep = _report()
-    assert rep["failure_counts"]["mean"]["placement"] == {"jam": 1, "fall": 1, "wrong_valley": 1}
-    assert rep["failure_counts"]["mean"]["pickup"] == {"pickup_miss": 1, "off_centre": 1}
-    lim = {(f["task"], f["course"], f["outcome"]) for f in rep["failures"]}
-    assert lim == {("placement", "0", "wrong_valley"), ("placement", "1", "fell"),
-                   ("pickup", "pick", "missed"), ("pickup", "pick", "off_centre")}
-    assert all(f["contacts"] for f in rep["failures"])
-
-
-def test_a_target_below_scale_one_does_not_cover():
-    assert _report(place_scale=0.6)["covers_all_targets"] is False
-
-
-# --- schema ---
+def test_a_target_the_map_did_not_cover_is_refused():
+    with pytest.raises(ValueError, match="cover"):
+        _report(cover=("mean",))
 
 
 def test_report_passes_its_schema_and_is_json_safe():
-    rep = _report(stats=BX.STATISTICS)
-    R.validate_report(rep)
+    rep = _report()
+    RP.validate_report(rep)
     json.dumps(rep, allow_nan=False)
-    assert rep["schema_version"] == R.SCHEMA_VERSION
-    assert rep["labels"] == {"sim": "simulated, uncalibrated contact", "pred": "predicted, quasi-static 2D"}
-    assert set(rep["targets"]) == set(BX.STATISTICS)
 
 
 @pytest.mark.parametrize("break_it", [
-    lambda r: r.pop("score"),
-    lambda r: r["score"]["mean"].__setitem__("overall", math.nan),
-    lambda r: r["failures"][0].__setitem__("category", "explosion"),
-    lambda r: r["labels"].__setitem__("sim", "hardware"),
-    lambda r: r["targets"]["mean"].pop("pickup"),
+    lambda r: r.update(schema_version=3),
+    lambda r: r.pop("z"),
+    lambda r: r["z"]["mean"].update(Z=1.5),
+    lambda r: r["z"]["mean"].update(S=2),          # (S - J) / N no longer gives Z
+    lambda r: r.update(statistics=["mean", "p95"]),  # z holds a target statistics does not name
+    lambda r: r["timing"].update(total=float("nan")),
 ])
 def test_schema_rejects_a_broken_report(break_it):
     rep = _report()
     break_it(rep)
     with pytest.raises(ValueError):
-        R.validate_report(rep)
+        RP.validate_report(rep)
 
 
 def test_over_budget_is_flagged():
-    assert _report()["timing"]["over_budget"] is False
-    rep = R.build_report(AB, V0, *_report_inputs(), release=RELEASE_OK, checks=[],
-                         timing={"total": R.BUDGET_S + 1}, files={}, seed=0)
-    assert rep["timing"]["over_budget"] is True
+    assert _report(total=31 * 60)["timing"]["over_budget"] is True
+    assert _report(total=60)["timing"]["over_budget"] is False
 
 
-def _report_inputs():
-    sims = {("placement", "mean"): _sim("placement", "mean", 1.0, {"0": [_drop(1.0, 0, "seated")]}),
-            ("pickup", "mean"): _sim("pickup", "mean", 1.0, {"pick": [_drop(1.0, 0, "picked")]})}
-    preds = {("placement", "mean"): _pred("placement", 1.0), ("pickup", "mean"): _pred("pickup", 1.0)}
-    return sims, preds
-
-
-# --- tasks: placement only by default (issue #46) ---
-
-
-def test_the_loop_scores_placement_only_by_default():
-    assert R.DEFAULT_TASKS == ("placement",)
-    assert R.parser().parse_args([]).tasks == ["placement"]
-    assert R.parser().parse_args(["--tasks", "placement", "pickup"]).tasks == ["placement", "pickup"]
-
-
-def test_a_placement_only_report_passes_the_schema():
-    rep = _report(place_scale=1.2, stats=BX.STATISTICS, tasks=("placement",))
-    R.validate_report(rep)
-    json.dumps(rep, allow_nan=False)
-    assert rep["tasks"] == ["placement"]
-    for stat in BX.STATISTICS:
-        assert rep["score"][stat] == {"placement": 1.2, "overall": 1.2}
-        assert set(rep["targets"][stat]) == {"placement"}
-        assert set(rep["failure_counts"][stat]) == {"placement"}
-        assert set(rep["disagreement_counts"][stat]) == {"placement"}
-    assert rep["covers_all_targets"] is True
-    assert all(f["task"] == "placement" for f in rep["failures"])
-    assert not any("pickup predictor" in flag for flag in rep["flags"])
-    assert R.NOT_SCORED in rep["flags"]  # the report says pickup was left out, and why
-
-
-def test_placement_only_coverage_ignores_pickup():
-    assert _report(place_scale=0.6, tasks=("placement",))["covers_all_targets"] is False
-    # A pickup result that would fail the target no longer matters when pickup is not scored.
-    assert _report(place_scale=1.2, pick_scale=0.0, tasks=("placement",))["covers_all_targets"] is True
-
-
-def test_the_full_report_is_unchanged_apart_from_naming_its_tasks():
-    rep = _report(stats=BX.STATISTICS)
-    R.validate_report(rep)
-    assert rep["tasks"] == ["placement", "pickup"]
-    for stat in BX.STATISTICS:
-        assert set(rep["score"][stat]) == {"placement", "pickup", "overall"}
-        assert set(rep["targets"][stat]) == {"placement", "pickup"}
-        assert "release" in rep["targets"][stat]["pickup"]
-    assert any("pickup predictor" in flag for flag in rep["flags"])
-
-
-def test_tasks_are_inferred_from_the_results_when_not_given():
-    sims, preds = _report_inputs()
-    rep = R.build_report(AB, V0, sims, preds, release=RELEASE_OK, checks=[], timing={"total": 1.0}, files={},
-                         seed=0)
-    assert rep["tasks"] == ["placement", "pickup"]
-    place = {k: v for k, v in sims.items() if k[0] == "placement"}
-    rep = R.build_report(AB, V0, place, preds, release=None, checks=[], timing={"total": 1.0}, files={}, seed=0)
-    assert rep["tasks"] == ["placement"]
-
-
-@pytest.mark.parametrize("tasks", [(), ("pickup", "pickup"), ("placement", "painting"), "placement"])
-def test_bad_tasks_are_rejected(tasks, tmp_path):
-    with pytest.raises(ValueError):
-        R.score_family(AB, V0, statistics=("mean",), tasks=tasks, runs=tmp_path)
-    assert list(tmp_path.iterdir()) == []  # rejected before a run directory is made
-
-
-@pytest.mark.parametrize("break_it", [
-    lambda r: r.pop("tasks"),
-    lambda r: r.__setitem__("tasks", []),
-    lambda r: r.__setitem__("tasks", ["placement", "pickup"]),  # names a task the report does not hold
-    lambda r: r["score"]["mean"].__setitem__("overall", 0.5),    # not the smallest of its task scores
-])
-def test_schema_rejects_a_report_whose_tasks_do_not_match(break_it):
-    rep = _report(tasks=("placement",))
-    break_it(rep)
-    with pytest.raises(ValueError):
-        R.validate_report(rep)
-
-
-def test_the_summary_lists_only_the_scored_tasks():
-    text = R.summary(_report(tasks=("placement",)))
-    assert "placement" in text and "pickup" not in text
-    assert "pickup" in R.summary(_report())
-
-
-# --- end to end, A/B V0 (coarse on purpose, as tests/test_box_search.py) ---
-
-
-def test_box_search_can_skip_the_release_check():
-    box = BX.default_boxes()["pickup"]["mean"]
-    out = BS.box_search(AB, V0, box, seed=0, tol=1.0, n_interior=0, s_max=1.0, workers=1, release=False)
-    assert "release" not in out
-
-
-@pytest.fixture(scope="module", params=[None, BX.TASKS], ids=["default", "placement+pickup"])
-def scored(request, tmp_path_factory):
-    runs = tmp_path_factory.mktemp("runs")
-    kw = {} if request.param is None else {"tasks": request.param}
-    out = R.score_family(AB, V0, statistics=("mean",), seed=0, tol=0.5, n_interior=0, workers=1, runs=runs, **kw)
-    return request.param or R.DEFAULT_TASKS, out
-
-
-def test_score_family_writes_a_valid_report_with_its_full_results(scored):
-    tasks, out = scored
-    rep = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    R.validate_report(rep)
-    assert rep["family"] == "ab" and rep["seed"] == 0 and set(rep["targets"]) == {"mean"}
-    assert rep["tasks"] == list(tasks) and set(rep["targets"]["mean"]) == set(tasks)
-    for rel in rep["files"].values():
-        assert (out / rel).is_file()
-    assert all(f["contacts"] for f in rep["failures"] if f["category"] != "release")
-    assert {"predict", "cross_check", "total"} <= set(rep["timing"])
-    assert rep["predictor"] == {"used": True, "reason": None}  # A/B is Prismatic: nothing is skipped
-
-
-def test_placement_only_scoring_runs_no_pickup_stage(scored):
-    """Issue #46: with pickup deferred, its predictor, sim, release check and cross-check are skipped."""
-    tasks, out = scored
-    rep = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    pickup_stages = {k for k in rep["timing"] if "pickup" in k or "release" in k}
-    pickup_files = {p.name for p in out.iterdir() if "pickup" in p.name or "release" in p.name}
-    if "pickup" in tasks:
-        assert pickup_stages == {"sim_release", "sim_pickup_mean"}
-        assert pickup_files == {"release.json", "sim-pickup-mean.json", "pred-pickup-mean.json"}
-        assert any(r["task"] == "pickup" for r in json.loads((out / "cross-check.json").read_text()))
-    else:
-        assert pickup_stages == set() and pickup_files == set()
-        assert all(r["task"] == "placement" for r in json.loads((out / "cross-check.json").read_text()))
-
-
-def test_run_directories_are_never_reused(tmp_path):
-    a, b = R.new_run_dir(tmp_path, "ab"), R.new_run_dir(tmp_path, "ab")
-    assert a != b and a.is_dir() and b.is_dir()
-
-
-# --- sim-only reports for Solid3D families (issue #51) ---
-
-
-def _sim_only_report():
-    sims = {("placement", "mean"): _sim("placement", "mean", 0.5, {"0": [_drop(1.0, 0, "jammed")]},
-                                        evals=[(1.0, False), (0.0, True), (0.5, True)])}
-    return R.build_report(PYRAMID, PYRAMID.defaults, sims, None, release=None, checks=[], timing={"total": 1.0},
-                          files={}, seed=0, tasks=("placement",), predictor_reason=R.predictor_skip_reason(PYRAMID))
-
-
-def test_only_solid3d_families_skip_the_predictor():
-    assert R.predictor_skip_reason(AB) is None and R.predictor_skip_reason(WEDGE) is None
-    assert "Solid3D" in R.predictor_skip_reason(PYRAMID)
-
-
-def test_a_report_with_predictor_results_says_so():
-    assert _report()["predictor"] == {"used": True, "reason": None}
-
-
-def test_a_sim_only_report_says_why_and_holds_no_predictor_results():
-    rep = _sim_only_report()
-    R.validate_report(rep)
-    json.dumps(rep, allow_nan=False)
-    assert rep["predictor"] == {"used": False, "reason": R.predictor_skip_reason(PYRAMID)}
-    target = rep["targets"]["mean"]["placement"]
-    assert set(target) == {"box", "sim"} and target["sim"]["scale"] == 0.5
-    assert rep["score"]["mean"] == {"placement": 0.5, "overall": 0.5}
-    assert rep["failure_counts"]["mean"]["placement"] == {"jam": 1} and len(rep["failures"]) == 1
-    assert rep["labels"] == {"sim": "simulated, uncalibrated contact"}
-    assert rep["disagreements"] == [] and rep["disagreement_counts"] == {} and rep["class_mismatches"] == {}
-    assert any("predictor was skipped" in f for f in rep["flags"])
-    assert not any("failure class is not trusted" in f for f in rep["flags"])  # there is no predicted class
-
-
-def test_a_report_without_predictor_results_needs_a_reason():
-    sims = {("placement", "mean"): _sim("placement", "mean", 1.0, {"0": [_drop(1.0, 0, "seated")]})}
-    with pytest.raises(ValueError, match="why"):
-        R.build_report(PYRAMID, PYRAMID.defaults, sims, None, release=None, checks=[], timing={"total": 1.0},
-                       files={}, seed=0, tasks=("placement",))
-
-
-@pytest.mark.parametrize("break_it", [
-    lambda r: r.pop("predictor"),
-    lambda r: r["predictor"].__setitem__("reason", None),
-    lambda r: r["predictor"].__setitem__("used", True),  # claims predictor results it does not hold
-    lambda r: r["targets"]["mean"]["placement"].__setitem__("pred", {"scale": 1.0, "passed": True}),
-    lambda r: r["disagreements"].append({"kind": "optimistic"}),
-    lambda r: r["labels"].__setitem__("pred", "predicted, quasi-static 2D"),
-])
-def test_schema_rejects_a_broken_sim_only_report(break_it):
-    rep = _sim_only_report()
-    break_it(rep)
-    with pytest.raises(ValueError):
-        R.validate_report(rep)
-
-
-def test_schema_rejects_a_predictor_report_marked_sim_only():
+def test_the_report_is_written_beside_the_map_and_never_overwritten(tmp_path):
     rep = _report()
-    rep["predictor"] = {"used": False, "reason": "none given"}
-    with pytest.raises(ValueError):
-        R.validate_report(rep)
+    path = RP.write_report(rep, tmp_path)
+    assert path == tmp_path / "report.json"
+    assert json.loads(path.read_text(encoding="utf-8")) == rep
+    with pytest.raises(FileExistsError):
+        RP.write_report(rep, tmp_path)
 
 
-def test_the_summary_of_a_sim_only_report_names_no_prediction():
-    text = R.summary(_sim_only_report())
-    assert "sim only" in text and "the analytic predictor was skipped" in text
-    assert "  pred " not in text and "disagreements" not in text  # no predicted column, no cross-check line
+def test_the_summary_names_z_for_every_target():
+    text = RP.summary(_report())
+    assert "Z" in text and all(s in text for s in ("mean", "p95", "max"))
 
 
-def test_score_family_gives_a_solid3d_family_a_sim_only_report(tmp_path):
-    """The dummy pyramid jams at the aim, so its box search is a few drops (simulated, uncalibrated contact)."""
-    out = R.score_family(PYRAMID, PYRAMID.defaults, statistics=("mean",), seed=0, tol=0.5, n_interior=0,
-                         workers=1, runs=tmp_path)
-    rep = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    R.validate_report(rep)
-    assert rep["family"] == "pyramid" and rep["predictor"]["used"] is False
-    assert rep["files"] == {"sim_placement_mean": "sim-placement-mean.json"}
-    assert {p.name for p in out.iterdir()} == {"report.json", "sim-placement-mean.json"}
-    assert not {"predict", "cross_check"} & set(rep["timing"])
-    assert rep["score"]["mean"]["overall"] == rep["targets"]["mean"]["placement"]["sim"]["scale"]
+COARSE = SM.MapConfig(x_step_U=0.2, z_step_U=0.5, theta_step_deg=5.0, z_limit_U=0.5, theta_limit_deg=5.0)
 
 
-def test_a_scoring_run_that_raises_leaves_no_run_directory(tmp_path, monkeypatch):
-    def boom(*args, **kwargs):
-        raise RuntimeError("the sim broke")
+def test_score_family_maps_every_target_box_and_writes_a_valid_report(tmp_path):
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
 
-    monkeypatch.setattr(R.BS, "box_search", boom)
-    with pytest.raises(RuntimeError, match="the sim broke"):
-        R.score_family(PYRAMID, PYRAMID.defaults, statistics=("mean",), tol=0.5, n_interior=0, workers=1,
-                       runs=tmp_path)
-    assert list(tmp_path.iterdir()) == []
+    rep, out = RP.score_family(AB, V0, statistic="mean", runs=tmp_path, workers=4, config=COARSE,
+                               config_reason="coarse cells for a short test", allow_failed_check=True)
+    RP.validate_report(rep)
+    assert out.parent == tmp_path and {p.name for p in out.iterdir()} == {"map.json", "drops.json.gz", "report.json"}
+    m = json.loads((out / "map.json").read_text(encoding="utf-8"))
+    assert m["cover"] == ["mean", "p95", "max"]
+    assert rep["map"]["dir"] == out.name and rep["check"]["seed"] == 0
+    for s in rep["statistics"]:
+        z = rep["z"][s]
+        assert z["N"] > 0 and z["Z"] == pytest.approx((z["S"] - z["J"]) / z["N"])
+    assert rep["z"]["mean"]["N"] < rep["z"]["p95"]["N"] < rep["z"]["max"]["N"]  # the boxes nest

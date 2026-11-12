@@ -20,10 +20,10 @@ The grid is fitted in code, not chosen by an agent (``GridFit``):
 3. trim outer rows and columns with no green, keeping one such row past the last green one: where
    the misses start is the capture limit, which the critic needs.
 
-Guardrail: the grid never shrinks inside the target box. The loop's score stays the box scale
-from engine/report.py over the target box, whatever the map covers, so cropping the map cannot
-raise a score. Extents are also reported in voxel pitches (U), so bricks of different sizes get
-comparable maps.
+Guardrail: the grid never shrinks inside the target boxes it covers (``cover``). The loop's
+objective, Z (engine/zscore.py, issue #61), is counted over the target box whatever else the map
+covers, so cropping the map cannot raise it. Extents are also reported in voxel pitches (U), so
+bricks of different sizes get comparable maps.
 
 Overrides: a caller may add a zoom (a finer grid over part of a slice, for example a jam band) or
 change the grid settings. Either needs a reason, and both are written to ``overrides`` in
@@ -361,14 +361,19 @@ def fixed_grid_drops(grids, half_width_mm=FIXED_GRID_MM):
 
 
 def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(), cfg=None, courses=(0, 1),
-            slices=tuple(SLICES), workers=None, allow_failed_check=False):
+            slices=tuple(SLICES), workers=None, allow_failed_check=False, cover=None):
     """Map one design over the fitted slices; returns (map, drops), both JSON-safe.
 
     ``check`` is the quick check's result for this design and box (quick_check.quick_check): the
     grid starts from its drops, and a design that failed it is refused unless
     ``allow_failed_check``. ``config`` is a MapConfig; changing it from the default is an override
     and needs ``config_reason``. ``zooms`` are Zoom overrides. ``cfg`` is a trials.TrialConfig
-    (default: the ideal error model, as the box search)."""
+    (default: the ideal error model, as the box search).
+
+    ``cover``: target boxes the grid must also cover (the guardrail), so Z (engine/zscore.py, issue
+    #61) can be counted on each of them; ``box`` is always covered, and its aim is where the slices
+    cross. The loop passes the mean, p95 and worst boxes."""
+    cover = _cover(box, cover)
     if box.task != "placement":
         raise ValueError(f"the sim map covers placement boxes (issue #46), got {box.task!r}")
     if check is not None and not check["passed"] and not allow_failed_check:
@@ -389,7 +394,7 @@ def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(
     cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
     U = float(family.lattice(p).U_mm)
     steps, limits, aim = config.steps(U), config.limits(U), aim_point(box)
-    start_ranges, must_ranges = check_ranges(check, box), box_ranges(box)
+    start_ranges, must_ranges = check_ranges(check, box), _union(cover)
     fits = {}
     for s in slices:
         axes = SLICES[s]
@@ -431,6 +436,7 @@ def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(
     out = {
         "label": LABEL, "task": "placement", "family": family.name, "family_version": family.version,
         "params": p.to_dict(), "box": box.to_dict(), "U_mm": U, "aim": aim,
+        "cover": [b.statistic for b in cover], "cover_boxes": [b.to_dict() for b in cover],
         "config": json.loads(json.dumps(T.as_dict(cfg))), "map_config": asdict(config),
         "check": None if check is None else {"passed": check["passed"], "seated": check["seated"],
                                              "dropped": check["dropped"], "seed": check["seed"]},
@@ -448,6 +454,22 @@ def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(
         "files": {"drops": DROPS_FILE},
     }
     return out, drops
+
+
+def _cover(box, cover):
+    """``box`` and the other boxes the grid must cover, one per statistic, ``box`` first."""
+    out = [box]
+    for b in cover or ():
+        if b.task != "placement":
+            raise ValueError(f"the map covers placement boxes only, got a {b.task!r} box in cover")
+        if b.statistic != box.statistic and b.statistic not in [c.statistic for c in out]:
+            out.append(b)
+    return tuple(out)
+
+
+def _union(boxes):
+    rs = [box_ranges(b) for b in boxes]
+    return {a: (min(r[a][0] for r in rs), max(r[a][1] for r in rs)) for a in ("x", "z", "t")}
 
 
 def _check_zoom(z):
