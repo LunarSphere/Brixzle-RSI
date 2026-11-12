@@ -318,3 +318,11 @@ The maintainer decided on 2026-11-12 to remove the dummy `wedge` from the design
 - **A/B is the only example family the agent is shown,** and its prompt says not to copy A/B's shape.
 - **The agent's copy of `family-interface.md` drops the three sentences that name the dummies** (`design.interface_for_agent`). The doc itself is unchanged, because people still need to know the dummies exist.
 - **The agent can no longer read the dummy families.** Its read roots are now the docs, the engine, the rules, the family interface and its shared modules, and A/B, not the whole of `src/`. Without this, Glob would find the wedge again.
+
+## #74 Orthographic views of each design
+
+The maintainer decided on 2026-11-12 that, for now, each iteration reports the jamming graph and a render of the latest design as three orthographic views. The report keeps Z per target (schema 4). The pickup report, box scale and predictor cross-check stay out.
+
+- **The views are front (X–Z, looking along +Y), side (Y–Z, from +X) and top (X–Y, looking down),** one row per part, to scale. Each title gives the view's size in mm.
+- **They are drawn from the printed solid's mesh,** with its bores and windows, not from the 2D section. Each view keeps the faces that face the viewer and draws them farthest first, so nearer surfaces cover farther ones. Faces are shaded by a light set off the view axis, so faces at different angles read differently.
+- **`module.png` replaces its section-and-3D render** with these views. The file name is kept, so the orchestrator and `summary.md` are unchanged.

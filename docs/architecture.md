@@ -61,7 +61,7 @@ The loop scores placement (R11) only for now. Pickup (R12) is deferred until the
 Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/render.py`):
 
 - **`jam_map.png`:** the full sim map, one panel per slice and course. Colours follow aerial-assembly's `figures/biasbrick-drop-grid`: seated green, jammed orange, fell red, plus wrong valley in purple, since it is A/B's main failure and would otherwise be hidden. Each legend gives counts. The target box and the jam bands are drawn, Z per target is in the title, and it is labelled "simulated, uncalibrated contact".
-- **`module.png`:** the brick's 2D section per part (guide faces and grip features marked) and a 3D view of its printed solid.
+- **`module.png`:** the latest design as three orthographic views of its printed solid: front (X–Z), side (Y–Z) and top (X–Y), one row per part, to scale in mm (issue #74).
 - **`summary.md`:** Z per target with its counts (and the held-out Z, which the critic never sees); what changed and why (the brief followed, the design agent's note, every attempt); the decision and its reason; the critic's next brief; and the run directories, spend and wall-clock behind every number.
 
 `RSI_RESULTS/<run>/progress.png` shows Z per iteration, with kept designs filled, rejected ones hollow and iterations with no scored design crossed. `RSI_RESULTS/<run>/summary.md` sums up the run. `RSI_RESULTS/` is git-ignored; figures for the repo still go through #25.
