@@ -44,6 +44,6 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 | `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
 | `src/brixzle/engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
 | `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, 2D section, CAD solid, rules |
-| `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
+| `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and a citation list with links (`citations.md`) |
 | `src/brixzle/data/` | Measured drone error files |
 | `runs/` | Git-ignored. One folder per loop run, one subfolder per iteration |

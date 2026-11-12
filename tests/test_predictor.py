@@ -1,8 +1,8 @@
 """Analytic placement predictor (issue #10): hand-worked cases, then families.
 
-Contact-mode tests follow Balkcom & Trinkle 2002 (src/brixzle/rules/papers/Balkcom2002b.pdf), the
+Contact-mode tests follow Balkcom & Trinkle 2002 (balkcom-trinkle-2002 in src/brixzle/rules/citations.md), the
 stability tests Pang & Trinkle 2000 (Theorem 1), the wedging test Whitney 1982 eq. 49
-(quasistatic.pdf). Outputs are predicted, quasi-static 2D.
+(whitney-1982). Outputs are predicted, quasi-static 2D.
 """
 
 import json
