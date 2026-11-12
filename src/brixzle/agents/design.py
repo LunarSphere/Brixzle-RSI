@@ -20,6 +20,7 @@ are for mechanics, never for a brick to copy.
 
 from dataclasses import dataclass
 import json
+import re
 from pathlib import Path
 
 from brixzle.agents import check_family as CF
@@ -30,7 +31,15 @@ REPO = Path(__file__).resolve().parents[3]
 DESIGN_BUDGET_USD = 1.50
 MAX_TURNS = 40
 NOTE_FILE = "design_note.json"
-EXAMPLES = ("src/brixzle/families/wedge/family.py", "src/brixzle/families/ab/family.py")
+# A/B only: the agent copied the dummy wedge as its brick in #21's smoke runs (issue #73).
+EXAMPLES = ("src/brixzle/families/ab/family.py",)
+_SRC = REPO / "src" / "brixzle"
+# What the agent may read in the repo: the docs, the engine, the rules, the family interface and its
+# shared code, and A/B. Not the dummy families (issue #73).
+READ_ROOTS = (REPO / "docs", _SRC / "engine", _SRC / "rules", _SRC / "requirements.py",
+              *(_SRC / "families" / f for f in ("interface.py", "builders.py", "rules.py", "contract.py", "convex.py",
+                                                "registry.py", "ab")))
+DUMMIES = re.compile(r"\b(wedge|pyramid)\b", re.I)
 CHECK_TOOL = "check_family"
 
 
@@ -50,8 +59,22 @@ class Workspace:
         return cls(root, module, pkg)
 
 
+def interface_for_agent(text):
+    """The family interface without the sentences that name the dummy families (issue #73), so the
+    agent is not pointed at a contract-test dummy as a brick to start from."""
+    out = []
+    for line in text.splitlines():
+        if not DUMMIES.search(line):
+            out.append(line)
+            continue
+        kept = [s for s in re.split(r"(?<=[.:])\s+", line) if not DUMMIES.search(s)]
+        if kept and kept != ["-"]:
+            out.append(" ".join(kept))
+    return "\n".join(out)
+
+
 def system_prompt():
-    interface = (REPO / "docs" / "family-interface.md").read_text(encoding="utf-8")
+    interface = interface_for_agent((REPO / "docs" / "family-interface.md").read_text(encoding="utf-8"))
     return f"""You are the design agent of Brixzle-RSI, a loop that designs brick families a drone can place imprecisely.
 You write one brick family as Python code that follows the family interface below, then check it with the
 check_family tool and fix it until the check passes (ok: true). The check also drops your brick once at the
@@ -64,7 +87,7 @@ Rules:
 - Prismatic (2.5D: an XZ section swept through Y) by default. Use Solid3D only if a feature you need cannot be
   prismatic; then say which feature and why in design_note.json.
 - Design originally. Use mechanics and principles; never copy a brick, joint or structure from a paper or an
-  existing system. The example families are there to show the interface, not designs to copy.
+  existing system. The example family (A/B, the baseline) is there to show the interface, not a design to copy.
 - Units: mm, degrees, grams; quaternions [w, x, y, z]. Give every tunable parameter a bounds entry.
 - The goal is placement (R11): a brick dropped anywhere inside the drone's error box (X up to +-38.5 mm,
   release height and pitch small) slides on its guide faces into its seat with no jam. The loop scores it
@@ -94,7 +117,7 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
     parts = [f"Your package directory: {ws.pkg}\nIts package name: {ws.module} (import siblings relatively).",
              f"Concept images (read them with the Read tool):\n{images}",
              f"Extra requirements from intake:\n{extra_lines}",
-             f"Example families to read for the interface: " + ", ".join(str(REPO / e) for e in EXAMPLES)]
+             f"Example family to read for the interface (the A/B baseline; do not copy its shape): " + ", ".join(str(REPO / e) for e in EXAMPLES)]
     if (fixed or {}).get("U_mm"):
         parts.append(f"The voxel pitch U is fixed at intake: {fixed['U_mm']} mm. Do not give U a bounds entry.")
     if parent is not None:
@@ -138,7 +161,7 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
     call = AgentCall(name="design", system=system_prompt(),
                      prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed")),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
-                     write_root=ws.pkg, read_roots=(REPO / "docs", REPO / "src", Path(attempt_dir).parent.parent,
+                     write_root=ws.pkg, read_roots=(*READ_ROOTS, Path(attempt_dir).parent.parent,
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
                      mcp_tools=(check_tool(ws),), max_turns=max_turns)
     result = runner.run(call)
