@@ -261,3 +261,12 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **The critic optimises Z on the target and is told not to lower it on the other boxes,** to match the end tune (#61).
 - **The design log, not the held-out check, is its memory.** The held-out results never reach its prompt (#21 tests this).
 - **The wiring check (one real call, 2026-11-12) found the tool guard blocking Claude Code's own `StructuredOutput` tool,** which is how a structured answer is returned. The model wrote a sensible one-cluster brief twice, the PreToolUse hook refused it both times, and the call stopped at its 3-turn cap with an error. The guard now always allows `StructuredOutput` (test `test_the_sdks_own_structured_output_tool_is_never_blocked`), and the cap is 4 turns. The SDK raised instead of reporting a cost, so the ledger charged the call's whole budget of $0.20 (`runs/api-spend-session-20261112.jsonl`). From the session's token counts (about 9.0k cache-write, 16.4k cache-read and 1.4k output tokens on Sonnet 5.5), the real cost was nearer $0.04. That figure is an estimate, not a reported cost. The fixed path first runs for real in the smoke run, because the one wiring call allowed for this agent was spent.
+
+## #20 Design log
+
+- **One JSON line per attempt, in the loop's run directory** (`design_log.jsonl`), appended and never rewritten. A run that stops part-way keeps every attempt it made.
+- **Every attempt is logged, not only scored ones.** The decisions are `failed_contract`, `failed_quick_check`, `kept`, `rejected` and `error`. The 2026-11-11 comment asks for quick-check failures, so the design agent does not repeat a design that failed in seconds.
+- **Grid overrides are logged with their reasons,** from `map.json`'s `overrides` (the 2026-11-11 comment).
+- **The agents read a short text version (`DesignLog.text`)**: the decision and reason, the design note's idea and change, Z per target, quick-check counts, contract problems, and overrides. It is a few lines per attempt, so the prompt stays small as the log grows.
+- **Held-out results are kept in the log but never shown to the agents.** `for_agents` and `text` drop them. The acceptance rule (#21) needs them, and the critic must not see them.
+- **Non-finite numbers are refused,** as everywhere else that writes JSON.
