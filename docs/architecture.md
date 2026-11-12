@@ -25,16 +25,26 @@ The loop stops when either of these holds:
 
 The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 
-## Intake page
+## Intake
 
-A local web page. A person uploads one or more concept images and adds extra requirements. The design agent sorts each extra requirement into one of four kinds:
+A person gives one or more concept images and adds extra requirements. Today this is a command (`python -m brixzle.intake`, issue #17); a local web page that writes the same `intake.json` is still planned. One Claude call sorts each extra requirement into one of four kinds:
 
 - compatible;
 - refines a base requirement;
 - conflicts with a base requirement;
 - unclear.
 
-For each conflict or unclear item, it asks the person to choose. Nothing reaches the loop until every conflict is resolved. The output is `intake.json`, the only input to the first iteration.
+For each conflict or unclear item, the person chooses: keep the base requirement, use the extra instead, drop the extra, or clarify it in their own words. At a terminal the command asks; otherwise each answer is given with `--resolve ID=CHOICE`. Nothing reaches the loop until every conflict is resolved. With no extras there is nothing to sort and no call is made. The output is `runs/intake-<UTC>/intake.json`, with copies of the images beside it. It is the only input to the first iteration, and it may fix the voxel pitch U (R2).
+
+## Talking to Claude
+
+Every Claude call goes through `agents/runner.py`:
+
+- **Model:** set once, by the caller (the loop's config); Claude Sonnet 5.5 by default.
+- **Credentials:** `ANTHROPIC_API_KEY` if it is set, otherwise the active `ant` CLI profile's access token, handed to the Agent SDK's Claude Code process. The token is never printed. A call fails if Claude Code reports using any other credential, such as a claude.ai login.
+- **Spend:** each call reserves its own cap against a spend ledger (a JSON-lines file with a cap in dollars) before it starts. It gets the Agent SDK's per-call cap and is recorded with the cost the SDK reports.
+- **Tools:** each call lists the built-in tools it may use, and a guard refuses writes outside the call's own folder and reads outside its read roots. No settings files or CLAUDE.md are loaded.
+- **Tests** use a scripted runner. The Agent SDK is an optional extra (`uv sync --extra agents`), so CI never installs or imports it.
 
 ## Agents (Claude Agent SDK)
 
