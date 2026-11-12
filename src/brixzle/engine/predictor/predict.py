@@ -269,8 +269,8 @@ def scene(family, p, course, i0=1):
     """(body, env, target placement) for course 0 (onto the base) or 1 (onto a seated course-0 brick).
 
     ``i0`` is the first voxel of both bricks; the default 1 matches trials.DropRig (Placement(0, 1),
-    Placement(1, 1)), which suits A/B's one-voxel base pattern. A family whose base repeats every
-    two voxels (the wedge dummy) seats at i0 = 0."""
+    Placement(1, 1)) and the family contract (issue #70), so every family's base must seat a brick
+    there."""
     key = (id(family), p, course, i0)
     if key in _SCENES:
         return _SCENES[key][1:]

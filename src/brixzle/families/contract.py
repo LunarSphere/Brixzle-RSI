@@ -26,6 +26,9 @@ TOUCH_MM = 0.5         # half the 1 mm seat tolerance: closer than this counts a
 VOLUME_REL = 0.01      # Prismatic straight extrusion: solid volume vs section area x depth
 CHECKS = ("params", "section", "solid", "sim_bodies", "lattice", "rules", "pickup")
 
+SEAT_I0 = 1      # the start voxel of the course-0 brick in the drop trial (trials.DropRig)
+BASE_VOXELS = 4  # the drop trial's base covers voxels 0 to 4 (trials.DropRig, build_scene bases [(0, 4)])
+
 
 @dataclass(frozen=True)
 class Violation:
@@ -233,13 +236,16 @@ def _check_lattice(family, p, part=None):
             axis = np.asarray(family.insertion_axis(p, pl), dtype=float)
             _require(axis.shape == (2,) and abs(np.linalg.norm(axis) - 1) < 1e-9,
                      f"insertion_axis({pl}) must be a unit (x, z) vector, got {axis.tolist()}")
-    lower = _placed(family, p, Placement(0, 0))
-    pairs = {"the brick above": Placement(1, 0), "its neighbour in the course": Placement(0, lat.span_voxels)}
+    # The drop trial's placements (trials.DropRig): course 0 at voxel 1 on a 4-voxel base, course 1
+    # on top of it. A base whose pattern repeats every 2 voxels can only fit one parity (issue #70).
+    lower = _placed(family, p, Placement(0, SEAT_I0))
+    pairs = {"the brick above": Placement(1, SEAT_I0),
+             "its neighbour in the course": Placement(0, SEAT_I0 + lat.span_voxels)}
     for label, pl in pairs.items():
         upper = _placed(family, p, pl)
         n = _overlap(lower, upper) + _overlap(upper, lower)
         _require(n == 0, f"a seated brick overlaps {label} ({n} key points inside it)")
-    base = B.base_pieces(family, p, 2 * lat.span_voxels, 1)
+    base = B.base_pieces(family, p, BASE_VOXELS, 1)
     for i, piece in enumerate(base):
         _require(B.math_finite(piece) and ConvexHull(piece).volume > 0, f"base piece {i} is degenerate")
     n = _overlap(lower, base) + _overlap(base, lower)

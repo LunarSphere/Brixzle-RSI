@@ -112,3 +112,12 @@ def test_a_family_loaded_by_path_can_be_dropped_in_worker_processes(tmp_path):
     fam = CF.load_family(out.workspace.root, out.workspace.module)
     res = QC.quick_check(fam, fam.defaults, BX.default_boxes()["placement"]["mean"], n=4, need=0, workers=2)
     assert res["dropped"] == 4 and res["workers"] == 2
+
+
+def test_the_check_drops_the_family_at_the_aim_on_each_course(tmp_path):
+    """A design that cannot seat even at the aim shows up in the agent's own check (issue #70)."""
+    out = DA.design(RN.ScriptedRunner([write_wedge("waim")]), _intake(tmp_path), tmp_path / "a", "rsi_t_i01_a6")
+    aim = out.check["aim_drops"]
+    assert [d["course"] for d in aim] == [0, 1]
+    assert all(d["outcome"] == "seated" for d in aim), aim
+    assert all(len(d["err_mm"]) == 3 for d in aim)
