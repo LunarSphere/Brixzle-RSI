@@ -58,11 +58,11 @@ Every Claude call goes through `agents/runner.py`:
 
 ## Agents (Claude Agent SDK)
 
-**Design agent.**
+**Design agent** (`agents/design.py`, issue #18).
 
-- **Prompt:** the base requirements (R1–R13), any extras from intake, and the brick family interface (`docs/family-interface.md`).
-- **Tools:** write family code, run the rule checks and `contract.check_family`, render CAD.
-- **Output:** a family package in `src/brixzle/families/<name>/`.
+- **Prompt:** the base requirements (R1–R13, deferred ones marked), any extras from intake, the brick family interface (`docs/family-interface.md`), the concept images, the critic's last brief, the current best design as a parent, the quick check's failing drops when the last attempt failed, and the design log.
+- **Tools:** Read, Glob and Grep over the repo's docs and code; Write and Edit inside its own package only; and `check_family`, which runs the family contract and the rule margins in a separate process with a time limit.
+- **Output:** a family package `runs/loop/<run>/iter-NN/attempt-K/pkg/<module>/` with `family.py` and `design_note.json` (the idea, the change from the parent, the geometry type and, for `Solid3D`, the reason). The loop checks the package itself afterwards; it does not take the agent's word.
 
 **Critic agent.**
 

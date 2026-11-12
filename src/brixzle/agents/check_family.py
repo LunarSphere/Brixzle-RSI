@@ -1,0 +1,116 @@
+"""Load and check a family the design agent wrote (issue #18).
+
+The design agent writes a package ``<root>/<module>/`` whose ``family.py`` exports ``FAMILY``,
+outside ``src/``. It is imported as the top-level package ``<module>``, with ``<root>`` on
+``sys.path``. Worker processes started with spawn get the parent's ``sys.path``, so the sim's
+workers can import it too. Module names are unique per attempt, so two designs never share one.
+
+``check`` runs the family contract and the rule margins. The agent calls it as a tool, in a
+separate process with a time limit (``check_in_subprocess``), so a design that hangs or crashes
+cannot take the loop down with it:
+
+    uv run python -m brixzle.agents.check_family --root <root> --module <module>
+"""
+
+import argparse
+from dataclasses import asdict
+import importlib
+import json
+import math
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+CHECK_TIMEOUT_S = 240
+
+
+def load_family(root, module):
+    """The FAMILY of ``<root>/<module>/family.py``, imported as package ``module``."""
+    root = str(Path(root).resolve())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    importlib.invalidate_caches()
+    mod = importlib.import_module(f"{module}.family")
+    from brixzle.families.interface import Family
+
+    fam = getattr(mod, "FAMILY", None)
+    if not isinstance(fam, Family):
+        raise ValueError(f"{module}/family.py must export FAMILY = Family(...)")
+    return fam
+
+
+def _num(v):
+    v = float(v)
+    return round(v, 4) if math.isfinite(v) else None
+
+
+def check(root, module, samples=2):
+    """The contract violations, rule margins, mass and size of a written family, JSON-safe."""
+    from brixzle.families import builders as B
+    from brixzle.families import contract as C
+    from brixzle.families import rules as R
+    from brixzle.families.interface import Prismatic
+
+    t0 = time.time()
+    out = {"module": module, "ok": False, "violations": [], "parts": {}, "error": None}
+    try:
+        fam = load_family(root, module)
+    except Exception as e:  # noqa: BLE001 - reported to the agent
+        out["error"] = f"import failed: {type(e).__name__}: {e}"
+        return out
+    out.update(family=fam.name, version=fam.version, geometry=type(fam.geometry).__name__,
+               params=fam.defaults.to_dict(), bounds={k: list(v) for k, v in fam.bounds.items()})
+    try:
+        out["violations"] = [str(v) for v in C.check_family(fam, samples=samples)]
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"contract check raised {type(e).__name__}: {e}"
+        return out
+    if not out["violations"]:
+        try:
+            p = fam.defaults
+            for part in fam.parts:
+                bodies = B.sim_bodies(fam, p, part)
+                margins = {k: _num(v) for k, v in R.margins(fam, p, part, bodies).items()}
+                info = {"margins": margins, "broken": sorted(k for k, v in margins.items() if v is None or v < 0),
+                        "mass_g": _num(bodies.mass_g)}
+                if isinstance(fam.geometry, Prismatic):
+                    sec = fam.geometry.section(p, part)
+                    x0, z0, x1, z1 = sec.outer.bounds
+                    info["section_mm"] = {"x": [_num(x0), _num(x1)], "z": [_num(z0), _num(z1)]}
+                out["parts"][part] = info
+            out["lattice"] = {k: _num(v) for k, v in asdict(fam.lattice(p)).items()}
+        except Exception as e:  # noqa: BLE001
+            out["error"] = f"rule check raised {type(e).__name__}: {e}"
+            return out
+    out["ok"] = not out["violations"] and not any(i["broken"] for i in out["parts"].values()) and not out["error"]
+    out["seconds"] = round(time.time() - t0, 2)
+    return out
+
+
+def check_in_subprocess(root, module, timeout=CHECK_TIMEOUT_S):
+    """``check`` in a fresh process with a time limit; a crash or a hang is reported, not raised."""
+    cmd = [sys.executable, "-m", "brixzle.agents.check_family", "--root", str(root), "--module", module]
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"module": module, "ok": False, "violations": [], "parts": {},
+                "error": f"the check took longer than {timeout} s"}
+    try:
+        return json.loads(done.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        tail = (done.stderr or "").strip().splitlines()[-5:]
+        return {"module": module, "ok": False, "violations": [], "parts": {},
+                "error": f"the check crashed (exit {done.returncode}): {' | '.join(tail)}"}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--root", required=True)
+    ap.add_argument("--module", required=True)
+    args = ap.parse_args(argv)
+    print(json.dumps(check(args.root, args.module), allow_nan=False))
+
+
+if __name__ == "__main__":
+    main()

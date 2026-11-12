@@ -73,14 +73,18 @@ def test_without_any_credential_the_error_says_what_to_set():
     assert "ant auth login" in str(e.value)
 
 
-@pytest.mark.parametrize("source, ok", [("ANTHROPIC_API_KEY", True), ("ANTHROPIC_AUTH_TOKEN", True),
-                                        ("/login managed key", False), ("none", False)])
-def test_claude_code_must_report_a_credential_the_ledger_tracks(source, ok):
+@pytest.mark.parametrize("source, token, ok", [
+    ("ANTHROPIC_API_KEY", False, True), ("apiKeyHelper", False, True),
+    ("/login managed key", False, False), ("/login managed key", True, False),
+    # Claude Code reports 'none' (no API key) when it authenticates with ANTHROPIC_AUTH_TOKEN, which it
+    # says takes precedence over a claude.ai login. 'none' without a token means that login.
+    ("none", True, True), ("none", False, False)])
+def test_claude_code_must_report_a_credential_the_ledger_tracks(source, token, ok):
     if ok:
-        RN.check_source(source)
+        RN.check_source(source, auth_token=token)
     else:
         with pytest.raises(RN.AuthError):
-            RN.check_source(source)
+            RN.check_source(source, auth_token=token)
 
 
 # --- the tool guard ---
@@ -168,3 +172,15 @@ def test_a_call_that_raises_is_still_charged_its_whole_budget(tmp_path, monkeypa
     with pytest.raises(RuntimeError, match="connection lost"):
         runner.run(_call(max_budget_usd=0.3))
     assert led.spent() == pytest.approx(0.3) and led.rows()[0]["is_error"] is True
+
+
+def test_every_tool_call_goes_through_the_guard_as_a_pre_tool_use_hook(tmp_path):
+    """allowed_tools would approve a tool before a permission callback is asked, so the guard runs
+    as a PreToolUse hook, which sees every call, read-only ones included."""
+    guard = RN.ToolGuard(write_root=tmp_path / "pkg", read_roots=(tmp_path / "repo",))
+    deny = RN.hook_decision(guard, {"tool_name": "Write", "tool_input": {"file_path": "/etc/x"}})
+    assert deny["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "writes are allowed only" in deny["hookSpecificOutput"]["permissionDecisionReason"]
+    read = RN.hook_decision(guard, {"tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}})
+    assert read["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert RN.hook_decision(guard, {"tool_name": "Read", "tool_input": {"file_path": str(tmp_path / "repo" / "a")}}) == {}
