@@ -242,6 +242,18 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **A call whose cost the SDK does not report counts as its whole budget** in the ledger, so an unknown cost errs toward stopping early.
 - **`fixed.U_mm`** records a voxel pitch fixed at intake (R2), which the end tune then leaves alone.
 
+## #18 Design agent
+
+- **The runtime model is Claude Sonnet 5.5 (`claude-sonnet-5-5`), set once in `brixzle/loop/config.py` (`MODEL`).** The maintainer chose it on 2026-11-12. It replaces the earlier brief's Opus default.
+- **Agent-written families live in the run directory, not in `src/`.** Each attempt gets a package with a unique module name, `rsi_<run>_iNN_aK`, imported with its root on `sys.path`. Worker processes started with spawn inherit `sys.path`, so the sim imports it too. Test `test_a_family_loaded_by_path_can_be_dropped_in_worker_processes` drops one in two workers. Writing into `src/` would mix generated code into the package and the registry.
+- **The agent's tools are Read, Glob, Grep, Write, Edit and `check_family`.** It gets no shell. Writes are allowed only inside its package. Reads are allowed only in the repo's `docs/` and `src/`, the run directory and the concept images' folder.
+- **`check_family` runs in a separate process with a 240 s limit.** A family's code runs when it is imported, so a hang or a crash must not take the loop down. The loop runs the same check again after the agent stops, and only a package that passes goes to the quick check.
+- **A design note, `design_note.json`, comes with every package.** It holds the idea, the change from the parent, the geometry type and, for a `Solid3D` family, which feature could not be prismatic and why (the decision on #18). The design log records it.
+- **One design call is capped at $1.50 and 40 turns.** Those are the loop's defaults and can be changed in its config.
+- **The wiring check (one real call, 2026-11-12) found two plumbing faults, both fixed here.** It cost $0.0255 (2 turns, Sonnet 5.5; `runs/api-spend-session-20261112.jsonl`), and the API accepted the `ant` profile's token.
+  - **The tool guard was never asked.** The Agent SDK warned that a tool in `allowed_tools` is approved before `can_use_tool` is consulted, and read-only tools never ask at all. The guard now runs as a PreToolUse hook, which sees every tool call. `test_every_tool_call_goes_through_the_guard_as_a_pre_tool_use_hook` covers the decision. The hook itself first runs for real in the smoke run, because the one wiring call allowed for this agent was spent.
+  - **Claude Code reports `apiKeySource: "none"` when it authenticates with `ANTHROPIC_AUTH_TOKEN`.** It printed that this source "takes precedence over your claude.ai login". The runner therefore accepts "none" only when an auth token is in effect. Without a token, "none" would mean a claude.ai login, which the ledger does not track, and is still refused.
+
 ## #19 Critic agent
 
 - **The critic has no tools; its inputs are in the prompt.** Z per target, the fitted map's grids as text, the jam analysis summary (`jam_analysis.summary`), the design log and the family's `family.py`. One structured answer keeps the call small and cheap: a capped call ($0.40 by default), at most 3 turns. Its contact traces are already reduced by the jam analysis, so the critic does not need to read them raw.

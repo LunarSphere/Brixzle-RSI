@@ -12,8 +12,10 @@ ledger and a scripted runner for tests.
   has left), and is recorded after it ends with the cost the SDK reports. ``BudgetExceeded``
   stops a run once the next call could pass the cap.
 - **Tools:** a call lists the built-in tools it may use. ``ToolGuard`` refuses any other tool,
-  and any write outside the call's ``write_root`` or read outside its ``read_roots``. No settings
-  files, CLAUDE.md or skills are loaded (``setting_sources=[]``).
+  and any write outside the call's ``write_root`` or read outside its ``read_roots``. It runs as a
+  PreToolUse hook, which sees every call: a tool in ``allowed_tools`` is approved before a
+  permission callback is asked, and read-only tools never ask. No settings files, CLAUDE.md or
+  skills are loaded (``setting_sources=[]``).
 - **Tests** use ``ScriptedRunner``. No test calls the API, and the Agent SDK is imported only when
   ``ClaudeRunner`` runs (it is the optional ``agents`` extra: ``uv sync --extra agents``).
 """
@@ -30,7 +32,7 @@ from typing import Any, Callable
 
 # Credentials Claude Code may report (SystemMessage init 'apiKeySource') for the spend to be on
 # the API account. Anything else, such as a claude.ai login, is refused.
-ALLOWED_SOURCES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "apiKeyHelper")
+ALLOWED_SOURCES = ("ANTHROPIC_API_KEY", "apiKeyHelper")
 OAUTH_BETA = "anthropic-beta: oauth-2025-04-20"  # an OAuth access token needs this header
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 READ_TOOLS = ("Read", "Glob", "Grep", "LS")
@@ -169,8 +171,14 @@ def credential_env(environ=None, ant_token: Callable[[], str] = ant_token):
     return {"ANTHROPIC_AUTH_TOKEN": token, "ANTHROPIC_CUSTOM_HEADERS": OAUTH_BETA}
 
 
-def check_source(source):
-    """Raise AuthError unless Claude Code reported a credential the ledger tracks."""
+def check_source(source, auth_token=False):
+    """Raise AuthError unless Claude Code reported a credential the ledger tracks.
+
+    Claude Code reports an API key's source. With ``ANTHROPIC_AUTH_TOKEN`` (the ant profile's
+    token) it reports 'none', and says the token takes precedence over a claude.ai login; so 'none'
+    is accepted only when such a token is in effect (``auth_token``)."""
+    if source == "none" and auth_token:
+        return
     if source not in ALLOWED_SOURCES:
         raise AuthError(f"Claude Code used the credential {source!r}, not an API credential "
                         f"({', '.join(ALLOWED_SOURCES)}); refusing so spend is not billed elsewhere. "
@@ -216,6 +224,16 @@ class ToolGuard:
         return True, ""
 
 
+def hook_decision(guard, hook_input):
+    """A PreToolUse hook's answer for one tool call: {} to let it through, or a denial with the
+    guard's reason (the agent sees the reason)."""
+    ok, why = guard.decide(hook_input.get("tool_name", ""), hook_input.get("tool_input") or {})
+    if ok:
+        return {}
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": why}}
+
+
 def option_kwargs(call: AgentCall, model, remaining_usd, env):
     """ClaudeAgentOptions keyword arguments for a call (no SDK import, so tests can check them)."""
     kw = {"model": model, "system_prompt": call.system, "tools": list(call.tools),
@@ -241,6 +259,9 @@ class ClaudeRunner:
     def run(self, call: AgentCall) -> AgentResult:
         self.ledger.reserve(call.max_budget_usd)
         env = credential_env(self.environ)
+        environ = os.environ if self.environ is None else self.environ
+        token = bool(env.get("ANTHROPIC_AUTH_TOKEN") or (environ.get("ANTHROPIC_AUTH_TOKEN")
+                                                          and not environ.get("ANTHROPIC_API_KEY")))
         try:
             result = asyncio.run(self._run(call, env))
         except BaseException as e:
@@ -250,21 +271,20 @@ class ClaudeRunner:
                                budget_usd=call.max_budget_usd)
             raise
         self.ledger.record(call.name, self.model, result, budget_usd=call.max_budget_usd)
-        check_source(result.api_key_source)
+        check_source(result.api_key_source, auth_token=token)
         return result
 
     async def _run(self, call, env):
         import time
 
-        from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, PermissionResultAllow,
-                                      PermissionResultDeny, ResultMessage, SystemMessage, TextBlock,
-                                      create_sdk_mcp_server, query, tool)
+        from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, HookMatcher, ResultMessage,
+                                      SystemMessage, TextBlock, create_sdk_mcp_server, query, tool)
 
         guard = ToolGuard(call.write_root, tuple(call.read_roots), tuple(call.tools))
 
-        async def can_use_tool(name, args, _context):
-            ok, why = guard.decide(name, args)
-            return PermissionResultAllow() if ok else PermissionResultDeny(message=why)
+        async def pre_tool_use(hook_input, _tool_use_id, _context):
+            # Every tool call passes here, before allowed_tools would approve it.
+            return hook_decision(guard, hook_input)
 
         kw = option_kwargs(call, self.model, self.ledger.remaining(), env)
         if call.mcp_tools:
@@ -274,9 +294,10 @@ class ClaudeRunner:
                 return tool(spec.name, spec.description, spec.input_schema)(run)
 
             kw["mcp_servers"] = {"brixzle": create_sdk_mcp_server("brixzle", tools=[serve(t) for t in call.mcp_tools])}
-        options = ClaudeAgentOptions(**kw, can_use_tool=can_use_tool, permission_mode="default")
+        options = ClaudeAgentOptions(**kw, permission_mode="default",
+                                     hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])]})
 
-        async def prompt():  # can_use_tool needs the streaming form of the prompt
+        async def prompt():  # hooks need the streaming form of the prompt
             yield {"type": "user", "message": {"role": "user", "content": call.prompt}}
 
         out, texts, t0 = AgentResult(cost_usd=None), [], time.time()
