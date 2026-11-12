@@ -1,13 +1,14 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/rules.py @ a649663
-# Changed: only the RuleSettings values R6, R9 and R10 need are kept; margins are computed from interface data (guide faces, sim bodies, grip features) for any family instead of from BrickParams, and keyed by requirement id. R9 uses rules.py's formulas (mass_min, mass_max). The fork checks (hangs_stable, tines_straddle_com, with the lowest bore in place of the first) are in fork_margins, out of the loop's rule set since issue #50; R10.grippable and R10.within_payload are new.
+# Changed: only the RuleSettings values R6, R9 and R10 need are kept; margins are computed from interface data (guide faces, sim bodies, grip features) for any family instead of from BrickParams, and keyed by requirement id. R9 uses rules.py's formulas (mass_min, mass_max). The fork checks (hangs_stable, tines_straddle_com, with the lowest bore in place of the first) are in fork_margins, out of the loop's rule set since issue #50; R10.grippable and R10.within_payload (brick plus a gripper allowance against the 35 g payload) are new.
 """Shared analytic rules every family is checked against, before any simulation.
 
 Each margin is signed: >= 0 means satisfied. Keys are '<requirement id>.<name>' so a report can
 tie every margin to docs/requirements.yaml; a family adds its own through ``extra_rules``.
 
-R10 is "grippable" (issue #50): the loop checks only that a brick offers a grip feature and stays
-within the payload. The checks against today's fork are in ``fork_margins``; nothing in the loop
-calls them, and they wait for the gripper step (issue #24).
+R10 is "grippable" (issue #50): the loop checks only that a brick offers a grip feature and that
+the brick and the gripper together stay within the payload. The gripper is not designed yet, so
+its mass is an allowance. The checks against today's fork are in ``fork_margins``; nothing in the
+loop calls them, and they wait for the gripper step (issue #24).
 """
 
 from dataclasses import dataclass
@@ -25,7 +26,10 @@ class RuleSettings:
     slide_margin_deg: float = 8  # "steeper than friction suggests" (R6)
     mass_min: float = 1.         # g (R9)
     mass_max: float = 25.        # g (R9)
-    payload_max: float = 35.     # g, the drone's payload limit (R10; settled in issue #9)
+    payload_max: float = 35.     # g, the drone's payload limit: brick plus gripper (R10; issue #9)
+    # g counted for the gripper until it is designed (issue #24). A guess: the fork model in
+    # engine/sim/fork.py gives 3.3 to 4.6 g on the three registered families, rounded up.
+    gripper_allowance: float = 5.
     min_feature: float = 1.2     # printable wall (3 perimeters @ 0.4 mm)
     hang_margin: float = 1.0     # fork check: tine contact must sit this far above the COM (mm)
 
@@ -42,9 +46,10 @@ def shared_margins(family: Family, p, part, bodies: SimBodies, s: RuleSettings =
     out["R9.mass_max"] = s.mass_max - bodies.mass_g
     features = family.pickup(p, part)
     # R10 grippable: at least one feature a passive gripper could hold (how many beyond the one
-    # needed), and a mass within the drone's payload. No gripper is assumed (issue #50).
+    # needed), and the brick and the gripper together within the drone's payload. No gripper is
+    # assumed (issue #50), so its mass is an allowance.
     out["R10.grippable"] = float(len(features) - 1)
-    out["R10.within_payload"] = s.payload_max - bodies.mass_g
+    out["R10.within_payload"] = s.payload_max - (bodies.mass_g + s.gripper_allowance)
     bores = grip_bores(features)
     if bores:
         # R13: printable material around every bore, to the outline and to any lightening hole

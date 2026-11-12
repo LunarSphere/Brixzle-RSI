@@ -107,7 +107,9 @@ def test_r10_is_grippable_and_names_no_gripper():
     r10 = {r.id: r for r in load_requirements()}["R10"]
     assert r10.name == "Grippable" and r10.checks == ("rule",)
     assert "at least one feature a non-actuated gripper could hold" in r10.text
-    assert "35 g" in r10.text and "fork" not in r10.text.lower()
+    # The maintainer's wording (2026-11-11): the limit is on the brick and the gripper together.
+    assert "The combined mass of the brick and the gripper must not be more than 35 g" in r10.text
+    assert "fork" not in r10.text.lower()
 
 
 # --- Deferred requirements (issue #46) ---

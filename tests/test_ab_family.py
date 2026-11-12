@@ -126,7 +126,7 @@ def test_ab_grip_features_are_its_two_bores_and_two_windows(part):
     holes = AB.geometry.section(V0, part).holes
     assert all(any(o.equals(h) for h in holes) for o in I.grip_openings(feats))  # the windows are section holes
     assert _margins(part)["R10.grippable"] == 3.0
-    assert _margins(part)["R10.within_payload"] == pytest.approx(35.0 - B.sim_bodies(AB, V0, part).mass_g)
+    assert _margins(part)["R10.within_payload"] == pytest.approx(35.0 - (B.sim_bodies(AB, V0, part).mass_g + 5.0))
 
 
 def test_barbs_are_rejected_until_soft_contact_is_supported():

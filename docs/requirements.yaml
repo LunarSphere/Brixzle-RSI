@@ -61,7 +61,7 @@ requirements:
 
   - id: R10
     name: Grippable
-    text: "Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. Its mass stays within the drone's payload (35 g). Which gripper uses the feature is decided after the brick design is settled."
+    text: "Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. The combined mass of the brick and the gripper must not be more than 35 g, the drone's payload limit. Which gripper uses the feature is decided after the brick design is settled."
     checks: [rule]
 
   - id: R11

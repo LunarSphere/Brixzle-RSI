@@ -19,7 +19,7 @@ Each requirement is checked one of three ways:
 | R7 | **Alternating angles.** Alternating the lean between courses may improve stability. | Design: alternating parts by course |
 | R8 | **Stiffness.** I-beam-like sections may be used to stop the brick from flexing. The first course sits on a stable base. | Design: rib frame, anchored base |
 | R9 | **Mass.** A brick must weigh between 1 g and 25 g in PLA; lighter is preferred. | Rule: mass window |
-| R10 | **Grippable.** Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. Its mass stays within the drone's payload (35 g). Which gripper uses the feature is decided after the brick design is settled. | Rules: at least one grip feature, mass within the payload |
+| R10 | **Grippable.** Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. The combined mass of the brick and the gripper must not be more than 35 g, the drone's payload limit. Which gripper uses the feature is decided after the brick design is settled. | Rules: at least one grip feature, brick plus gripper within the payload |
 | R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Analytic predictor and sim: placement box score |
 | R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
 | R13 | **Printable.** A brick must print as one piece in PLA, with walls of at least 1.2 mm. | Rules: single piece, minimum wall |

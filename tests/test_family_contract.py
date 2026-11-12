@@ -151,7 +151,11 @@ def test_the_loop_rule_set_checks_grippable_and_payload_but_not_the_fork():
     margins = R.margins(WEDGE, p, "A", bodies)
     assert not {"R10.hangs_stable", "R10.tines_straddle_com"} & set(margins)
     assert margins["R10.grippable"] == 1.0  # two bores: one more than R10 needs
-    assert margins["R10.within_payload"] == pytest.approx(35.0 - bodies.mass_g)
+    # 35 g carries the brick and the gripper; until the gripper is designed it counts as 5 g.
+    assert R.RuleSettings().payload_max == 35.0 and R.RuleSettings().gripper_allowance == 5.0
+    assert margins["R10.within_payload"] == pytest.approx(35.0 - (bodies.mass_g + 5.0))
+    heavier = R.margins(WEDGE, p, "A", bodies, R.RuleSettings(gripper_allowance=9.0))
+    assert heavier["R10.within_payload"] == pytest.approx(35.0 - (bodies.mass_g + 9.0))
 
 
 def test_the_fork_checks_are_kept_for_the_gripper_step():

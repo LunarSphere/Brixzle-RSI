@@ -66,7 +66,7 @@ A/B gives four: its two 2.6 mm bores and its two big lightening windows.
 | `R6.guide_slides` | The shallowest guide face's angle minus (atan μ_max + 8°), with μ_max = 0.4 |
 | `R9.mass_min`, `R9.mass_max` | Mass − 1 g, and 25 g − mass |
 | `R10.grippable` | Number of grip features − 1 |
-| `R10.within_payload` | 35 g − mass |
+| `R10.within_payload` | 35 g − (mass + 5 g for the gripper). The 35 g payload carries the brick and the gripper together. The gripper isn't designed yet (issue #24), so 5 g is an allowance, not a measured mass. |
 | `R13.bore_wall` | Thinnest material round any bore, to the outline or a lightening hole, measured in the section, − 1.2 mm. Only if the part has a bore. |
 
 The R9 formulas and the constants come from aerial-assembly `rules.py` @ a649663. A family's `extra_rules` may add margins but not redefine these.
