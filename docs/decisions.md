@@ -230,3 +230,14 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **The maintainer's rod-lengthening finding is DR10, labelled a user observation.** It is not in any paper (stated 2026-11-06).
 - **Whitney, Gustavson & Hennessey 1983 is not cited.** The maintainer dropped it on 2026-11-06. It is listed under "Removed from the folder, not cited", with `AIM-759.pdf`, whose title was never confirmed.
 - **Robotic-construction papers are context only (DR11).** They motivate R5 and R11; the rule says not to copy their parts. This follows CLAUDE.md.
+
+## #17 Intake
+
+- **A command first, the page later.** The maintainer said a command-line intake that writes the same `intake.json` is enough to unblock the loop (2026-11-12). `python -m brixzle.intake` asks at a terminal, and takes `--resolve ID=CHOICE` otherwise. The page stays planned under this issue's scope.
+- **One Claude call sorts the extras, with a structured answer and no tools.** Sorting needs judgement, so the design agent's model does it, through the same runner as the agents. With no extras, no call is made.
+- **Four answers to a conflict or an unclear item:** keep the base requirement, use the extra, drop the extra, or clarify it in the person's words. A clarification needs its text. Nothing else is accepted.
+- **The runner lands here, with its first user.** `agents/runner.py` is shared with the design agent (#18) and the critic (#19). It holds the credential logic, the spend ledger and the tool guard, so they are written and tested once.
+- **The Agent SDK is an optional extra (`agents`).** Only real runs need it. The tests use a scripted runner, CI does not download the SDK (about 300 MB, as it bundles Claude Code), and no test can reach the API.
+- **Credentials: an API key, else the `ant` profile.** The maintainer logged in with the `ant` CLI. Claude Code does not read that profile itself, so the runner passes the profile's short-lived access token to it as `ANTHROPIC_AUTH_TOKEN`, with the OAuth beta header. The token is never printed or written. Claude Code reports the credential it used. A call fails on anything but an API credential, so spend cannot land on a claude.ai subscription that the ledger does not track.
+- **A call whose cost the SDK does not report counts as its whole budget** in the ledger, so an unknown cost errs toward stopping early.
+- **`fixed.U_mm`** records a voxel pitch fixed at intake (R2), which the end tune then leaves alone.

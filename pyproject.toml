@@ -17,6 +17,11 @@ dependencies = [
     "trimesh>=4.12.2,<5",
 ]
 
+[project.optional-dependencies]
+# The design agent, the critic and the intake classifier run on the Claude Agent SDK. Only real runs
+# need it; the tests use a scripted runner and never import it (agents/runner.py).
+agents = ["claude-agent-sdk>=0.2.180"]
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
