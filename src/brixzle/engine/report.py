@@ -24,6 +24,10 @@ For each target box (the drone's mean, p95 and worst error; engine/boxes.py) and
   not trusted: the predictor confuses jammed and wrong valley and has no falls
   (docs/predictor-validation.md).
 
+A ``Solid3D`` family is scored by the sim only (issue #51; the decision on #18): the predictor works on
+a 2D section, so it and the cross-check are skipped. The report then says so under 'predictor', and
+holds no predicted scale, scale gap or disagreement.
+
 report.json holds the summary; the full sim and predictor results (megabytes of contact traces)
 are written next to it and named under 'files'. Every run writes a new directory under runs/.
 
@@ -47,8 +51,11 @@ from brixzle.engine.predictor import predict as PR
 from brixzle.engine.sim import pickup as PK
 from brixzle.engine.sim import trials as T
 from brixzle.engine.validate import outcome_class
+from brixzle.families.interface import Solid3D
 
-SCHEMA_VERSION = 2  # 2: 'tasks' names the scored tasks; targets, scores and counts hold only those (#46)
+# 2: 'tasks' names the scored tasks; targets, scores and counts hold only those (#46).
+# 3: 'predictor' says whether the predictor was used; a sim-only report holds no predictor results (#51).
+SCHEMA_VERSION = 3
 DEFAULT_TASKS = ("placement",)  # pickup (R12) is deferred until the gripper is designed (#46, #24)
 LABELS = {"sim": BS.LABEL, "pred": PR.LABEL}
 BUDGET_S = 30 * 60  # a family should take no more than 30 min (CLAUDE.md, Speed)
@@ -59,11 +66,12 @@ CATEGORIES = {
 ALL_CATEGORIES = frozenset(c for m in CATEGORIES.values() for c in m.values()) | {"release"}
 KINDS = ("agree_ok", "agree_failed", "optimistic", "conservative")
 DISAGREE = ("optimistic", "conservative")
-FLAGS = (
-    "failure counts are of the drops the bisection ran, not rates",
-    "the predictor's failure class is not trusted; take classes and traces from the sim "
-    "(docs/predictor-validation.md)",
-)
+COUNT_FLAG = "failure counts are of the drops the bisection ran, not rates"
+CLASS_FLAG = ("the predictor's failure class is not trusted; take classes and traces from the sim "
+              "(docs/predictor-validation.md)")
+FLAGS = (COUNT_FLAG, CLASS_FLAG)
+SOLID3D_REASON = ("Solid3D family: the analytic predictor works on a 2D section, so the family is scored by "
+                  "the sim only (issue #51)")
 PICKUP_FLAGS = tuple(f"pickup predictor: {f}" for f in PP.FLAGS)
 NOT_SCORED = "pickup (R12) was not scored: it is deferred until the gripper is designed (issue #46)"
 
@@ -79,8 +87,17 @@ def scored_tasks(tasks):
     return tuple(t for t in BX.TASKS if t in tasks)
 
 
-def flags(tasks):
-    """The report's caveats for the tasks it scored."""
+def predictor_skip_reason(family):
+    """Why the analytic predictor is not run for this family, or None if it is run."""
+    return SOLID3D_REASON if isinstance(family.geometry, Solid3D) else None
+
+
+def flags(tasks, predictor_reason=None):
+    """The report's caveats for the tasks it scored. ``predictor_reason`` says why the predictor
+    was skipped (a sim-only report), and replaces the caveats about its results."""
+    if predictor_reason:
+        return [COUNT_FLAG, f"the analytic predictor was skipped: {predictor_reason}",
+                *(() if "pickup" in tasks else (NOT_SCORED,))]
     return [*FLAGS, *(PICKUP_FLAGS if "pickup" in tasks else (NOT_SCORED,))]
 
 
@@ -162,28 +179,38 @@ def _failure(task, stat, course, d):
     return {"task": task, "statistic": stat, "course": course, "category": category(task, d["outcome"]), **row}
 
 
-def build_report(family, p, sims, preds, release, checks, timing, files, seed, tasks=None):
+def build_report(family, p, sims, preds, release, checks, timing, files, seed, tasks=None, predictor_reason=None):
     """report.json as a dict, from the sim and predicted results ({(task, statistic): result}), the
     pickup release check (or None if pickup was not scored), the cross-check rows, the stage
     timings (seconds; 'total' required) and the full-result files (name -> relative path).
 
     ``tasks`` names the tasks to report (default: those the sim results hold). Only they appear
-    under targets, score and the counts, and a target's overall score is the smallest of theirs."""
+    under targets, score and the counts, and a target's overall score is the smallest of theirs.
+
+    ``preds=None`` gives a sim-only report (issue #51), which needs ``predictor_reason``: targets
+    then hold no 'pred' or 'scale_gap', and there are no disagreements or class mismatches."""
+    used = preds is not None
+    _need(used or predictor_reason, "a report without predictor results must say why (predictor_reason)")
+    _need(not (used and predictor_reason), "predictor_reason is for a report without predictor results")
     tasks = scored_tasks(tasks if tasks is not None else {k[0] for k in sims})
     stats = [s for s in BX.STATISTICS if any(k[1] == s for k in sims)]
     targets, score, counts, fails, dcounts, mismatches = {}, {}, {}, [], {}, {}
     config = {}
     for stat in stats:
-        targets[stat], counts[stat], dcounts[stat], mismatches[stat] = {}, {}, {}, {}
+        targets[stat], counts[stat] = {}, {}
+        if used:
+            dcounts[stat], mismatches[stat] = {}, {}
         for task in tasks:
-            sim, pred = sims[(task, stat)], preds[(task, stat)]
+            sim = sims[(task, stat)]
             success = BS.SUCCESS[task]
             config.setdefault(task, sim.get("config", {}))
             passed = sim["scale"] >= 1.0
             t = {"box": sim["box"],
-                 "sim": {"scale": sim["scale"], "passed": passed, "limiting_course": sim["limiting_course"]},
-                 "pred": {"scale": pred["scale"], "passed": pred["scale"] >= 1.0},
-                 "scale_gap": pred["scale"] - sim["scale"]}
+                 "sim": {"scale": sim["scale"], "passed": passed, "limiting_course": sim["limiting_course"]}}
+            if used:
+                pred = preds[(task, stat)]
+                t["pred"] = {"scale": pred["scale"], "passed": pred["scale"] >= 1.0}
+                t["scale_gap"] = pred["scale"] - sim["scale"]
             c = {}
             for course, res in sim["courses"].items():
                 for d in res["drops"]:
@@ -201,6 +228,8 @@ def build_report(family, p, sims, preds, release, checks, timing, files, seed, t
                     fails.append({"task": task, "statistic": stat, "course": "release", "category": "release",
                                   "outcome": "release", **release})
             targets[stat][task], counts[stat][task] = t, c
+            if not used:
+                continue
             rows = [r for r in checks if r["task"] == task and r["statistic"] == stat]
             dcounts[stat][task] = {k: sum(r["kind"] == k for r in rows) for k in KINDS}
             mismatches[stat][task] = sum(r["kind"] == "agree_failed" and outcome_class(r["pred_outcome"])
@@ -211,20 +240,21 @@ def build_report(family, p, sims, preds, release, checks, timing, files, seed, t
         score[stat] = {**per, "overall": min(per.values())}
     timing = {**timing, "over_budget": bool(timing["total"] > BUDGET_S)}
     return {
-        "schema_version": SCHEMA_VERSION, "labels": dict(LABELS),
+        "schema_version": SCHEMA_VERSION, "labels": dict(LABELS) if used else {"sim": LABELS["sim"]},
+        "predictor": {"used": used, "reason": predictor_reason},
         "family": family.name, "family_version": family.version, "params": p.to_dict(), "seed": seed,
         "config": config, "statistics": stats, "tasks": list(tasks),
         "score": score,
         "covers_all_targets": all(targets[s][t]["sim"]["passed"] for s in stats for t in tasks),
         "targets": targets,
         "failure_counts": counts, "failures": fails,
-        "disagreements": [r for r in checks if r["kind"] in DISAGREE],
+        "disagreements": [r for r in checks if r["kind"] in DISAGREE] if used else [],
         "disagreement_counts": dcounts, "class_mismatches": mismatches, "class_trusted": False,
-        "timing": timing, "flags": flags(tasks), "files": dict(files),
+        "timing": timing, "flags": flags(tasks, predictor_reason), "files": dict(files),
     }
 
 
-_REQUIRED = ("schema_version", "labels", "family", "family_version", "params", "seed", "config", "statistics",
+_REQUIRED = ("schema_version", "labels", "predictor", "family", "family_version", "params", "seed", "config", "statistics",
              "tasks", "score", "covers_all_targets", "targets", "failure_counts", "failures", "disagreements",
              "disagreement_counts", "class_mismatches", "class_trusted", "timing", "flags", "files")
 
@@ -256,7 +286,14 @@ def validate_report(d):
     missing = [k for k in _REQUIRED if k not in d]
     _need(not missing, f"report is missing {missing}")
     _need(d["schema_version"] == SCHEMA_VERSION, f"schema_version must be {SCHEMA_VERSION}")
-    _need(d["labels"] == LABELS, f"labels must be {LABELS}")
+    pred = d["predictor"]
+    _need(isinstance(pred, dict) and isinstance(pred.get("used"), bool), "predictor needs a boolean 'used'")
+    used = pred["used"]
+    _need(used or (isinstance(pred.get("reason"), str) and pred["reason"]), "a sim-only report must say why")
+    labels = LABELS if used else {"sim": LABELS["sim"]}
+    _need(d["labels"] == labels, f"labels must be {labels}")
+    _need(used or (d["disagreements"] == [] and d["disagreement_counts"] == {} and d["class_mismatches"] == {}),
+          "a sim-only report holds no disagreements or class mismatches")
     _need(d["class_trusted"] is False and isinstance(d["covers_all_targets"], bool), "bad flags")
     _need(d["statistics"] and set(d["statistics"]) <= set(BX.STATISTICS), "bad statistics")
     _need(isinstance(d["tasks"], list), "tasks must be a list")
@@ -268,17 +305,20 @@ def validate_report(d):
         _need(d["score"][stat]["overall"] == min(d["score"][stat][t] for t in tasks),
               f"score[{stat}].overall must be the smallest of its task scores")
         _need(set(d["failure_counts"].get(stat, {})) == set(tasks), f"failure_counts[{stat}] needs exactly {tasks}")
-        _need(set(d["disagreement_counts"].get(stat, {})) == set(tasks),
+        _need(not used or set(d["disagreement_counts"].get(stat, {})) == set(tasks),
               f"disagreement_counts[{stat}] needs exactly {tasks}")
         for task in tasks:
             t = d["targets"][stat][task]
-            for side in ("sim", "pred"):
+            _need(used or not {"pred", "scale_gap"} & set(t), f"targets[{stat}][{task}]: a sim-only report "
+                  "holds no predictor results")
+            for side in ("sim", "pred") if used else ("sim",):
                 s = t[side]["scale"]
                 _need(isinstance(s, (int, float)) and 0 <= s, f"targets[{stat}][{task}][{side}] scale")
                 _need(isinstance(t[side]["passed"], bool), f"targets[{stat}][{task}][{side}] passed")
             _need(task != "pickup" or "release" in t, f"targets[{stat}][pickup] needs its release check")
             _need(set(d["failure_counts"][stat][task]) <= ALL_CATEGORIES, f"failure_counts[{stat}][{task}]")
-            _need(set(d["disagreement_counts"][stat][task]) == set(KINDS), f"disagreement_counts[{stat}][{task}]")
+            _need(not used or set(d["disagreement_counts"][stat][task]) == set(KINDS),
+                  f"disagreement_counts[{stat}][{task}]")
     for f in d["failures"]:
         _need(f.get("category") in ALL_CATEGORIES, f"unknown failure category {f.get('category')!r}")
         _need(f.get("task") in tasks and f.get("statistic") in d["statistics"], "bad failure row")
@@ -313,82 +353,108 @@ def score_family(family, p, statistics=BX.STATISTICS, seed=0, tol=0.05, n_interi
 
     ``tasks``: the tasks to score, placement only by default (issue #46). A task that is not
     scored is not run: without 'pickup' there is no pickup predictor, sim, release check or
-    cross-check."""
+    cross-check.
+
+    A ``Solid3D`` family is scored by the sim only (issue #51): the predictor and the cross-check
+    are not run. If scoring raises, the run directory it made is removed again."""
     bad = [s for s in statistics if s not in BX.STATISTICS]
     _need(statistics and not bad, f"statistics must be from {BX.STATISTICS}, got {list(statistics)}")
     tasks = scored_tasks(tasks)
-    pickup = "pickup" in tasks
-    boxes = boxes or BX.default_boxes()
     out = new_run_dir(runs, family.name)
+    try:
+        _score_into(out, family, p, statistics, seed, tol, n_interior, workers, boxes or BX.default_boxes(), tasks)
+    except BaseException:
+        # Results are written only at the end, so a run that raised has left at most partial files.
+        for path in out.iterdir():
+            path.unlink()
+        out.rmdir()
+        raise
+    return out
+
+
+def _score_into(out, family, p, statistics, seed, tol, n_interior, workers, boxes, tasks):
+    pickup = "pickup" in tasks
+    skip = predictor_skip_reason(family)
     t_all = time.time()
     timing, files, sims, preds, checks = {}, {}, {}, {}, []
     place_cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
     cfgs = {"placement": place_cfg, "pickup": PK.PickConfig()}
     release = None
     n_workers = workers or BS.DEFAULT_WORKERS
-    pool = PR.PosePool(n_workers) if n_workers > 1 else None
+    pool = PR.PosePool(n_workers) if n_workers > 1 and not skip else None
     try:
-        t = time.time()
-        for stat in statistics:
-            if "placement" in tasks:
-                preds[("placement", stat)] = PR.predicted_box(family, p, boxes["placement"][stat], seed=seed,
-                                                              tol=tol, n_interior=n_interior, cfg=place_cfg,
-                                                              trace=False, pool=pool)
-            if pickup:
-                preds[("pickup", stat)] = PP.predicted_pickup_box(family, p, boxes["pickup"][stat], seed=seed,
-                                                                  tol=tol, n_interior=n_interior)
-        timing["predict"] = time.time() - t
+        if not skip:
+            t = time.time()
+            for stat in statistics:
+                if "placement" in tasks:
+                    preds[("placement", stat)] = PR.predicted_box(family, p, boxes["placement"][stat], seed=seed,
+                                                                  tol=tol, n_interior=n_interior, cfg=place_cfg,
+                                                                  trace=False, pool=pool)
+                if pickup:
+                    preds[("pickup", stat)] = PP.predicted_pickup_box(family, p, boxes["pickup"][stat], seed=seed,
+                                                                      tol=tol, n_interior=n_interior)
+            timing["predict"] = time.time() - t
         if pickup:
             t = time.time()
             release = PK.release_check(family, p, cfgs["pickup"])
             timing["sim_release"] = time.time() - t
-            _write_json(out / "release.json", release)
-            files["release"] = "release.json"
         for stat in statistics:
             for task in tasks:
                 t = time.time()
                 sims[(task, stat)] = BS.box_search(family, p, boxes[task][stat], cfg=cfgs[task], seed=seed, tol=tol,
                                                    n_interior=n_interior, workers=workers, release=False)
                 timing[f"sim_{task}_{stat}"] = time.time() - t
-        t = time.time()
-        geo = PP.geometry(family, p) if pickup else None
-        for (task, stat), sim in sims.items():
-            checks += cross_check(family, p, boxes[task][stat], sim, cfg=place_cfg, pool=pool, geo=geo)
-        timing["cross_check"] = time.time() - t
+        if not skip:
+            t = time.time()
+            geo = PP.geometry(family, p) if pickup else None
+            for (task, stat), sim in sims.items():
+                checks += cross_check(family, p, boxes[task][stat], sim, cfg=place_cfg, pool=pool, geo=geo)
+            timing["cross_check"] = time.time() - t
     finally:
         if pool is not None:
             pool.close()
+    if release is not None:
+        files["release"] = "release.json"
+        _write_json(out / "release.json", release)
     for (task, stat), res in sims.items():
         files[f"sim_{task}_{stat}"] = f"sim-{task}-{stat}.json"
         _write_json(out / files[f"sim_{task}_{stat}"], res)
     for (task, stat), res in preds.items():
         files[f"pred_{task}_{stat}"] = f"pred-{task}-{stat}.json"
         _write_json(out / files[f"pred_{task}_{stat}"], res)
-    files["cross_check"] = "cross-check.json"
-    _write_json(out / "cross-check.json", checks)
+    if not skip:
+        files["cross_check"] = "cross-check.json"
+        _write_json(out / "cross-check.json", checks)
     timing["total"] = time.time() - t_all
-    rep = build_report(family, p, sims, preds, release, checks, timing, files, seed, tasks=tasks)
+    rep = build_report(family, p, sims, None if skip else preds, release, checks, timing, files, seed, tasks=tasks,
+                       predictor_reason=skip)
     rep.update(tol=tol, n_interior=n_interior, workers=n_workers)
     validate_report(rep)
     _write_json(out / "report.json", rep)
-    return out
 
 
 def summary(rep):
     """A short text table of a report, for the terminal."""
     tasks = rep["tasks"]
-    lines = [f"{rep['family']} ({LABELS['sim']}; predictor {LABELS['pred']}), seed {rep['seed']}, "
-             f"tasks {' + '.join(tasks)}",
-             f"{'target':<6} " + " ".join(f"{t:>9}" for t in (*tasks, "overall")) + f"  pred {'/'.join(tasks)}  failures"]
+    used = rep["predictor"]["used"]
+    models = f"predictor {LABELS['pred']}" if used else "sim only"
+    lines = [f"{rep['family']} ({LABELS['sim']}; {models}), seed {rep['seed']}, tasks {' + '.join(tasks)}",
+             f"{'target':<6} " + " ".join(f"{t:>9}" for t in (*tasks, "overall"))
+             + (f"  pred {'/'.join(tasks)}" if used else "") + "  failures"]
     for stat in rep["statistics"]:
         s, t = rep["score"][stat], rep["targets"][stat]
         fc = "; ".join(f"{task}: " + ", ".join(f"{k} {n}" for k, n in sorted(rep["failure_counts"][stat][task].items()))
                        for task in tasks if rep["failure_counts"][stat][task])
+        pred = "/".join(f"{t[task]['pred']['scale']:.3f}" for task in tasks) + "  " if used else ""
         lines.append(f"{stat:<6} " + " ".join(f"{s[k]:>9.3f}" for k in (*tasks, "overall")) + "  "
-                     + "/".join(f"{t[task]['pred']['scale']:.3f}" for task in tasks) + f"    {fc or 'none'}")
-    n = {k: sum(c[t][k] for c in rep["disagreement_counts"].values() for t in tasks) for k in DISAGREE}
-    lines.append(f"covers all targets: {rep['covers_all_targets']}; disagreements: "
-                 f"{n['optimistic']} optimistic, {n['conservative']} conservative")
+                     + pred + f"  {fc or 'none'}")
+    if used:
+        n = {k: sum(c[t][k] for c in rep["disagreement_counts"].values() for t in tasks) for k in DISAGREE}
+        lines.append(f"covers all targets: {rep['covers_all_targets']}; disagreements: "
+                     f"{n['optimistic']} optimistic, {n['conservative']} conservative")
+    else:
+        lines.append(f"covers all targets: {rep['covers_all_targets']}; the analytic predictor was skipped: "
+                     f"{rep['predictor']['reason']}")
     tm = rep["timing"]
     lines.append("wall-clock: " + ", ".join(f"{k} {v:.1f} s" for k, v in tm.items() if k != "over_budget")
                  + (" — OVER the 30 min budget" if tm["over_budget"] else ""))

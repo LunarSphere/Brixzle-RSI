@@ -70,7 +70,9 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
    - **Failures:** placement failures are sorted into jam, fall and wrong valley. Pickup failures, when pickup is scored, are sorted into jam, pickup miss, off-centre and forceful, plus a failed release. The limiting failures, which cap each box, keep their contact traces.
    - **Cross-check:** the predictor is run on the poses the sim dropped, and the report flags where they disagree. *Optimistic* means only the predictor succeeds; *conservative* means only the sim does. The scale gap is recorded for each target. When both fail, their failure classes are compared but not trusted.
 
-   `engine/report.py` writes `report.json` to a new run directory. The report names the tasks it scored. The full sim and predictor results are written beside it.
+   - **Sim only for `Solid3D`:** the predictor works on a 2D section, so a `Solid3D` family is scored by the sim alone (issue #51). The predictor and the cross-check are not run. The report says so under `predictor`, with the reason, and holds no predicted scale, scale gap or disagreement.
+
+   `engine/report.py` writes `report.json` to a new run directory. The report names the tasks it scored and says whether the predictor was used. The full sim and predictor results are written beside it. A run that raises removes its run directory again.
 
 ### Quick random check
 

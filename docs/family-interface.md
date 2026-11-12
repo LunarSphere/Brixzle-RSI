@@ -45,7 +45,7 @@ To mark a design as infeasible, for example a profile that can't be built, a fam
 - `solid(p, part)` returns a CadQuery solid without the fork bores.
 - `collision` is optional. If given, it returns exact convex vertex sets: use it when the brick is built from convex primitives. Otherwise the solid is convex-decomposed with CoACD (seed 0, preprocessing off). That takes about 2 s per part for `pyramid`.
 - `section` is optional. Otherwise the 2D predictor uses the solid's slice on the XZ plane at y = 0. Outline edges between 5° and 85° from horizontal then count as guide faces.
-- The 2D predictor is only approximate for a genuinely 3D brick. The sim verifier is the reference.
+- The 2D predictor is only approximate for a genuinely 3D brick. The sim verifier is the reference, and the scorer does not run the predictor for a `Solid3D` family: its report is sim only (issue #51).
 
 ## Shared rules
 
