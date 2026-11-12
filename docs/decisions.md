@@ -23,6 +23,39 @@ Choices made where an issue or the docs left something open, each with its reaso
 - **Sim-only scoring for `Solid3D` families is left to #51.**
   The review found that the scorer always runs the predictor, so it cannot score a `Solid3D` family (the decision on #18 says those are scored by the sim only). #13 asks for the baseline's report, which is Prismatic, so the fix is a separate issue.
 
+## #14 End tune
+
+Numbers are for A/B V0 on the mean box, seed 0, on macOS arm64 (simulated, uncalibrated contact). Each comes from the `tune.json` of the run directory named with it. The section sits here, out of date order, so that it does not collide with the section another open PR adds at the end of the file.
+
+- **Result: the tuned A/B scores 0.781 against 0.719 untuned, in 175.5 s.**
+  `runs/tune-20261112T012144551435Z-ab-mean/`: 13 candidates scored of 18 tried, search 151.9 s, held-out check 23.5 s. Only U moved, from 25 to 26.4 mm. Both held-out scores also went from 0.719 to 0.781.
+- **The tune raises the target box only, and can lower another.**
+  The scorer on the tuned design (`runs/report-20261112T012155641634Z-ab/`, seed 0) gives 0.781, 0.344 and 0.281 on the mean, p95 and worst boxes. The untuned scores were 0.719, 0.375 and 0.281 (`runs/report-20261111T191022016036Z-ab/`, not produced in this session). So p95 dropped by one bisection step. The tune does not check the other boxes; a run tunes for its own target.
+- **There is no aerial-assembly NSGA-III run to compare the time with.**
+  The issue asks for that run's config and directory. At aerial-assembly `fc4f724`, `brixzle/runs/` holds only `v0-bridge`, `v0-ring` and `v0-wall`, with no optimiser history or timing. The config `brixzle/configs/nsga-ab.json` asks for a population of 35 over up to 40 generations, so up to 1,400 evaluations against 13 here. The only time on record is the 45–90 minutes per family in this repo's `CLAUDE.md`, which is for the whole old process, not a measured optimiser run.
+- **Stage 1 on the predictor is gone, so every family is tuned the same way.**
+  The issue was rescoped on 2026-11-11 to one short tune at the end. The earlier comment that routed `Prismatic` families through the predictor no longer applies, and `Solid3D` families need no special case.
+- **The variables are scaled to 0–1, and the search starts with a step of 10 % of each range.**
+  Py-BOBYQA uses one trust-region radius for every variable, and A/B's ranges run from 0.5 mm (clearance) to 35° (theta).
+- **n + 1 interpolation points, the fewest Py-BOBYQA allows.**
+  A/B has 12 bounded parameters, so the first model costs 13 candidates. A full quadratic would need 91.
+- **A candidate that cannot be built, or breaks a rule, is not simulated.**
+  It gets a fixed objective (1.0 and 0.5) worse than any score, since a score is never below 0. On A/B, 5 of the 18 candidates broke a rule (`R11.nest_cone`, `R5.capture_x`, `R4.seated_play`, `R13.bore_wall`) and cost about 4 s each for the solids, not about 20 s.
+- **The first probes are scored side by side.**
+  The search starts by stepping each parameter once, and those candidates don't depend on each other. Scored in 6 processes, A/B's 12 probes took 42 s of wall-clock (`runs/tune-20261112T010919892394Z-ab-mean/`: search 313.6 s, 21 scored, solver converged). One after another, the same 12 took 130 s of sim time alone, plus rule checks that run did not time (`runs/tune-20261112T005631361934Z-ab-mean/`, made before this change: search 410.7 s, stopped by the 420 s cap with 19 scored).
+- **Patience: stop after 4 scored candidates in a row with no gain, counted after the first probes.**
+  In `runs/tune-20261112T010919892394Z-ab-mean/` the 12 candidates scored after the probes took 251 s and none beat the U probe. With patience the search took 151.9 s and gave the same design.
+- **The score's tolerance stays at the scorer's 0.05.**
+  The box scale moves in steps of 1/32, so a probe that changes the capture edge a little shows no gain. A finer tolerance (0.0125) was tried in `runs/tune-20261112T011724313282Z-ab-mean/`: 0.742 to 0.797 on that finer scale, in 461.5 s against 382.1 s for the same code at 0.05. At the scorer's tolerance that tuned design is still 0.781, so the finer scale bought nothing the scorer sees.
+- **Most of A/B's parameters do not move the score at all.**
+  Stepping H0, gutter, gutter_flat, tip_chamfer, tooth_taper or mouth_chamfer by 10 % of its range left the score at 0.719. Only U raised it, and tooth_L lowered it (0.688). The limiting failure is a wrong valley on course 0 in every scored candidate, which the capture-limit analysis (#56) also found at the zone's X edge. This is a finding for the critic: on A/B the box is capped by the zone's width, which is a shape question more than a tuning one.
+- **The held-out check uses the next seed's interior points at friction 0.2 and 0.5.**
+  The search runs at the trial's default friction (0.35) and seed. The corners and face centres of the box are the same for every seed, so a new seed alone changes only 4 of the 19 points; the friction ends are what make the check held out. A tuned design is kept only if neither score got worse. The four box searches run side by side.
+- **The time of the rule check counts.**
+  Building the solids for the rules takes about 4 s a candidate on A/B, so it is inside each candidate's `seconds` and inside the wall-clock cap.
+- **Known cost, not fixed here: every box search starts its own worker processes.**
+  A candidate takes about 20 s on A/B however it is run. A pool that outlives one design would cut that for the tune and for the scorer, and needs its own issue.
+
 ## #46 Placement only; pickup deferred
 
 The maintainer answered the issue's open question on 2026-11-11: bricks do not have to keep the large pickup openings. They only have to be grippable, which is #50.

@@ -4,18 +4,19 @@
 
 Given a concept sketch and a set of requirements, two AI agents keep redesigning the brick. The goal is to make the region of drone error it tolerates when placing a brick as large as possible, with no jams inside it. Pickup is deferred until a gripper is designed for the chosen brick.
 
-> **Status:** planning. The architecture and requirements are written down; no loop code exists yet.
+> **Status:** the evaluation engine is built. The agents, the intake page and the orchestrator are not.
 
 ## How it works
 
-The loop has two nested parts.
+Each iteration of the loop redesigns the brick's shape and tests it in simulation:
 
-- **Inner loop: tune the numbers.** The brick's shape is fixed; only its parameters move (ramp angles, clearances and so on).
-  1. A 2D analytic model in X, Z and θ follows each release pose contact by contact. It predicts whether the brick seats, jams or falls.
-  2. A fast gradient-free search tunes the parameters on that prediction.
-  3. MuJoCo then checks only the best few designs, with drops at the edges and corners of the target box.
-  4. A short BOBYQA run fine-tunes them.
-- **Outer loop: redesign the shape.** A critic agent reads the drop maps and jam traces and explains each jam using design rules drawn from the literature. It then writes a redesign brief, which can reshape the current brick family or invent a new one. The design agent builds the new shape, and the loop runs again.
+1. The design agent builds a brick family from the concept sketch, the requirements and the last redesign brief.
+2. A quick check drops the brick 40 times inside the target error box in MuJoCo. A weak design goes straight back to step 1.
+3. A full map of drops shows where the brick seats, jams, lands in the wrong valley or falls.
+4. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
+5. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
+
+The loop does not tune numbers inside an iteration. When the score reaches 1 or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
 
 A design's **score** is the largest scaling of a target error box (in X, Z and θ) that the brick handles with every drop seated. A score of 1 or more passes. Each design is run against three target boxes, sized to the drone's mean, 95th-percentile and worst measured error.
 
