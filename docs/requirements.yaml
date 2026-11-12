@@ -67,7 +67,7 @@ requirements:
   - id: R11
     name: Coarse drop
     text: "Bricks are dropped coarsely and slide into place on the ramps."
-    checks: [predictor, sim]
+    checks: [sim]
 
   - id: R12
     name: Coarse pickup

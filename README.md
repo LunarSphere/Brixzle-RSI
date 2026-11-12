@@ -16,9 +16,9 @@ Each iteration of the loop redesigns the brick's shape and tests it in simulatio
 4. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
 5. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
 
-The loop does not tune numbers inside an iteration. When the score reaches 1 or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
+The loop does not tune numbers inside an iteration. When Z reaches 1 or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
 
-A design's **score** is the largest scaling of a target error box (in X, Z and θ) that the brick handles with every drop seated. A score of 1 or more passes. Each design is run against three target boxes, sized to the drone's mean, 95th-percentile and worst measured error.
+A design's objective is **Z** (issue #61). For a target error box in X, release height and θ, take every drop of the full sim map inside the box: Z = (seated − jammed) / drops, so it runs from −1 to 1, and Z = 1 (every drop seated) passes. Each design is scored on three target boxes, sized to the drone's mean, 95th-percentile and worst measured error. Z is counted over the box, not the green zone, so a design cannot raise it by narrowing where it seats.
 
 See [`docs/architecture.md`](docs/architecture.md) for the components and [`docs/requirements.md`](docs/requirements.md) for R1–R13.
 
@@ -42,7 +42,7 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 |---|---|
 | `src/brixzle/intake/` | Local web page: concept sketch and extra requirements, with a conflict check against R1–R13 |
 | `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
-| `src/brixzle/engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
+| `src/brixzle/engine/` | Quick check, sim map, jam analysis, objective Z, scorer, end tune and the analytic predictor |
 | `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, 2D section, CAD solid, rules |
 | `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
 | `src/brixzle/data/` | Measured drone error files |

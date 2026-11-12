@@ -1,12 +1,16 @@
-"""End tune (issue #14): a short Py-BOBYQA run on the sim box scale, once, on the final family.
+"""End tune (issues #14, #61): a short Py-BOBYQA run on Z, once, on the final family.
 
 The loop does not tune numbers inside an iteration. When the design has settled, this moves the
-family's bounded parameters to raise the scorer's sim box scale for the run's target (placement,
+family's bounded parameters to raise Z (engine/zscore.py) on the run's target box (placement,
 issue #46). It is short on purpose: a couple of dozen candidates and a wall-clock cap.
 
 - **Variables:** the parameters in ``family.bounds``, each scaled to [0, 1]; ``fixed`` ones stay.
-- **Objective:** minus the sim box scale (box_search) for the target box. The untuned design is
-  scored first, and every point is scored once (repeats come from a memo).
+- **Objective:** minus Z on the target box, from the map's cells inside the target boxes
+  (zscore.ZScore: the same drops a full map counts). The untuned design is scored first, and every
+  point is scored once (repeats come from a memo).
+- **Other targets:** a candidate that lowers Z on any other target box (mean, p95, worst) below
+  the untuned design's is refused: it gets a fixed objective worse than any score, so it can never
+  be the result. On A/B the box-scale tune raised the mean box and lowered p95 (#14).
 - **Penalties:** a candidate that cannot be built (ValueError) or breaks a rule margin is not
   simulated. It gets a fixed objective worse than any score, so it can never be the result.
 - **Budget:** ``maxfun`` scored candidates and ``max_seconds`` of wall-clock. A candidate is not
@@ -16,10 +20,11 @@ issue #46). It is short on purpose: a couple of dozen candidates and a wall-cloc
   steps found nothing (docs/decisions.md, #14).
 - **First probes together:** the search starts by stepping each parameter once. Those candidates
   do not depend on each other, so they are scored side by side in ``parallel`` processes (each
-  running its box search serially), and the search then finds them in the memo.
+  running its drops serially), and the search then finds them in the memo.
 - **Held-out check:** a tuned design that scores higher is scored again, with the untuned one,
-  under conditions the search did not see (another seed, other friction). It is accepted only if
-  none of them got worse; otherwise the untuned design is kept.
+  under conditions the search did not see: the target box's poses shifted by the next seed, at
+  friction 0.2 and 0.5 (zscore.HeldOutZ). It is accepted only if none of them got worse;
+  otherwise the untuned design is kept.
 
 Results are simulated, uncalibrated contact. Run it from the command line to record a run:
 
@@ -42,17 +47,19 @@ import numpy as np
 import pybobyqa
 
 from brixzle.engine import boxes as BX
-from brixzle.engine import box_search as BS
-from brixzle.engine.sim import trials as T
+from brixzle.engine import zscore as ZS
 from brixzle.families import builders as B
 from brixzle.families import rules as R
 
-LABEL = BS.LABEL
-PENALTY_RULE = 0.5        # objective of a candidate that breaks a rule (a score is >= 0, so -score <= 0)
-PENALTY_INFEASIBLE = 1.0  # objective of a candidate that cannot be built
-HELD_OUT_FRICTION = (0.2, 0.5)  # the ends of the friction range the predictor sweeps (architecture.md)
+LABEL = ZS.LABEL
+# Objectives are -Z, so a scored candidate lies in [-1, 1]; each penalty is worse than any score.
+PENALTY_OTHER = 1.5       # objective of a candidate that lowers Z on another target box
+PENALTY_RULE = 2.0        # objective of a candidate that breaks a rule
+PENALTY_INFEASIBLE = 3.0  # objective of a candidate that cannot be built
+HELD_OUT_FRICTION = ZS.HELD_OUT_FRICTION
+TOL = 1e-12               # Z is a ratio of counts; equal counts give equal Z
 
-__all__ = ["TuneSettings", "free_names", "to_unit", "from_unit", "initial_probes", "rule_violations", "sim_score",
+__all__ = ["TuneSettings", "free_names", "to_unit", "from_unit", "initial_probes", "rule_violations", "z_score",
            "held_out_scores", "tune", "tune_family", "write_tune", "summary"]
 
 
@@ -65,12 +72,10 @@ class TuneSettings:
     rhobeg: float = 0.1          # first trust-region radius, as a share of each parameter's range
     rhoend: float = 0.01         # radius at which the search stops
     patience: int = 4            # stop after this many scored candidates in a row with no gain
-    seed: int = 0                # seed of the box search's interior points
-    tol: float = 0.05            # box-scale tolerance, as in the scorer
-    n_interior: int = 4          # interior points, as in the scorer
-    workers: int | None = None   # drop processes for one box search
+    seed: int = 0                # the held-out check shifts the poses with seed + 1
+    workers: int | None = None   # drop processes for one candidate's Z
     # Processes that score the first probes side by side (1: one after another). Measured on a
-    # 14-core Mac, 2026-11-11: box_search is fastest on 4 to 6 processes and slows from 8.
+    # 14-core Mac, 2026-11-11: drops are fastest on 4 to 6 processes and slow from 8.
     parallel: int = 6
     held_out: bool = True        # run the held-out check on a tuned design that scores higher
 
@@ -158,41 +163,16 @@ class RuleCheck:
         return rule_violations(self.family, p)
 
 
-@dataclass(frozen=True)
-class SimScore:
-    """A score function for ``tune``: p -> the sim box search's scale, with what limited it.
-    An object, not a closure, so it can be sent to another process."""
-
-    family: object
-    box: BX.TargetBox
-    cfg: T.TrialConfig
-    seed: int = 0
-    tol: float = 0.05
-    n_interior: int = 4
-    workers: int | None = None
-
-    def __call__(self, p):
-        res = BS.box_search(self.family, p, self.box, cfg=self.cfg, seed=self.seed, tol=self.tol,
-                            n_interior=self.n_interior, workers=self.workers)
-        return {"scale": res["scale"], "limiting_course": res["limiting_course"], "drop_count": res["drop_count"],
-                "failure_outcomes": res["courses"][res["limiting_course"]]["failure_outcomes"]}
+def z_score(family, box, workers=None):
+    """The default score function: Z on ``box``, and on every target box for the guard
+    (zscore.ZScore over the map's cells inside them)."""
+    return ZS.ZScore(family, box, dict(BX.default_boxes()["placement"]), workers=workers)
 
 
-def sim_score(family, box, cfg=None, seed=0, tol=0.05, n_interior=4, workers=None):
-    """The default score function: the sim box scale of ``box`` (see SimScore)."""
-    return SimScore(family, box, cfg or T.TrialConfig(error=T.ErrorModel(ideal=True)), seed, tol, n_interior, workers)
-
-
-def held_out_scores(family, box, s: TuneSettings):
-    """The held-out score functions: the next seed's interior points, at each end of the friction
-    range. The search itself runs at the trial's default friction and ``s.seed``."""
-    base = T.TrialConfig(error=T.ErrorModel(ideal=True))
-    out = {}
-    for mu in HELD_OUT_FRICTION:
-        cfg = replace(base, physics=replace(base.physics, friction=mu))
-        out[f"seed {s.seed + 1}, friction {mu}"] = sim_score(family, box, cfg=cfg, seed=s.seed + 1, tol=s.tol,
-                                                             n_interior=s.n_interior, workers=s.workers)
-    return out
+def held_out_scores(family, box, s: "TuneSettings"):
+    """The held-out score functions: the target box's poses shifted by the next seed, at each end
+    of the friction range. The search itself runs on the map's own cells at the default friction."""
+    return ZS.held_out_scores(family, box, s.seed + 1, workers=s.workers)
 
 
 # --- the search ---
@@ -202,10 +182,15 @@ class _Stop(Exception):
     """Raised inside the objective to end the search when a budget runs out."""
 
 
-def _scale(result):
-    scale = float(result["scale"])
-    _need(math.isfinite(scale) and scale >= 0, f"a score must be a finite scale >= 0, got {result['scale']!r}")
-    return scale
+def _score(result):
+    score = float(result["score"])
+    _need(math.isfinite(score), f"a score must be finite, got {result['score']!r}")
+    return score
+
+
+def _target_z(result):
+    """{statistic: Z} from a score function's 'targets' (counts or plain numbers), or {}."""
+    return {k: float(v["Z"] if isinstance(v, dict) else v) for k, v in (result.get("targets") or {}).items()}
 
 
 def _evaluate(check_fn, score_fn, q):
@@ -222,16 +207,16 @@ def _evaluate(check_fn, score_fn, q):
             row.update(status="rule", objective=PENALTY_RULE, reason=", ".join(broken))
     if row["status"] == "scored":
         result = score_fn(q)
-        row["score"] = _scale(result)
+        row["score"] = _score(result)
         row["objective"] = -row["score"]
-        row["detail"] = {k: v for k, v in result.items() if k != "scale"}
+        row["detail"] = {k: v for k, v in result.items() if k != "score"}
     row["seconds"] = time.time() - t
     return row
 
 
-def _held_out_scale(job):
+def _held_out_score(job):
     fn, q = job
-    return _scale(fn(q))
+    return _score(fn(q))
 
 
 def _process_map(processes):
@@ -250,7 +235,9 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
          clock=time.time, map_fn=None):
     """Tune ``p`` inside ``family.bounds``; returns a JSON-safe result dict (see the module docstring).
 
-    ``score_fn(p)`` returns a dict with 'scale' (default: the sim box scale for the target box).
+    ``score_fn(p)`` returns a dict with 'score' (default: Z on the target box) and optionally
+    'targets', {statistic: Z or counts}: a candidate whose Z on another target falls below the
+    untuned design's is refused (status 'lowers_other').
     ``check_fn(p)`` returns the broken rules and raises ValueError for a design that cannot be
     built (default: ``rule_violations``). ``held_out_fns`` maps a name to a score function
     (default: ``held_out_scores`` when ``settings.held_out``, else none). Inject all three to test
@@ -264,8 +251,8 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
     s.validate(family)
     box = BX.default_boxes()["placement"][s.statistic]
     if score_fn is None:
-        # With several candidates side by side, each box search runs serially in its own process.
-        score_fn = sim_score(family, box, seed=s.seed, tol=s.tol, n_interior=s.n_interior, workers=s.workers)
+        # With several candidates side by side, each runs its drops serially in its own process.
+        score_fn = z_score(family, box, workers=s.workers)
         if held_out_fns is None and s.held_out:
             held_out_fns = held_out_scores(family, box, s)
     check_fn = check_fn or RuleCheck(family)
@@ -287,14 +274,29 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
     def key(x):
         return tuple(round(v, 9) for v in x)
 
+    def guard(row):
+        """Refuse a scored candidate that lowers Z on another target box below the untuned design's."""
+        if row["status"] != "scored" or not evaluations:
+            return row
+        base, got = evaluations[0]["targets"], _target_z(row.get("detail", {}))
+        lower = [f"{k} {base[k]:.3f} -> {got[k]:.3f}" for k in base
+                 if k != s.statistic and k in got and got[k] < base[k] - TOL]
+        if lower:
+            row.update(status="lowers_other", objective=PENALTY_OTHER, reason="lowers Z on " + ", ".join(lower))
+        return row
+
     def record(x, row):
         q = from_unit(family, p, names, x)
-        row = {"index": len(evaluations), "x": x, "values": {k: getattr(q, k) for k in names}, **row}
-        if row["status"] == "scored":
+        row = {"index": len(evaluations), "x": x, "values": {k: getattr(q, k) for k in names}, **guard(row)}
+        if not evaluations:
+            row["targets"] = _target_z(row.get("detail", {}))
+        if row["status"] in ("scored", "lowers_other"):
             state["scored"] += 1
+            valid = row["status"] == "scored"
             if state["searching"]:  # patience counts the search's own steps, not the first probes
-                state["stale"] = 0 if row["score"] > state["best"] else state["stale"] + 1
-            state["best"] = max(state["best"], row["score"])
+                state["stale"] = 0 if valid and row["score"] > state["best"] else state["stale"] + 1
+            if valid:
+                state["best"] = max(state["best"], row["score"])
         state["slowest"] = max(state["slowest"], row["seconds"])
         evaluations.append(row)
         memo[key(x)] = row["objective"]
@@ -335,7 +337,7 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
     # The first probes, side by side. Each is counted against maxfun as if it will be scored.
     probes = [clip(x) for x in initial_probes(x0, s.rhobeg)][:max(0, s.maxfun - state["scored"])]
     if map_fn is not None and probes and not out_of_budget():
-        serial = replace(score_fn, workers=1) if isinstance(score_fn, SimScore) else score_fn
+        serial = ZS.with_workers(score_fn, 1)
         rows = map_fn(partial(_evaluate, check_fn, serial), [from_unit(family, p, names, x) for x in probes])
         for x, row in zip(probes, rows, strict=True):
             record(x, row)
@@ -363,11 +365,11 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
     held_out, t = {}, clock()
     if improved and held_out_fns:
         jobs = [(fn, q) for fn in held_out_fns.values() for q in (p, p_tuned)]
-        if map_fn is not None:  # side by side, each box search serial in its own process
-            jobs = [(replace(fn, workers=1) if isinstance(fn, SimScore) else fn, q) for fn, q in jobs]
-            scales = map_fn(_held_out_scale, jobs)
+        if map_fn is not None:  # side by side, each serial in its own process
+            jobs = [(ZS.with_workers(fn, 1), q) for fn, q in jobs]
+            scales = map_fn(_held_out_score, jobs)
         else:
-            scales = [_held_out_scale(job) for job in jobs]
+            scales = [_held_out_score(job) for job in jobs]
         for i, name in enumerate(held_out_fns):
             before, after = scales[2 * i], scales[2 * i + 1]
             held_out[name] = {"baseline": before, "tuned": after, "not_worse": after >= before}
@@ -375,7 +377,8 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
     accepted = improved and all(h["not_worse"] for h in held_out.values())
 
     def side(q, row):
-        return {"params": q.to_dict(), "score": row["score"], "evaluation": row["index"]}
+        return {"params": q.to_dict(), "score": row["score"], "evaluation": row["index"],
+                "targets": _target_z(row.get("detail", {}))}
 
     return {
         "label": LABEL, "task": "placement", "family": family.name, "family_version": family.version,
@@ -424,11 +427,11 @@ def summary(result):
     base, tuned, t = result["baseline"], result["tuned"], result["timing"]
     moved = {k: (base["params"][k], tuned["params"][k]) for k in result["names"]
              if base["params"][k] != tuned["params"][k]}
-    lines = [f"{result['family']} {result['statistic']} box ({LABEL}): untuned {base['score']:.3f}, "
-             f"tuned {tuned['score']:.3f}; {result['sim_evaluations']} scored of "
+    lines = [f"{result['family']} {result['statistic']} box ({LABEL}): Z untuned {base['score']:+.3f}, "
+             f"tuned {tuned['score']:+.3f}; {result['sim_evaluations']} scored of "
              f"{len(result['evaluations'])} candidates, stopped by {result['stopped']}"]
     for name, h in result["held_out"].items():
-        lines.append(f"  held out ({name}): untuned {h['baseline']:.3f}, tuned {h['tuned']:.3f}"
+        lines.append(f"  held out ({name}): untuned {h['baseline']:+.3f}, tuned {h['tuned']:+.3f}"
                      f"{'' if h['not_worse'] else '  <- worse'}")
     verdict = "accepted" if result["accepted"] else ("rejected by the held-out check" if result["improved"]
                                                     else "no better design found")
@@ -447,9 +450,8 @@ def parser():
     ap.add_argument("--fix", nargs="*", default=[], metavar="NAME", help="bounded parameters to leave alone")
     ap.add_argument("--maxfun", type=int, default=d.maxfun, help="scored candidates, the untuned design included")
     ap.add_argument("--max-seconds", type=float, default=d.max_seconds, help="wall-clock cap on the search")
-    ap.add_argument("--seed", type=int, default=d.seed)
-    ap.add_argument("--tol", type=float, default=d.tol)
-    ap.add_argument("--workers", type=int, default=None, help=f"drop processes (default {BS.DEFAULT_WORKERS})")
+    ap.add_argument("--seed", type=int, default=d.seed, help="the held-out check uses seed + 1")
+    ap.add_argument("--workers", type=int, default=None, help="drop processes per candidate")
     ap.add_argument("--patience", type=int, default=d.patience,
                     help="stop after this many scored candidates in a row with no gain")
     ap.add_argument("--parallel", type=int, default=d.parallel, help="processes that score the first probes")
@@ -467,7 +469,7 @@ def main(argv=None):
     if args.params:
         p = family.params_type.from_dict(json.loads(Path(args.params).read_text(encoding="utf-8")))
     settings = TuneSettings(statistic=args.statistic, fixed=tuple(args.fix), maxfun=args.maxfun,
-                            max_seconds=args.max_seconds, seed=args.seed, tol=args.tol, workers=args.workers,
+                            max_seconds=args.max_seconds, seed=args.seed, workers=args.workers,
                             patience=args.patience, parallel=args.parallel, held_out=not args.no_held_out)
     result, out = tune_family(family, p, settings, runs=args.runs)
     print(summary(result) + f"\n  -> {out}")
