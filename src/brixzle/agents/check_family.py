@@ -5,7 +5,8 @@ outside ``src/``. It is imported as the top-level package ``<module>``, with ``<
 ``sys.path``. Worker processes started with spawn get the parent's ``sys.path``, so the sim's
 workers can import it too. Module names are unique per attempt, so two designs never share one.
 
-``check`` runs the family contract and the rule margins. The agent calls it as a tool, in a
+``check`` runs the family contract, the rule margins and one ideal drop at the aim on each course
+(issue #70; a passing check does not need the drops to seat, but reports them). The agent calls it as a tool, in a
 separate process with a time limit (``check_in_subprocess``), so a design that hangs or crashes
 cannot take the loop down with it:
 
@@ -83,8 +84,29 @@ def check(root, module, samples=2):
         except Exception as e:  # noqa: BLE001
             out["error"] = f"rule check raised {type(e).__name__}: {e}"
             return out
+    if not out["violations"] and not out["error"]:
+        try:
+            out["aim_drops"] = aim_drops(fam, fam.defaults)
+        except Exception as e:  # noqa: BLE001 - reported to the agent
+            out["error"] = f"the aim drop raised {type(e).__name__}: {e}"
+            return out
     out["ok"] = not out["violations"] and not any(i["broken"] for i in out["parts"].values()) and not out["error"]
     out["seconds"] = round(time.time() - t0, 2)
+    return out
+
+
+def aim_drops(fam, p):
+    """One ideal drop at the aim on each course (issue #70): the outcome, where the brick came to
+    rest against its seat (mm) and its tilt (deg). A design that cannot seat even here will fail the
+    quick check, so the agent learns it in about a second. Simulated, uncalibrated contact."""
+    from brixzle.engine.sim import trials as T
+
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    out = []
+    for course in (0, 1):
+        row = T.DropRig(fam, p, cfg, course=course).drop(cfg.error.sample(None), trace=False)
+        out.append({"course": course, "outcome": row["outcome"], "err_mm": [_num(v) for v in row["err_mm"]],
+                    "angle_deg": _num(row["angle_deg"])})
     return out
 
 

@@ -54,7 +54,10 @@ def system_prompt():
     interface = (REPO / "docs" / "family-interface.md").read_text(encoding="utf-8")
     return f"""You are the design agent of Brixzle-RSI, a loop that designs brick families a drone can place imprecisely.
 You write one brick family as Python code that follows the family interface below, then check it with the
-check_family tool and fix it until the check passes (ok: true).
+check_family tool and fix it until the check passes (ok: true). The check also drops your brick once at the
+aim on each course (aim_drops): if either is not "seated", the brick does not sit in its own seat, so fix the
+seat pose, the base or the profile before anything else. The drop trial seats a course-0 brick at
+Placement(0, 1) and a course-1 brick on top of it; err_mm is where the brick came to rest against that seat.
 
 Rules:
 - Write only inside your package directory. Its family.py must export FAMILY = Family(...).
