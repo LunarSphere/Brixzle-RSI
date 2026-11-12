@@ -310,3 +310,11 @@ The maintainer set the loop's order, acceptance rule and stop rule on 2026-11-12
   - **Run 1** (`runs/loop/smoke-20261112-mean/`) was stopped by hand during iteration 1. The design agent copied the dummy `wedge`, which never seated in the sim (#70). Two design calls ($0.0738 and $0.0917) and a third that was killed (about $0.098, estimated from its transcript; it was charged to the ledger by hand). A Claude Code process survived the kill, so the loop now turns SIGTERM into an interrupt that unwinds the SDK.
   - **Run 2** (`runs/loop/smoke2-20261112-mean/`, after #70) passed in one iteration. The design agent wrote `zigzag_chevron` in one call ($0.0848, 8 turns). It seated 40 of 40 in the quick check and scored Z mean +1.000 (178 drops), p95 +0.901 (fell 44) and worst +0.646 (fell 220), with held-out Z +1.000 at μ 0.2 and 0.5 (simulated, uncalibrated contact). The loop stopped on Z = 1 without calling the critic. The end tune found nothing better (`runs/tune-20261112T220148160314Z-zigzag_chevron-mean/`). Run time was 1.0 min; renders are in `RSI_RESULTS/smoke2-20261112-mean/`.
   - **What the smoke run does not show:** design skill. The design is the dummy wedge with a 45° groove and wider bores, adapted rather than taken from the concept sketch, although the prompt says the examples are not designs to copy. The critic's real call was not exercised (Z was already 1).
+
+## #74 Orthographic views of each design
+
+The maintainer decided on 2026-11-12 that, for now, each iteration reports the jamming graph and a render of the latest design as three orthographic views. The report keeps Z per target (schema 4). The pickup report, box scale and predictor cross-check stay out.
+
+- **The views are front (X–Z, looking along +Y), side (Y–Z, from +X) and top (X–Y, looking down),** one row per part, to scale. Each title gives the view's size in mm.
+- **They are drawn from the printed solid's mesh,** with its bores and windows, not from the 2D section. Each view keeps the faces that face the viewer and draws them farthest first, so nearer surfaces cover farther ones. Faces are shaded by a light set off the view axis, so faces at different angles read differently.
+- **`module.png` replaces its section-and-3D render** with these views. The file name is kept, so the orchestrator and `summary.md` are unchanged.

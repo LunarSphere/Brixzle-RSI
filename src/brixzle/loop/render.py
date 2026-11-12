@@ -8,7 +8,8 @@ Every outer iteration of the loop (#21) writes to ``RSI_RESULTS/<run>/iter-NN/``
   colour). Counts are in each legend, the target box is drawn on every panel, the jam bands from
   the jam analysis (#49) are outlined, and Z (#61) per target is in the title. Labelled
   "simulated, uncalibrated contact".
-- ``module.png``: the iteration's brick, as its 2D section per part and a 3D view.
+- ``module.png``: the iteration's brick as three orthographic views of its printed solid (front, side
+  and top), one row per part, to scale (issue #74).
 - ``summary.md``: Z per target with its counts, what changed and why (the critic's brief), the
   decision, and the run directories behind every number (written by the loop).
 
@@ -120,66 +121,68 @@ def jam_map(sim_map, z, out, target=None, jam=None, title=None):
     return Path(out)
 
 
-def _plot_polygon(ax, poly, fc, ec, lw=1.0):
-    from matplotlib.patches import PathPatch
-    from matplotlib.path import Path as MPath
+# The three orthographic views (issue #74): which mesh axes each shows, and where the viewer stands.
+VIEWS = (("front", ("x", "z"), (0.0, -1.0, 0.0)),   # looking along +Y
+         ("side", ("y", "z"), (1.0, 0.0, 0.0)),     # looking along -X, from the +X side
+         ("top", ("x", "y"), (0.0, 0.0, 1.0)))      # looking down
+_AXIS = {"x": 0, "y": 1, "z": 2}
 
-    def ring(coords):
-        coords = np.asarray(coords)
-        return coords, [MPath.MOVETO] + [MPath.LINETO] * (len(coords) - 2) + [MPath.CLOSEPOLY]
 
-    verts, codes = ring(poly.exterior.coords)
-    for hole in poly.interiors:
-        v, c = ring(hole.coords)
-        verts, codes = np.vstack([verts, v]), codes + c
-    ax.add_patch(PathPatch(MPath(verts, codes), fc=fc, ec=ec, lw=lw))
+def ortho_panels(family, p):
+    """The three orthographic views of each part's printed solid, as data: for each part and
+    view, the projected triangles that face the viewer (farthest first, so nearer ones cover
+    them), their shading, and the view's extent in mm."""
+    from brixzle.families import builders as B
+
+    out = []
+    for part in family.parts:
+        mesh = B.sim_bodies(family, p, part).mesh
+        tris, normals = np.asarray(mesh.triangles), np.asarray(mesh.face_normals)
+        lo, hi = mesh.bounds
+        for view, axes, eye in VIEWS:
+            eye = np.asarray(eye)
+            facing = normals @ eye
+            keep = facing > 1e-9
+            depth = tris[keep] @ eye                      # larger is nearer the viewer
+            order = np.argsort(depth.mean(axis=1))        # farthest first
+            a, b = _AXIS[axes[0]], _AXIS[axes[1]]
+            light = eye + np.array([-0.45, -0.35, 0.55])  # off the view axis, so flat faces differ
+            light /= np.linalg.norm(light)
+            shade = np.clip(normals[keep] @ light, 0.0, 1.0)
+            out.append({"part": part, "view": view, "axes": axes,
+                        "polys": tris[keep][order][:, :, [a, b]], "shade": shade[order],
+                        "extent": ((float(lo[a]), float(hi[a])), (float(lo[b]), float(hi[b])))})
+    return out
 
 
 def module_png(family, p, out, title=None):
-    """The family's brick: the 2D section of each part (guide faces in orange, grip features
-    marked) and a 3D view of the first part's printed solid."""
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    """The family's brick as three orthographic views of its printed solid (front X-Z, side Y-Z,
+    top X-Y), one row per part, to scale in mm (issue #74)."""
+    from matplotlib.collections import PolyCollection
 
-    from brixzle.families import builders as B
-    from brixzle.families.interface import Prismatic
-
+    panels = ortho_panels(family, p)
     parts = list(family.parts)
-    fig = plt.figure(figsize=(4.2 * (len(parts) + 1), 4.2), facecolor=BG)
-    for k, part in enumerate(parts):
-        ax = fig.add_subplot(1, len(parts) + 1, k + 1)
+    fig, axes = plt.subplots(len(parts), len(VIEWS), figsize=(4.0 * len(VIEWS), 3.6 * len(parts)), squeeze=False,
+                             facecolor=BG)
+    base = np.array([0.62, 0.71, 0.84])
+    for q in panels:
+        ax = axes[parts.index(q["part"])][[v[0] for v in VIEWS].index(q["view"])]
         ax.set_facecolor(BG)
-        if isinstance(family.geometry, Prismatic):
-            sec = family.geometry.section(p, part)
-        else:
-            sec = B.predictor_section(family, p, part) if hasattr(B, "predictor_section") else None
-        if sec is not None:
-            _plot_polygon(ax, sec.outer, "#c9d6ea", "#1f3b63")
-            for hole in sec.holes or ():
-                _plot_polygon(ax, hole, BG, "#1f3b63")
-            for gf in sec.guide_faces:
-                (x0, z0), (x1, z1) = gf.a, gf.b
-                ax.plot([x0, x1], [z0, z1], color=COLOURS["J"], lw=2.4, solid_capstyle="round")
-        for feat in family.pickup(p, part):
-            w, h = feat.size_mm
-            ax.add_patch(Rectangle((feat.x_mm - w / 2, feat.z_mm - h / 2), w, h, fill=False, ec="#444", lw=0.8, ls=":"))
+        colours = np.clip(base[None, :] * (0.45 + 0.55 * q["shade"][:, None]), 0, 1)
+        ax.add_collection(PolyCollection(q["polys"], facecolors=colours, edgecolors=colours, linewidths=0.2))
+        (x0, x1), (y0, y1) = q["extent"]
+        pad = 0.05 * max(x1 - x0, y1 - y0)
+        ax.set_xlim(x0 - pad, x1 + pad)
+        ax.set_ylim(y0 - pad, y1 + pad)
         ax.set_aspect("equal")
-        ax.autoscale_view()
-        ax.set_title(f"part {part}: section (mm)", fontsize=9, loc="left")
+        a, b = q["axes"]
+        ax.set_xlabel(f"{a.upper()} (mm)", fontsize=8)
+        ax.set_ylabel(f"{b.upper()} (mm)", fontsize=8)
         ax.tick_params(labelsize=7)
-    ax3 = fig.add_subplot(1, len(parts) + 1, len(parts) + 1, projection="3d")
-    mesh = B.sim_bodies(family, p, parts[0]).mesh
-    tri = mesh.vertices[mesh.faces]
-    ax3.add_collection3d(Poly3DCollection(tri, facecolor="#9fb4d6", edgecolor="#1f3b63", lw=0.05, alpha=1.0))
-    lo, hi = mesh.bounds
-    span = float(max(hi - lo)) / 2
-    mid = (lo + hi) / 2
-    for setter, m in zip((ax3.set_xlim, ax3.set_ylim, ax3.set_zlim), mid):
-        setter(m - span, m + span)
-    ax3.view_init(elev=22, azim=-60)
-    ax3.set_title(f"part {parts[0]}: 3D", fontsize=9, loc="left")
-    ax3.tick_params(labelsize=6)
-    fig.suptitle(title or f"{family.name} {family.version} ({type(family.geometry).__name__})", fontsize=10,
-                 x=0.01, ha="left")
+        ax.set_title(f"part {q['part']}: {q['view']} ({a.upper()}-{b.upper()}), {x1 - x0:.1f} x {y1 - y0:.1f} mm",
+                     fontsize=9, loc="left")
+    fig.suptitle(title or f"{family.name} {family.version} ({type(family.geometry).__name__}): orthographic views",
+                 fontsize=10, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(out, dpi=DPI, facecolor=BG)
     plt.close(fig)

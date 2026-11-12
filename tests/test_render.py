@@ -39,10 +39,22 @@ def test_the_colours_follow_the_drop_grid_figure():
                                                             "W": "wrong valley", "?": "other"}
 
 
-def test_the_module_render_draws_the_section_and_a_3d_view(tmp_path):
-    from brixzle.families.wedge.family import FAMILY
+def test_the_module_render_is_three_orthographic_views_per_part(tmp_path):
+    """The maintainer asked for three orthographic views of the latest design (issue #74)."""
+    from brixzle.families import builders as B
+    from brixzle.families.ab.family import FAMILY as AB
+    from brixzle.families.ab.params import V0
 
-    assert _png(RD.module_png(FAMILY, FAMILY.defaults, tmp_path / "module.png"))
+    panels = RD.ortho_panels(AB, V0)
+    assert [(q["part"], q["view"]) for q in panels] == [(part, v) for part in ("A", "B")
+                                                        for v in ("front", "side", "top")]
+    assert [q["axes"] for q in panels[:3]] == [("x", "z"), ("y", "z"), ("x", "y")]
+    lo, hi = B.sim_bodies(AB, V0, "A").mesh.bounds
+    idx = {"x": 0, "y": 1, "z": 2}
+    for q in panels[:3]:
+        for k, a in enumerate(q["axes"]):
+            assert q["extent"][k] == pytest.approx((lo[idx[a]], hi[idx[a]]), abs=1e-6)
+    assert _png(RD.module_png(AB, V0, tmp_path / "module.png"))
 
 
 def test_progress_marks_kept_and_rejected_designs(tmp_path):
