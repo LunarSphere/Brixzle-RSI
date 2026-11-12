@@ -9,7 +9,7 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
 | `src/brixzle/agents/design.py`, `check_family.py` | Design agent (issue #18): its prompt and tools, the per-attempt package outside `src/`, and the contract-and-rules check it calls as a tool (run in a separate process with a time limit) |
 | `src/brixzle/agents/wiring.py` | One tiny real call per agent, to prove credentials, model, spend and tools |
-| `src/brixzle/loop/` | The loop: `config.py` (the runtime model, set once) |
+| `src/brixzle/loop/` | The loop: `config.py` (`LoopConfig`: the runtime model, set once, the target, the budgets and stop rules) and `orchestrator.py` (issue #21: `python -m brixzle.loop`, intake to tuned family, with resume) |
 | `src/brixzle/loop/design_log.py` | Design log (issue #20): one JSON line per design attempt (contract failures, quick-check failures, kept and rejected designs, map overrides), and the text both agents read, without held-out results |
 | `src/brixzle/agents/critic.py` | Critic agent (issue #19): reads Z, the map, the jam analysis, the design log and the family's code, and writes a redesign brief that cites the design rules by id |
 | `src/brixzle/agents/runner.py` | The one place the loop calls Claude: the Agent SDK runner (credentials from `ANTHROPIC_API_KEY` or the `ant` profile), the spend ledger and its cap, the tool guard, and the scripted runner the tests use |
