@@ -404,7 +404,19 @@ def parser():
     return ap
 
 
+def _interrupt_on_sigterm():
+    """Turn SIGTERM into KeyboardInterrupt, so a stopped run unwinds and the Agent SDK closes its
+    Claude Code process (the first smoke run left one running after a kill, 2026-11-12)."""
+    import signal
+
+    def handler(_signum, _frame):
+        raise KeyboardInterrupt("SIGTERM")
+
+    signal.signal(signal.SIGTERM, handler)
+
+
 def main(argv=None):
+    _interrupt_on_sigterm()
     args = parser().parse_args(argv)
     if not (args.intake or args.resume):
         raise SystemExit("give --intake (a new run) or --resume RUN")
