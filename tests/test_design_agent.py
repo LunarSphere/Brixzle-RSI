@@ -6,6 +6,7 @@ sim can import it. Sim results are simulated, uncalibrated contact.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -121,3 +122,26 @@ def test_the_check_drops_the_family_at_the_aim_on_each_course(tmp_path):
     assert [d["course"] for d in aim] == [0, 1]
     assert all(d["outcome"] == "seated" for d in aim), aim
     assert all(len(d["err_mm"]) == 3 for d in aim)
+
+
+def test_the_prompts_show_only_a_b_as_an_example_family(tmp_path):
+    """The agent copied the dummy wedge as its brick (smoke runs of #21), so the dummies are not
+    shown to it (issue #73)."""
+    ws = DA.Workspace.make(tmp_path / "a1", "rsi_x_i01_a9")
+    task = DA.task_prompt(ws, _intake(tmp_path))
+    for text in (DA.system_prompt(), task):
+        assert not re.search(r"\b(wedge|pyramid)\b", text, re.I), re.search(r".{60}\b(wedge|pyramid)\b.{60}", text, re.I)
+    assert "families/ab/family.py" in task
+
+
+def test_the_agent_cannot_read_the_dummy_families(tmp_path):
+    runner = RN.ScriptedRunner([write_wedge("readcheck")])
+    out = DA.design(runner, _intake(tmp_path), tmp_path / "a", "rsi_t_i01_a7")
+    call = runner.calls[0]
+    guard = RN.ToolGuard(call.write_root, tuple(call.read_roots), tuple(call.tools))
+    fam = REPO / "src" / "brixzle" / "families"
+    assert not guard.decide("Read", {"file_path": str(fam / "wedge" / "family.py")})[0]
+    assert not guard.decide("Read", {"file_path": str(fam / "pyramid" / "family.py")})[0]
+    for ok in (fam / "ab" / "family.py", fam / "interface.py", REPO / "docs" / "family-interface.md",
+               out.workspace.pkg / "family.py"):
+        assert guard.decide("Read", {"file_path": str(ok)})[0], ok

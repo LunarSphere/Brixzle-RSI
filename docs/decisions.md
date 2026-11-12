@@ -310,3 +310,11 @@ The maintainer set the loop's order, acceptance rule and stop rule on 2026-11-12
   - **Run 1** (`runs/loop/smoke-20261112-mean/`) was stopped by hand during iteration 1. The design agent copied the dummy `wedge`, which never seated in the sim (#70). Two design calls ($0.0738 and $0.0917) and a third that was killed (about $0.098, estimated from its transcript; it was charged to the ledger by hand). A Claude Code process survived the kill, so the loop now turns SIGTERM into an interrupt that unwinds the SDK.
   - **Run 2** (`runs/loop/smoke2-20261112-mean/`, after #70) passed in one iteration. The design agent wrote `zigzag_chevron` in one call ($0.0848, 8 turns). It seated 40 of 40 in the quick check and scored Z mean +1.000 (178 drops), p95 +0.901 (fell 44) and worst +0.646 (fell 220), with held-out Z +1.000 at μ 0.2 and 0.5 (simulated, uncalibrated contact). The loop stopped on Z = 1 without calling the critic. The end tune found nothing better (`runs/tune-20261112T220148160314Z-zigzag_chevron-mean/`). Run time was 1.0 min; renders are in `RSI_RESULTS/smoke2-20261112-mean/`.
   - **What the smoke run does not show:** design skill. The design is the dummy wedge with a 45° groove and wider bores, adapted rather than taken from the concept sketch, although the prompt says the examples are not designs to copy. The critic's real call was not exercised (Z was already 1).
+
+## #73 No dummy example for the design agent
+
+The maintainer decided on 2026-11-12 to remove the dummy `wedge` from the design agent's examples. In #21's smoke runs the agent copied it as its brick both times.
+
+- **A/B is the only example family the agent is shown,** and its prompt says not to copy A/B's shape.
+- **The agent's copy of `family-interface.md` drops the three sentences that name the dummies** (`design.interface_for_agent`). The doc itself is unchanged, because people still need to know the dummies exist.
+- **The agent can no longer read the dummy families.** Its read roots are now the docs, the engine, the rules, the family interface and its shared modules, and A/B, not the whole of `src/`. Without this, Glob would find the wedge again.
