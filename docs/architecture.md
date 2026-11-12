@@ -61,9 +61,7 @@ It runs once for each target box: the drone's mean, 95th-percentile and worst er
    - at two or more contacts, run a jam test, which asks whether friction can hold the part still.
 
    It repeats this across μ ≈ 0.2–0.5, and returns a predicted box and contact traces in seconds.
-2. **Tuner.** Gradient-free, in two stages:
-   - CMA-ES or random search on the predicted box, over thousands of candidates;
-   - then a short Py-BOBYQA run on the simulated box.
+2. **Tuner.** One short, gradient-free Py-BOBYQA run on the simulated box, at the end of the loop and not inside an iteration. See [End tune](#end-tune).
 3. **Sim verifier.** MuJoCo drops (and pickups) at the box's corners and faces, plus a few interior points. Bisection on the box's scale finds the largest box in which every trial succeeds. Every contact is logged.
 4. **Scorer and diagnoser.**
    - **Score:** the sim box scale for each target, where 1 or more passes. A target's overall score is the smallest over the tasks that were scored. By default that is placement alone (`tasks`, issue #46). With `--tasks placement pickup` it is the smaller of the two, and a failed clean-release check scores pickup 0.
@@ -127,6 +125,21 @@ The check is not the score. A design that seats every drop in the box always pas
 **Capture limits (issue #56).** A zone with no jam inside it can still be too narrow for the target box. So on each slice with an X axis, in the row through the aim, the first failing cell past each end of the green band is dropped again and reduced the same way. It is also dropped once at each friction coefficient, to show whether the edge moves with friction. The result is under `capture_limits`, one entry per slice, course and side.
 
 **Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
+
+### End tune
+
+`engine/tune.py` runs once, on the family the loop settled on (issue #14). The loop itself changes shapes, not numbers; this last step moves the numbers.
+
+- **Variables:** the parameters in the family's `bounds`, each scaled to 0–1 over its range. A caller can fix any of them, for example the cell size U when it was set at intake (R2).
+- **Objective:** the scorer's sim box scale for the run's target box, placement only. The untuned design is scored first, and no point is scored twice.
+- **Search:** Py-BOBYQA, which fits a model through n + 1 points for n parameters. It starts with a step of 10 % of each range and stops at 1 %.
+- **Budget:** 24 scored candidates and 7 minutes of search by default. A candidate is not started if it would run past the time cap. The search also stops once 4 scored candidates in a row, after the first probes, bring no gain.
+- **First probes together:** the search begins by stepping each parameter once. Those candidates are scored side by side in 6 processes, and the search then reuses the results.
+- **Infeasible candidates:** one that cannot be built, or that breaks a rule margin (R6, R9, R10, R13 or the family's own), is not simulated and can never be the result.
+- **Held-out check:** a tuned design that scores higher is scored again, with the untuned one, on the next seed's interior points at friction 0.2 and 0.5. The search itself runs at the trial's default friction. The tuned design is accepted only if neither score got worse; otherwise the untuned design is kept.
+- **One target:** the tune raises the score of the run's target box. It does not check the other two boxes, and on A/B it lowered the p95 score by one step while raising the mean (see `docs/decisions.md`, #14).
+- **Not used:** the analytic predictor. A first stage on the predictor (CMA-ES or random search) was planned and then dropped on 2026-11-11, so `Prismatic` and `Solid3D` families are tuned the same way.
+- **Output:** `runs/tune-<UTC>-<family>-<target>/tune.json`: every candidate with its score or the reason it was skipped, the untuned and tuned parameters, the held-out scores, why the search stopped, and the wall-clock of the search and the held-out check. Labelled "simulated, uncalibrated contact".
 
 ## Files
 
