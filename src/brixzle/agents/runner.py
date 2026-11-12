@@ -241,7 +241,14 @@ class ClaudeRunner:
     def run(self, call: AgentCall) -> AgentResult:
         self.ledger.reserve(call.max_budget_usd)
         env = credential_env(self.environ)
-        result = asyncio.run(self._run(call, env))
+        try:
+            result = asyncio.run(self._run(call, env))
+        except BaseException as e:
+            # What a failed call spent is unknown, so it is charged its whole budget.
+            self.ledger.record(call.name, self.model, AgentResult(cost_usd=None, is_error=True,
+                                                                  errors=[f"{type(e).__name__}: {e}"]),
+                               budget_usd=call.max_budget_usd)
+            raise
         self.ledger.record(call.name, self.model, result, budget_usd=call.max_budget_usd)
         check_source(result.api_key_source)
         return result

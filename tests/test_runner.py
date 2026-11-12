@@ -154,3 +154,17 @@ def test_a_tool_spec_answers_with_text_and_reports_its_errors():
     broken = RN.ToolSpec("t", "d", {}, lambda args: 1 / 0)
     out = broken.respond({})
     assert out["is_error"] and "ZeroDivisionError" in out["content"][0]["text"]
+
+
+def test_a_call_that_raises_is_still_charged_its_whole_budget(tmp_path, monkeypatch):
+    """If the SDK fails mid-call, what it spent is unknown, so the ledger assumes the worst."""
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", cap_usd=1.0)
+    runner = RN.ClaudeRunner("m", led, environ={"ANTHROPIC_API_KEY": "k"})
+
+    async def boom(call, env):
+        raise RuntimeError("connection lost")
+
+    monkeypatch.setattr(runner, "_run", boom)
+    with pytest.raises(RuntimeError, match="connection lost"):
+        runner.run(_call(max_budget_usd=0.3))
+    assert led.spent() == pytest.approx(0.3) and led.rows()[0]["is_error"] is True
