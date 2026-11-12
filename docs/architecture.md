@@ -133,11 +133,13 @@ The check is not the score. A design that seats every drop in the box always pas
 - **Variables:** the parameters in the family's `bounds`, each scaled to 0–1 over its range. A caller can fix any of them, for example the cell size U when it was set at intake (R2).
 - **Objective:** the scorer's sim box scale for the run's target box, placement only. The untuned design is scored first, and no point is scored twice.
 - **Search:** Py-BOBYQA, which fits a model through n + 1 points for n parameters. It starts with a step of 10 % of each range and stops at 1 %.
-- **Budget:** 24 scored candidates and 7 minutes of search by default. A candidate is not started if it would run past the time cap.
+- **Budget:** 24 scored candidates and 7 minutes of search by default. A candidate is not started if it would run past the time cap. The search also stops once 4 scored candidates in a row, after the first probes, bring no gain.
+- **First probes together:** the search begins by stepping each parameter once. Those candidates are scored side by side in 6 processes, and the search then reuses the results.
 - **Infeasible candidates:** one that cannot be built, or that breaks a rule margin (R6, R9, R10, R13 or the family's own), is not simulated and can never be the result.
 - **Held-out check:** a tuned design that scores higher is scored again, with the untuned one, on the next seed's interior points at friction 0.2 and 0.5. The search itself runs at the trial's default friction. The tuned design is accepted only if neither score got worse; otherwise the untuned design is kept.
+- **One target:** the tune raises the score of the run's target box. It does not check the other two boxes, and on A/B it lowered the p95 score by one step while raising the mean (see `docs/decisions.md`, #14).
 - **Not used:** the analytic predictor. A first stage on the predictor (CMA-ES or random search) was planned and then dropped on 2026-11-11, so `Prismatic` and `Solid3D` families are tuned the same way.
-- **Output:** `runs/tune-<UTC>-<family>-<target>/tune.json`: every candidate with its score or the reason it was skipped, the untuned and tuned parameters, the held-out scores, and the wall-clock of the search and the held-out check. Labelled "simulated, uncalibrated contact".
+- **Output:** `runs/tune-<UTC>-<family>-<target>/tune.json`: every candidate with its score or the reason it was skipped, the untuned and tuned parameters, the held-out scores, why the search stopped, and the wall-clock of the search and the held-out check. Labelled "simulated, uncalibrated contact".
 
 ## Files
 
