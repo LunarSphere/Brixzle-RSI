@@ -46,6 +46,8 @@ A/B gives four: its two 2.6 mm bores and its two big lightening windows.
 
 ## Two ways to describe the geometry
 
+**Prismatic by default** (maintainer, 2026-11-06, on #18). The design agent writes `Prismatic` families. A `Solid3D` family is allowed only when a needed feature cannot be prismatic, and the agent must say which feature and why (`solid3d_reason` in its `design_note.json`, which the design log records). The reason: the analytic predictor steps one XZ slice at y = 0, so it is only sound when the contact geometry is uniform along Y. Mirror symmetry is not enough.
+
 **`Prismatic(section, extrusion)`** is for 2.5D bricks: an XZ profile swept through Y.
 - `section(p, part)` returns a `Section(outer, holes, guide_faces)`, built from shapely polygons in XZ. The holes are lightening holes, not the round grip bores.
 - `extrusion(p)` returns an `Extrusion(depth_mm, bands)`. With no bands it's a straight extrusion. Bands of the form `(y0, y1, z_shift_y0, z_shift_y1)` shear the profile, for example to make a V gutter across Y.
@@ -111,4 +113,4 @@ Each violation says which check failed, where (for example `defaults, part A`) a
 - **The gripper:** which gripper holds which grip feature is decided after the brick is settled (issue #24). Until then nothing checks that a feature can really be held; R10 only asks that one exists.
 - **The fixed fork:** the pickup trial (`engine/sim/pickup.py`) and its predictor still assume today's fork. They read the bores and openings among a family's grip features, and they don't apply to a family that has neither. The loop doesn't run them (issue #46).
 - **Soft contact:** `SimBodies.soft_collision` is not built or simulated yet, so A/B's snap barbs (`barb_h > 0`) are rejected.
-- **Running agent-written families safely** belongs to the design agent (#18).
+- **Agent-written families** live outside `src/`, in the loop's run directory, as a package `<root>/<module>/` imported by path (`agents/check_family.load_family`). The contract and the rules run in a separate process with a time limit before the loop imports a family itself, so a family that hangs or crashes the interpreter cannot stop the loop. The code still runs with the loop's own permissions: it is not sandboxed.
