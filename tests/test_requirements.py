@@ -100,6 +100,18 @@ def test_check_kinds_are_the_four_agreed_kinds():
     assert CHECK_KINDS == frozenset({"rule", "sim", "design", "predictor"})
 
 
+# --- R10 grippable (issue #50) ---
+
+
+def test_r10_is_grippable_and_names_no_gripper():
+    r10 = {r.id: r for r in load_requirements()}["R10"]
+    assert r10.name == "Grippable" and r10.checks == ("rule",)
+    assert "at least one feature a non-actuated gripper could hold" in r10.text
+    # The maintainer's wording (2026-11-11): the limit is on the brick and the gripper together.
+    assert "The combined mass of the brick and the gripper must not be more than 35 g" in r10.text
+    assert "fork" not in r10.text.lower()
+
+
 # --- Deferred requirements (issue #46) ---
 
 

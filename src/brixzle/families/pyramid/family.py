@@ -12,7 +12,7 @@ import cadquery as cq
 import numpy as np
 
 from brixzle.families.interface import (
-    Bore, Family, FamilyParams, Lattice, Placement, PickupFeatures, Solid3D,
+    Family, FamilyParams, Lattice, Placement, Solid3D, bore,
 )
 
 BASE_THICKNESS_MM = 6.0
@@ -26,8 +26,8 @@ class PyramidParams(FamilyParams):
     peg_base_half: float = 8.0   # frustum half-width at its base
     peg_top_half: float = 1.0    # frustum half-width at its top
     peg_h: float = 6.0           # frustum height
-    bore_d: float = 2.0          # fork tine diameter (fixed fork)
-    bore_clearance: float = 0.3  # radial clearance around each tine
+    bore_d: float = 2.0          # bore diameter before clearance
+    bore_clearance: float = 0.3  # extra radius on each bore
     bore_x_frac: float = 0.6     # bore |x| as a fraction of U/2
     bore_z_frac: float = 0.75    # bore height as a fraction of H0
 
@@ -75,8 +75,7 @@ def _frustum_vertices(p, x, z0):
 
 def pickup(p: PyramidParams, part):
     x = p.bore_x_frac * p.U / 2
-    return PickupFeatures(bores=tuple(Bore(x_mm=s * x, z_mm=p.bore_z_frac * p.H0, d_mm=p.bore_d,
-                                           clearance_mm=p.bore_clearance) for s in (-1, 1)))
+    return tuple(bore(s * x, p.bore_z_frac * p.H0, p.bore_d + 2 * p.bore_clearance) for s in (-1, 1))
 
 
 def lattice(p: PyramidParams):

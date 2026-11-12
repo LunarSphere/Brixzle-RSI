@@ -125,3 +125,28 @@ Numbers are from `runs/map-20261111T201408241278Z-ab-mean/jam_analysis.json`, A/
   There is then no band to have edges.
 - **The X–Z and X–θ slices both report their limits, even where they nearly coincide.**
   Their rows through the aim differ only in release height (5 mm against 3.1 mm on A/B's mean box). Reporting both keeps the rule simple, and it costs eight drops.
+
+## #50 R10 grippable
+
+The maintainer reviewed the R10 wording on 2026-11-11 and changed the mass sentence: the combined mass of the brick and the gripper must not be more than 35 g. The rest of the text in `docs/requirements.md` and `docs/requirements.yaml` is as the issue proposed it.
+
+- **`pickup(p, part)` keeps its name and returns a tuple of `GripFeature(kind, x_mm, z_mm, size_mm, outline=None)`.**
+  The issue asks for "a list of generic grip features (type, position, size)". `Bore` and `PickupFeatures` are gone. Keeping the field name avoids touching every family and the `Family` contract for no gain.
+- **`kind` is free text, with one reserved meaning: `"bore"`.**
+  A bore is a round hole straight through Y that the builders cut, as before. Every other kind is already in the family's geometry. A fixed list of kinds would stop the design agent from offering a feature nobody thought of, which is the point of dropping the fork.
+- **A bore carries its hole diameter, not a tine diameter and a clearance.**
+  Those two belong to a gripper. A/B's bores are still 2.6 mm (`fork_d + 2 * fork_clearance`), so its solid, mass and collision are unchanged.
+- **The loop's R10 rules are `R10.grippable` (features − 1) and `R10.within_payload` (35 g − brick mass − gripper allowance).**
+  They state the first two sentences of the wording as margins. The contract also fails a family with no grip feature.
+- **The gripper counts as 5 g until it is designed (`RuleSettings.gripper_allowance`).**
+  R10 limits the brick and the gripper together, but the gripper comes after the brick (#24). The 5 g is a guess, not a measurement: the fork model in `engine/sim/fork.py` gives 3.3 g (pyramid), 4.1 g (A/B) and 4.6 g (wedge) at each family's defaults (predicted from its PLA box model, computed in this session, not weighed), rounded up. #24 replaces it with the real gripper's mass.
+- **R9 is still the tighter mass rule.**
+  R9 caps a brick at 25 g, which leaves 10 g of the payload for the gripper. So `R10.within_payload` can only fail if the allowance is set above 10 g. It is kept as its own margin because R10 states the limit.
+- **The fork checks moved to `rules.fork_margins`, with the tine diameter as an argument.**
+  `R10.hangs_stable` and `R10.tines_straddle_com` keep their formulas and still match the aerial-assembly reference for A/B. Nothing in the loop calls them.
+- **The contract no longer asks whether a straight 2 mm tine clears each opening.**
+  That check assumed the fork. It lives on in `engine/predictor/pickup.py` (`geometry`), which the pickup trial uses.
+- **A feature with no outline is checked against the brick's bounding extent, not its outline.**
+  A lip sits on the outline's edge, so "inside the outline" would reject it. The extent check still catches a feature placed off the brick.
+- **A/B's own `R10.fork_fits` stays in its `extra_rules`.**
+  It only says that A/B found room for its two bores, which are its grip features.

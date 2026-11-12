@@ -19,7 +19,7 @@ Each requirement is checked one of three ways:
 | R7 | **Alternating angles.** Alternating the lean between courses may improve stability. | Design: alternating parts by course |
 | R8 | **Stiffness.** I-beam-like sections may be used to stop the brick from flexing. The first course sits on a stable base. | Design: rib frame, anchored base |
 | R9 | **Mass.** A brick must weigh between 1 g and 25 g in PLA; lighter is preferred. | Rule: mass window |
-| R10 | **Passive pickup.** A non-actuated gripper must be able to pick up the brick; the drone's payload limit is 35 g, leaving headroom for the battery. | Rules: gripper fit, hangs level, straddles the centre of mass |
+| R10 | **Grippable.** Each brick offers at least one feature a non-actuated gripper could hold, such as a bore, slot or lip. The combined mass of the brick and the gripper must not be more than 35 g, the drone's payload limit. Which gripper uses the feature is decided after the brick design is settled. | Rules: at least one grip feature, brick plus gripper within the payload |
 | R11 | **Coarse drop.** Bricks are dropped coarsely and slide into place on the ramps. | Analytic predictor and sim: placement box score |
 | R12 | **Coarse pickup.** The drone picks the brick up imprecisely, with the same kind of positioning error it has when placing. The passive gripper must still engage, and the brick must self-centre on it. See [R12 in detail](#r12-in-detail). | Analytic predictor and sim: pickup box score |
 | R13 | **Printable.** A brick must print as one piece in PLA, with walls of at least 1.2 mm. | Rules: single piece, minimum wall |
@@ -67,6 +67,8 @@ The angle column is θ (pitch) for placement and ψ (yaw) for pickup.
 ## R12 in detail
 
 **Deferred (issue #46).** This section describes the pickup trial as it is built, with the fixed fork. The loop does not score it for now. It comes back, and may change, when the gripper is designed for the chosen brick (issue #24).
+
+Until then a brick only has to be grippable (R10, issue #50): it does not need bores or openings sized for this fork.
 
 Today's pickup (aerial-assembly `brixzle`) works like this:
 

@@ -19,7 +19,7 @@ from shapely.geometry import Point, Polygon
 
 from brixzle.families import builders as B
 from brixzle.families import rules as R
-from brixzle.families.interface import Family, Placement, Prismatic
+from brixzle.families.interface import BORE, Family, GripFeature, Placement, Prismatic
 from brixzle.requirements import load_requirements
 
 TOUCH_MM = 0.5         # half the 1 mm seat tolerance: closer than this counts as touching, not overlap
@@ -260,26 +260,36 @@ def _check_rules(family, p, part):
 
 
 def _check_pickup(family, p, part):
+    """R10 grippable (issue #50): at least one grip feature, each one on the brick. No gripper is
+    assumed, so nothing here checks a fork; see rules.fork_margins and the pickup predictor."""
     feats = family.pickup(p, part)
-    bores, openings = feats.bores, feats.openings
-    _require(len(bores) + len(openings) >= 1, "pickup needs at least one opening (or bore) for the fork")
+    _require(isinstance(feats, (tuple, list)), "pickup must return a tuple of GripFeature")
+    _require(len(feats) >= 1, "R10: the brick needs at least one grip feature a passive gripper could hold "
+                              "(a bore, slot, lip or opening); pickup returned none")
     s = B.section(family, p, part)
-    for i, o in enumerate(openings):
-        _require(isinstance(o, Polygon) and o.is_valid and o.area > 0, f"opening {i} must be a valid polygon")
-        _require(s.outer.buffer(1e-6).contains(o), f"opening {i} breaks out of the section outline")
-    if openings and isinstance(family.geometry, Prismatic):
-        from brixzle.engine.predictor import pickup as PP  # the straight tine through the whole depth
-
-        try:
-            PP.geometry(family, p)
-        except ValueError as e:
-            _require(False, f"pickup openings: {e}")
-    # Wall thickness around a bore is a margin (R13.bore_wall); here only broken geometry fails.
-    for i, b in enumerate(bores):
-        _require(B.math_finite(b.x_mm, b.z_mm, b.d_mm, b.clearance_mm) and b.d_mm > 0 and b.clearance_mm >= 0,
-                 f"bore {i} must have finite position, d > 0 and clearance >= 0")
-        circle = Point(b.x_mm, b.z_mm).buffer(b.radius_mm)
-        _require(s.outer.contains(circle),
-                 f"bore {i} at ({b.x_mm:.2f}, {b.z_mm:.2f}) breaks out of the section outline")
-        for j, h in enumerate(s.holes):
-            _require(circle.disjoint(h), f"bore {i} breaks into hole {j}")
+    x0, z0, x1, z1 = s.outer.bounds
+    for i, f in enumerate(feats):
+        _require(isinstance(f, GripFeature), f"grip feature {i} must be a GripFeature, got {type(f).__name__}")
+        name = f"grip feature {i} ({f.kind!r})"
+        _require(isinstance(f.kind, str) and f.kind.strip(), f"grip feature {i} needs a kind, such as 'bore' or 'lip'")
+        _require(np.shape(f.size_mm) == (2,) and B.math_finite(f.x_mm, f.z_mm, f.size_mm) and min(f.size_mm) > 0,
+                 f"{name} must have a finite position and a size (x, z) > 0")
+        if f.kind == BORE:
+            # The builders cut this one. Wall thickness around it is a margin (R13.bore_wall);
+            # here only broken geometry fails.
+            circle = Point(f.x_mm, f.z_mm).buffer(f.radius_mm)
+            _require(s.outer.contains(circle),
+                     f"{name} at ({f.x_mm:.2f}, {f.z_mm:.2f}) breaks out of the section outline")
+            for j, h in enumerate(s.holes):
+                _require(circle.disjoint(h), f"{name} breaks into hole {j}")
+        elif f.outline is not None:
+            o = f.outline
+            _require(isinstance(o, Polygon) and o.is_valid and o.area > 0, f"{name}: outline must be a valid polygon")
+            _require(s.outer.buffer(1e-6).contains(o), f"{name} breaks out of the section outline")
+        else:
+            # Only a position and a size: its box must sit within the brick's extent.
+            hx, hz = f.size_mm[0] / 2, f.size_mm[1] / 2
+            inside = (x0 - 1e-6 <= f.x_mm - hx and f.x_mm + hx <= x1 + 1e-6
+                      and z0 - 1e-6 <= f.z_mm - hz and f.z_mm + hz <= z1 + 1e-6)
+            _require(inside, f"{name} at ({f.x_mm:.2f}, {f.z_mm:.2f}) breaks out of the brick's extent "
+                             f"(x {x0:.2f} to {x1:.2f}, z {z0:.2f} to {z1:.2f})")

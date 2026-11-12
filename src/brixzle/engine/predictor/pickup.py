@@ -36,7 +36,7 @@ from shapely.geometry.polygon import orient
 
 from brixzle.engine import box_search as BS
 from brixzle.engine.sim.fork import ForkParams
-from brixzle.families.interface import Placement, Prismatic
+from brixzle.families.interface import Placement, Prismatic, grip_openings
 
 LABEL = "predicted, quasi-static 2D"
 MUS = (0.2, 0.3, 0.4, 0.5)
@@ -142,7 +142,7 @@ def geometry(family, p, fork=None):
     if not isinstance(g, Prismatic):
         raise NotImplementedError("the opening pickup predictor needs a Prismatic family")
     part = family.part_for(SEAT.course, SEAT.direction)
-    openings = tuple(family.pickup(p, part).openings)
+    openings = grip_openings(family.pickup(p, part))
     if not openings:
         raise ValueError(f"family {family.name!r} gives no pickup openings")
     bands = tuple(g.extrusion(p).resolved_bands())

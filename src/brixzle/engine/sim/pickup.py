@@ -45,7 +45,7 @@ from brixzle.engine.sim.scene import MM, _numbers, activate, body_pose, build_sc
 from brixzle.engine.sim.trials import TrialConfig, _brick_geoms, _contact_name, _trace_rows
 from brixzle.families import builders as B
 from brixzle.families.convex import convex_parts
-from brixzle.families.interface import Placement, Prismatic
+from brixzle.families.interface import Placement, Prismatic, grip_bores, grip_openings
 
 SEAT = Placement(0, 1)   # the waiting brick: course 0 at voxel 1, as in the drop trial
 BASE_VOXELS = 4
@@ -127,8 +127,8 @@ def _bore_hole(b, z_a, z_b):
 
 
 def bored_collision(family, p, part, sub_bands=3):
-    """Convex pieces (mm, brick frame) of the brick with its straight fork bores and its fork
-    openings (PickupFeatures.openings, which sweep with the section) open.
+    """Convex pieces (mm, brick frame) of the brick with its straight bores and its through-Y
+    openings (the grip features of those kinds; openings sweep with the section) open.
 
     The engine's usual collision covers the unbored outline (builders). A sheared band moves the
     section in z along y while the bore stays straight, so each sheared band is cut into
@@ -138,7 +138,7 @@ def bored_collision(family, p, part, sub_bands=3):
     _require_prismatic(family)
     outer = family.geometry.section(p, part).outer
     feats = family.pickup(p, part)
-    bores, openings = feats.bores, feats.openings
+    bores, openings = grip_bores(feats), grip_openings(feats)
     # Openings are part of the section, so they shear with each band's prism: cut them as they are.
     outer = outer.difference(unary_union(openings)) if openings else outer
     x0, _, x1, _ = outer.bounds
@@ -210,7 +210,7 @@ class PickRig:
         plain = (bodies or {}).get(part) or B.sim_bodies(family, p, part)
         self.brick = replace(plain, collision=bored_collision(family, p, part, cfg.sub_bands))
         feats = family.pickup(p, part)
-        self.openings = feats.openings
+        self.openings = grip_openings(feats)
         if self.openings:  # through the openings (issue #12): the fork fitted to their seats
             from brixzle.engine.predictor import pickup as PP  # not at module level: PP imports box_search
 
@@ -245,7 +245,7 @@ class PickRig:
         w = 2*math.pi*g.att_hz
         self.k_att, self.c_att = I*w*w, 2*g.att_damping*I*w
         self.kp, self.kd = np.asarray(g.kp), np.asarray(g.kd)
-        self.bores = feats.bores
+        self.bores = grip_bores(feats)
         if self.openings:  # aim the fork at the centre of the region where every tine clears
             self.aim_dx, self.aim_low = float(self.geo["aim"][0]), -float(self.geo["aim"][1])
         else:
