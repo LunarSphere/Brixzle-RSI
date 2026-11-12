@@ -184,3 +184,11 @@ def test_every_tool_call_goes_through_the_guard_as_a_pre_tool_use_hook(tmp_path)
     read = RN.hook_decision(guard, {"tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}})
     assert read["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert RN.hook_decision(guard, {"tool_name": "Read", "tool_input": {"file_path": str(tmp_path / "repo" / "a")}}) == {}
+
+
+def test_the_sdks_own_structured_output_tool_is_never_blocked(tmp_path):
+    """A structured answer comes back through Claude Code's StructuredOutput tool; the critic's
+    wiring check found the guard refusing it (2026-11-12)."""
+    guard = RN.ToolGuard(write_root=None, read_roots=(), tools=())
+    assert guard.decide("StructuredOutput", {"decision": "stop"})[0]
+    assert RN.hook_decision(guard, {"tool_name": "StructuredOutput", "tool_input": {}}) == {}
