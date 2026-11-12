@@ -24,8 +24,7 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/families/interface.py`, `builders.py`, `rules.py`, `contract.py`, `registry.py` | The family contract, shared builders (solid, collision, mass, base), shared R6/R9/R10 rules, contract checks, and family discovery |
 | `src/brixzle/families/wedge/`, `pyramid/` | Dummy families for the contract tests: one Prismatic (2.5D), one Solid3D (full 3D) |
 | `src/brixzle/families/ab/` | The A/B baseline family ported from aerial-assembly: parameters and bounds, profile, lattice seats, rules, and `family.py` (the interface) |
-| `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and the papers they cite |
-| `src/brixzle/rules/papers/` | The papers (PDFs) behind the rules and the predictor, indexed with citations and takeaways in `README.md` |
+| `src/brixzle/rules/` | Design rules corpus (issue #16): distilled rules (`design_rules.md`), each citing its sources by key, and the citation list with links (`citations.md`); `__init__.py` parses both for the critic. No PDFs: the repo is public |
 | `src/brixzle/data/` | Drone error files: measured X–Y error (`error-exp3-r4.json`) and hover estimates (`hover-exp3-r2.json`) |
 | `scripts/` | One-off data generators, e.g. `make_hover_estimates.py` (Z, pitch and yaw estimates from aerial-assembly's Exp 3 logs) |
 | `tests/` | pytest suite (`uv run pytest`) |

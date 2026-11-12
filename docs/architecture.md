@@ -156,7 +156,7 @@ The check is not the score. A design that seats every drop in the box always pas
 | Path | Written by | Read by |
 |---|---|---|
 | `docs/requirements.md` (later a data file) | people | design agent |
-| `src/brixzle/rules/design_rules.md`, `src/brixzle/rules/papers/` | people, with Claude's help | critic agent |
+| `src/brixzle/rules/design_rules.md`, `src/brixzle/rules/citations.md` | people, with Claude's help | critic agent |
 | `src/brixzle/data/error-*.json` | copied from aerial-assembly | evaluation engine |
 | `src/brixzle/families/<name>/` | design agent | evaluation engine |
 | `runs/loop/<run>/iter-N/` | orchestrator and engine | critic agent (with the design log) |
