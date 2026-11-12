@@ -281,3 +281,13 @@ The maintainer added `RSI_RESULTS/` to this issue on 2026-11-12 (comment on #15)
 - **`summary.md` includes held-out Z.** It is for people. The critic reads the design log, never `RSI_RESULTS/`, so it still never sees held-out results.
 - **matplotlib is a dependency.** Renders run in every loop iteration, and the tests draw them.
 - **`RSI_RESULTS/` is git-ignored,** like `runs/`. Figures for the repo go through #25.
+
+## #70 Seats in the contract and the drop trial
+
+Found by the first smoke run of #21. The design agent copied the dummy `wedge` as its template, and every design seated 0 of 9 in the quick check (`runs/check-20261112T213715471022Z-zigzag_chevron-mean/`; simulated, uncalibrated contact).
+
+- **Cause: the contract and the drop trial used different seats.** The contract placed course 0 at `Placement(0, 0)` (centre U). The drop trial uses `Placement(0, 1)` (centre 2U) on a 4-voxel base. A/B's base repeats every voxel, so it fit both. The wedge's repeats every two voxels, and it was written to the contract's convention, so in the sim every brick landed a voxel off (wrong valley, error 25 mm = U).
+- **The contract now uses the drop trial's placements,** not the other way round. Voxel 1 leaves base on both sides of the brick for drops that land off-centre; voxel 0 would put the brick at the base's left end.
+- **The wedge's base now puts its grooves at even multiples of U.** It seats at the aim on both courses (`tests/test_wedge_seats.py`), and 40 of 40 in the quick check on the mean box (seed 0; simulated, uncalibrated contact). It is still a contract dummy, not a design.
+- **`check_family` drops the brick once at the aim on each course** and reports the outcome, the rest error and the tilt (`aim_drops`). The prompt tells the agent to make both seat before anything else. Each drop takes about a second, so a brick that cannot sit in its own seat is caught in the agent's loop, not after a quick check and a new call.
+- **The aim drops are reported, not required for `ok`.** The quick check stays the gate, and a design that seats at the aim but nowhere else still has to pass it.

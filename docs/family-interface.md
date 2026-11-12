@@ -34,6 +34,15 @@ To mark a design as infeasible, for example a profile that can't be built, a fam
 | `pickup(p, part)` | The part's **grip features** (R10 grippable, issue #50): a tuple of `GripFeature(kind, x_mm, z_mm, size_mm, outline=None)`, with at least one. A grip feature is anything a non-actuated gripper could hold. The gripper is designed after the brick (issue #24), so a feature says only what it is, where its centre is in the section frame, and its extent in X and Z. See [Grip features](#grip-features). |
 | `extra_rules(p, part, bodies)` | Optional. Family-specific margins `{"R<n>.<name>": value}`, where a value ≥ 0 means satisfied. |
 
+## Where a brick seats in the checks and the sim
+
+The contract and the drop trial (`engine/sim/trials.py`) use the same placements (issue #70):
+
+- **Course 0** is `Placement(0, 1)`: start voxel 1, so a two-voxel brick is centred at x = 2U. It sits on a base covering voxels 0 to 4 (`base(p, 4, 1)`, x = 0 at voxel 0's left edge).
+- **Course 1** is `Placement(1, 1)`, on top of that brick. The contract also places a neighbour at `Placement(0, 1 + span_voxels)`.
+
+So the base must receive a brick centred at x = 2U. A base whose pattern repeats every two voxels has to put its seat at 2U, 4U and so on. The dummy `wedge` used to put it one voxel over, and never seated.
+
 ## Grip features
 
 R10 asks for at least one feature a non-actuated gripper could hold. It does not say which gripper, so don't size a feature for a fork or any other tool.

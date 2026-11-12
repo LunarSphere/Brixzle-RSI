@@ -95,14 +95,18 @@ def release_lift_mm(p: WedgeParams):
 
 
 def base(p: WedgeParams, voxels, direction):
-    """A slab whose top is the ridge profile repeated per brick, in the base frame (x = 0 at voxel 0)."""
+    """A slab whose top is a row of V-grooves, in the base frame (x = 0 at voxel 0).
+
+    A seated brick at Placement(0, i0) is centred at x = (i0 + 1) U (``seat_pose``), and the drop
+    trial uses i0 = 1, so the grooves' bottoms sit at even multiples of U (0, 2U, 4U ...) and
+    their crests at odd ones. Issue #70: they used to be one voxel over, so no wedge ever seated."""
     if voxels % 2:
         raise ValueError("a wedge base must cover an even number of voxels")
     h = _rise(p)
-    top = [(0.0, h)]
+    top = [(0.0, 0.0)]
     for k in range(voxels // 2):
         x0 = 2 * k * p.U
-        top += [(x0 + p.U, 0.0), (x0 + 2 * p.U, h)]
+        top += [(x0 + p.U, h), (x0 + 2 * p.U, 0.0)]
     outer = Polygon(top + [(voxels * p.U, -BASE_THICKNESS_MM), (0.0, -BASE_THICKNESS_MM)])
     return Section(outer=outer)
 
