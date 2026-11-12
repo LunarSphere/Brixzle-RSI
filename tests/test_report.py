@@ -14,6 +14,8 @@ from brixzle.engine import boxes as BX
 from brixzle.engine import report as R
 from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import V0
+from brixzle.families.pyramid.family import FAMILY as PYRAMID
+from brixzle.families.wedge.family import FAMILY as WEDGE
 
 
 # --- synthetic results ---
@@ -321,6 +323,7 @@ def test_score_family_writes_a_valid_report_with_its_full_results(scored):
         assert (out / rel).is_file()
     assert all(f["contacts"] for f in rep["failures"] if f["category"] != "release")
     assert {"predict", "cross_check", "total"} <= set(rep["timing"])
+    assert rep["predictor"] == {"used": True, "reason": None}  # A/B is Prismatic: nothing is skipped
 
 
 def test_placement_only_scoring_runs_no_pickup_stage(scored):
@@ -341,3 +344,96 @@ def test_placement_only_scoring_runs_no_pickup_stage(scored):
 def test_run_directories_are_never_reused(tmp_path):
     a, b = R.new_run_dir(tmp_path, "ab"), R.new_run_dir(tmp_path, "ab")
     assert a != b and a.is_dir() and b.is_dir()
+
+
+# --- sim-only reports for Solid3D families (issue #51) ---
+
+
+def _sim_only_report():
+    sims = {("placement", "mean"): _sim("placement", "mean", 0.5, {"0": [_drop(1.0, 0, "jammed")]},
+                                        evals=[(1.0, False), (0.0, True), (0.5, True)])}
+    return R.build_report(PYRAMID, PYRAMID.defaults, sims, None, release=None, checks=[], timing={"total": 1.0},
+                          files={}, seed=0, tasks=("placement",), predictor_reason=R.predictor_skip_reason(PYRAMID))
+
+
+def test_only_solid3d_families_skip_the_predictor():
+    assert R.predictor_skip_reason(AB) is None and R.predictor_skip_reason(WEDGE) is None
+    assert "Solid3D" in R.predictor_skip_reason(PYRAMID)
+
+
+def test_a_report_with_predictor_results_says_so():
+    assert _report()["predictor"] == {"used": True, "reason": None}
+
+
+def test_a_sim_only_report_says_why_and_holds_no_predictor_results():
+    rep = _sim_only_report()
+    R.validate_report(rep)
+    json.dumps(rep, allow_nan=False)
+    assert rep["predictor"] == {"used": False, "reason": R.predictor_skip_reason(PYRAMID)}
+    target = rep["targets"]["mean"]["placement"]
+    assert set(target) == {"box", "sim"} and target["sim"]["scale"] == 0.5
+    assert rep["score"]["mean"] == {"placement": 0.5, "overall": 0.5}
+    assert rep["failure_counts"]["mean"]["placement"] == {"jam": 1} and len(rep["failures"]) == 1
+    assert rep["labels"] == {"sim": "simulated, uncalibrated contact"}
+    assert rep["disagreements"] == [] and rep["disagreement_counts"] == {} and rep["class_mismatches"] == {}
+    assert any("predictor was skipped" in f for f in rep["flags"])
+    assert not any("failure class is not trusted" in f for f in rep["flags"])  # there is no predicted class
+
+
+def test_a_report_without_predictor_results_needs_a_reason():
+    sims = {("placement", "mean"): _sim("placement", "mean", 1.0, {"0": [_drop(1.0, 0, "seated")]})}
+    with pytest.raises(ValueError, match="why"):
+        R.build_report(PYRAMID, PYRAMID.defaults, sims, None, release=None, checks=[], timing={"total": 1.0},
+                       files={}, seed=0, tasks=("placement",))
+
+
+@pytest.mark.parametrize("break_it", [
+    lambda r: r.pop("predictor"),
+    lambda r: r["predictor"].__setitem__("reason", None),
+    lambda r: r["predictor"].__setitem__("used", True),  # claims predictor results it does not hold
+    lambda r: r["targets"]["mean"]["placement"].__setitem__("pred", {"scale": 1.0, "passed": True}),
+    lambda r: r["disagreements"].append({"kind": "optimistic"}),
+    lambda r: r["labels"].__setitem__("pred", "predicted, quasi-static 2D"),
+])
+def test_schema_rejects_a_broken_sim_only_report(break_it):
+    rep = _sim_only_report()
+    break_it(rep)
+    with pytest.raises(ValueError):
+        R.validate_report(rep)
+
+
+def test_schema_rejects_a_predictor_report_marked_sim_only():
+    rep = _report()
+    rep["predictor"] = {"used": False, "reason": "none given"}
+    with pytest.raises(ValueError):
+        R.validate_report(rep)
+
+
+def test_the_summary_of_a_sim_only_report_names_no_prediction():
+    text = R.summary(_sim_only_report())
+    assert "sim only" in text and "the analytic predictor was skipped" in text
+    assert "  pred " not in text and "disagreements" not in text  # no predicted column, no cross-check line
+
+
+def test_score_family_gives_a_solid3d_family_a_sim_only_report(tmp_path):
+    """The dummy pyramid jams at the aim, so its box search is a few drops (simulated, uncalibrated contact)."""
+    out = R.score_family(PYRAMID, PYRAMID.defaults, statistics=("mean",), seed=0, tol=0.5, n_interior=0,
+                         workers=1, runs=tmp_path)
+    rep = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    R.validate_report(rep)
+    assert rep["family"] == "pyramid" and rep["predictor"]["used"] is False
+    assert rep["files"] == {"sim_placement_mean": "sim-placement-mean.json"}
+    assert {p.name for p in out.iterdir()} == {"report.json", "sim-placement-mean.json"}
+    assert not {"predict", "cross_check"} & set(rep["timing"])
+    assert rep["score"]["mean"]["overall"] == rep["targets"]["mean"]["placement"]["sim"]["scale"]
+
+
+def test_a_scoring_run_that_raises_leaves_no_run_directory(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("the sim broke")
+
+    monkeypatch.setattr(R.BS, "box_search", boom)
+    with pytest.raises(RuntimeError, match="the sim broke"):
+        R.score_family(PYRAMID, PYRAMID.defaults, statistics=("mean",), tol=0.5, n_interior=0, workers=1,
+                       runs=tmp_path)
+    assert list(tmp_path.iterdir()) == []

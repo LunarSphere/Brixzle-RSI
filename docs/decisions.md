@@ -69,6 +69,23 @@ The maintainer answered the issue's open question on 2026-11-11: bricks do not h
 - **R12's wording is unchanged.**
   Only its status changed. Its text and "R12 in detail" describe the pickup trial as built, and they will be revisited with the gripper (#24).
 
+## #51 Sim-only report for Solid3D families
+
+The section sits here, out of date order, so that it does not collide with sections other open PRs add elsewhere in the file.
+
+- **`report.json` gains `predictor: {used, reason}`, and the schema version goes from 2 to 3.**
+  Every report has the key, so a reader never has to infer a sim-only report from what is missing. A/B's report keeps every key and value it had; it gains `predictor: {"used": true, "reason": null}`.
+- **A sim-only report leaves the predictor's results out; it does not null them.**
+  A target holds `box` and `sim` only. `disagreements` is empty, `disagreement_counts` and `class_mismatches` are `{}`, and `labels` names the sim alone. This follows #46, where a task that was not scored is absent, not null.
+- **The predictor is skipped by geometry type, not by trying it.**
+  `predictor_skip_reason(family)` is set for any `Solid3D` family, including one that gives a `section`. The decision on #18 (2026-11-06) says those are scored by the sim only, and `docs/predictor-validation.md` says the predictor is only sound for `Prismatic` families.
+- **The flag about the predictor's failure class is dropped from a sim-only report.**
+  There is no predicted class to distrust. A flag naming the skip and its reason takes its place.
+- **A run that raises removes its run directory.**
+  Results are now written only after every stage has run (the release check used to be written early), so the directory is empty or holds partial files when something raises. It is this call's own new directory, so nothing earlier can be lost.
+- **Evidence.**
+  `uv run python -m brixzle.engine.report --family pyramid --seed 0` wrote `runs/report-20261112T012938315613Z-pyramid/`: the dummy pyramid scores 0 on all three boxes (jams at the aim; simulated, uncalibrated contact), in 12.1 s. It is a contract-test dummy, so the score says nothing about a design. The A/B report after the change is `runs/report-20261112T012959361342Z-ab/` (0.719, 0.375 and 0.281; 56.1 s). Against `runs/report-20261111T191022016036Z-ab/` from before it, only `predictor`, `schema_version` and `timing` differ.
+
 ## #47 Quick random check
 
 - **The poses come from one Latin hypercube in four dimensions: X, Z, θ and the course.**
