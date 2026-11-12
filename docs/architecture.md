@@ -46,6 +46,10 @@ Every Claude call goes through `agents/runner.py`:
 - **Tools:** each call lists the built-in tools it may use, and a guard refuses writes outside the call's own folder and reads outside its read roots. No settings files or CLAUDE.md are loaded.
 - **Tests** use a scripted runner. The Agent SDK is an optional extra (`uv sync --extra agents`), so CI never installs or imports it.
 
+## Design log
+
+`loop/design_log.py` (issue #20) keeps one JSON line per design attempt in `runs/loop/<run>/design_log.jsonl`. That covers a package that broke the contract, a design the quick check turned back (with its counts by outcome), and a design that was scored and kept or rejected (with Z per target and the reason). Map overrides are logged with their reasons. Each entry names the run directories behind its numbers. Both agents read it as short text, so neither repeats an idea that failed. That text never holds the held-out results.
+
 ## Agents (Claude Agent SDK)
 
 **Design agent** (`agents/design.py`, issue #18).
