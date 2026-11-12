@@ -113,12 +113,15 @@ def test_tools_that_are_not_listed_are_refused(tmp_path):
 
 
 def test_a_call_becomes_isolated_agent_sdk_options(tmp_path):
-    opts = RN.option_kwargs(_call(tools=("Read", "Write"), cwd=tmp_path, max_turns=7, max_budget_usd=0.6),
+    spec = RN.ToolSpec("check_family", "check it", {}, lambda args: "ok")
+    opts = RN.option_kwargs(_call(tools=("Read", "Write"), cwd=tmp_path, max_turns=7, max_budget_usd=0.6,
+                                  mcp_tools=(spec,)),
                             model="claude-sonnet-5-5", remaining_usd=0.4, env={"A": "b"})
     assert opts["model"] == "claude-sonnet-5-5" and opts["max_turns"] == 7
     assert opts["max_budget_usd"] == 0.4          # never more than the ledger has left
     assert opts["setting_sources"] == []          # no user or project settings, no CLAUDE.md
     assert opts["tools"] == ["Read", "Write"] and opts["cwd"] == str(tmp_path)
+    assert opts["allowed_tools"] == ["Read", "Write", "mcp__brixzle__check_family"]
     assert opts["env"] == {"A": "b"} and opts["system_prompt"] == "sys"
 
 
@@ -143,3 +146,11 @@ def test_a_scripted_step_can_act_like_the_agent(tmp_path):
 
     RN.ScriptedRunner([step]).run(_call(prompt="written"))
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "written"
+
+
+def test_a_tool_spec_answers_with_text_and_reports_its_errors():
+    spec = RN.ToolSpec("t", "d", {"x": "number"}, lambda args: f"got {args['x']}")
+    assert spec.respond({"x": 2}) == {"content": [{"type": "text", "text": "got 2"}]}
+    broken = RN.ToolSpec("t", "d", {}, lambda args: 1 / 0)
+    out = broken.respond({})
+    assert out["is_error"] and "ZeroDivisionError" in out["content"][0]["text"]

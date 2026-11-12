@@ -48,6 +48,24 @@ class AuthError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ToolSpec:
+    """One of the loop's own tools, served to the agent as ``mcp__brixzle__<name>``. ``handler``
+    takes the tool's arguments and returns text; it runs in this process."""
+
+    name: str
+    description: str
+    input_schema: dict      # {argument: type name} or a JSON schema; {} for no arguments
+    handler: Callable[[dict], str]
+
+    def respond(self, args):
+        """The MCP answer: the handler's text, or the error it raised (the agent sees it)."""
+        try:
+            return {"content": [{"type": "text", "text": str(self.handler(args or {}))}]}
+        except Exception as e:  # noqa: BLE001 - reported to the agent, not raised
+            return {"content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}], "is_error": True}
+
+
+@dataclass(frozen=True)
 class AgentCall:
     """What an agent asks Claude to do."""
 
@@ -59,7 +77,7 @@ class AgentCall:
     cwd: Path | None = None
     write_root: Path | None = None  # writes are allowed only under here
     read_roots: tuple = ()          # reads are allowed only under these (and write_root)
-    mcp_tools: tuple = ()           # SdkMcpTool objects, served as mcp__brixzle__<name>
+    mcp_tools: tuple = ()           # ToolSpec objects, served as mcp__brixzle__<name>
     output_schema: dict | None = None  # JSON schema of a structured answer
     max_turns: int = 10
     effort: str | None = None
@@ -233,7 +251,7 @@ class ClaudeRunner:
 
         from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, PermissionResultAllow,
                                       PermissionResultDeny, ResultMessage, SystemMessage, TextBlock,
-                                      create_sdk_mcp_server, query)
+                                      create_sdk_mcp_server, query, tool)
 
         guard = ToolGuard(call.write_root, tuple(call.read_roots), tuple(call.tools))
 
@@ -243,7 +261,12 @@ class ClaudeRunner:
 
         kw = option_kwargs(call, self.model, self.ledger.remaining(), env)
         if call.mcp_tools:
-            kw["mcp_servers"] = {"brixzle": create_sdk_mcp_server("brixzle", tools=list(call.mcp_tools))}
+            def serve(spec):
+                async def run(args):
+                    return await asyncio.to_thread(spec.respond, args)
+                return tool(spec.name, spec.description, spec.input_schema)(run)
+
+            kw["mcp_servers"] = {"brixzle": create_sdk_mcp_server("brixzle", tools=[serve(t) for t in call.mcp_tools])}
         options = ClaudeAgentOptions(**kw, can_use_tool=can_use_tool, permission_mode="default")
 
         async def prompt():  # can_use_tool needs the streaming form of the prompt
