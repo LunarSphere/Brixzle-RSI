@@ -14,9 +14,9 @@ MuJoCo sim (trials.DropRig), half onto the base (course 0) and half onto a seate
 
 Why 40 and 32 (binomial, worked on issue #47): a design that truly seats 60% of drops passes
 0.6% of the time, and one that seats 90% passes 98.5% of the time. A design that seats every drop
-in the box always passes, so the gate never turns back a design that would score 1.
+in the box always passes, so the gate never turns back a design with Z = 1.
 
-The check is not the score. The loop's score stays the box scale from engine/report.py.
+The check is not the score. The loop's objective is Z (engine/zscore.py, issue #61).
 Placement only for now (issue #46). Results are simulated, uncalibrated contact.
 
     uv run python -m brixzle.engine.quick_check --family ab --seed 0
