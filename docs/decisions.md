@@ -270,3 +270,14 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **The agents read a short text version (`DesignLog.text`)**: the decision and reason, the design note's idea and change, Z per target, quick-check counts, contract problems, and overrides. It is a few lines per attempt, so the prompt stays small as the log grows.
 - **Held-out results are kept in the log but never shown to the agents.** `for_agents` and `text` drop them. The acceptance rule (#21) needs them, and the critic must not see them.
 - **Non-finite numbers are refused,** as everywhere else that writes JSON.
+
+## #15 Report renders
+
+The maintainer added `RSI_RESULTS/` to this issue on 2026-11-12 (comment on #15).
+
+- **Wrong valley gets its own colour, purple.** The figure style is aerial-assembly's drop grid: seated green, jammed orange, fell red. That figure had no wrong valley, but on A/B it is the most common failure (wrong valley 279 of 622 drops in the worst box), so folding it into red would hide what the critic most needs.
+- **The jam bands are outlined, and the target box is drawn dashed.** A box thinner than one map cell in pitch (±0.2° against 2° cells) is drawn one cell tall so it can be seen.
+- **The jam map is drawn from map.json alone.** It does not need the 2 MB of traces in `drops.json.gz`, so the render takes a second or two.
+- **`summary.md` includes held-out Z.** It is for people. The critic reads the design log, never `RSI_RESULTS/`, so it still never sees held-out results.
+- **matplotlib is a dependency.** Renders run in every loop iteration, and the tests draw them.
+- **`RSI_RESULTS/` is git-ignored,** like `runs/`. Figures for the repo go through #25.

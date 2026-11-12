@@ -1,0 +1,330 @@
+"""Per-iteration renders (issue #15): jam map, module render, summary and progress.
+
+Every outer iteration of the loop (#21) writes to ``RSI_RESULTS/<run>/iter-NN/``:
+
+- ``jam_map.png``: the full sim map (#48), one panel per slice and course, coloured like
+  aerial-assembly's ``figures/biasbrick-drop-grid``: seated green, jammed orange, fell red, with
+  wrong valley in purple (it is the A/B baseline's main failure, so it is not hidden in another
+  colour). Counts are in each legend, the target box is drawn on every panel, the jam bands from
+  the jam analysis (#49) are outlined, and Z (#61) per target is in the title. Labelled
+  "simulated, uncalibrated contact".
+- ``module.png``: the iteration's brick, as its 2D section per part and a 3D view.
+- ``summary.md``: Z per target with its counts, what changed and why (the critic's brief), the
+  decision, and the run directories behind every number (written by the loop).
+
+``RSI_RESULTS/<run>/progress.png`` shows Z per iteration, with kept and rejected designs marked.
+RSI_RESULTS/ is git-ignored; figures for the repo go through #25.
+"""
+
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import ListedColormap  # noqa: E402
+from matplotlib.patches import Patch, Rectangle  # noqa: E402
+import numpy as np  # noqa: E402
+
+LABEL = "simulated, uncalibrated contact"
+BG = "#fcfbf8"
+COLOURS = {"S": "#13a10e", "J": "#f6b21b", "F": "#d23c3c", "W": "#7b52ab", "?": "#9a9a9a"}
+NAMES = {"S": "seated", "J": "jammed", "F": "fell", "W": "wrong valley", "?": "other"}
+ORDER = ("S", "J", "F", "W", "?")
+AXIS_LABELS = {"x": "X offset about the aim (mm)", "z": "release height above the minimum (mm)",
+               "t": "pitch (deg)"}
+DPI = 110
+
+
+def _grid_array(g):
+    """(rows, cols) of codes, row 0 = lowest value of the second axis."""
+    return np.array([list(r) for r in g["rows"]])
+
+
+def _box_rect(g, box):
+    a, b = g["axes"]
+    hw = box["half_widths"]
+    ranges = {"x": (-hw["x_mm"], hw["x_mm"]), "z": (0.0, 2 * hw["z_mm"]), "t": (-hw["theta_deg"], hw["theta_deg"])}
+    (x0, x1), (y0, y1) = ranges[a], ranges[b]
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def legend_counts(g):
+    """{outcome name: cells} for one grid, in legend order, outcomes with no cell left out."""
+    arr = _grid_array(g)
+    known = set(ORDER) - {"?"}
+    counts = {c: int((arr == c).sum()) for c in ORDER if c != "?"}
+    counts["?"] = int(sum(1 for v in arr.flat if v not in known))
+    return {NAMES[c]: n for c, n in counts.items() if n}
+
+
+def jam_map_text(sim_map, z, target=None, title=None):
+    """The figure's title: what was mapped, Z per target, and the label."""
+    head = title or f"{sim_map['family']} drop map, aimed at the {sim_map['box']['statistic']} box"
+    zline = "   ".join(f"Z {s} {c['Z']:+.3f} (S {c['S']}, J {c['J']}, N {c['N']})"
+                       + (" target" if s == target else "") for s, c in z.items())
+    return f"{head}\n{zline}\n{LABEL.capitalize()} (MuJoCo); not a hardware rate"
+
+
+def _fmt_fixed(fixed):
+    units = {"x": "mm", "z": "mm", "t": "deg"}
+    return ", ".join(f"{k} {v:.1f} {units.get(k, '')}".strip() for k, v in fixed.items())
+
+
+def jam_map(sim_map, z, out, target=None, jam=None, title=None):
+    """Draw the map's grids to ``out`` (PNG). ``z`` is {statistic: counts}; ``jam`` the jam analysis."""
+    grids = sorted(sim_map["grids"], key=lambda g: (["xz", "xt", "zt"].index(g["slice"]), g["course"]))
+    slices = sorted({g["slice"] for g in grids}, key=["xz", "xt", "zt"].index)
+    courses = sorted({g["course"] for g in grids})
+    fig, axes = plt.subplots(len(slices), len(courses), figsize=(6.4 * len(courses), 3.3 * len(slices)),
+                             squeeze=False, facecolor=BG)
+    target = target or sim_map["box"]["statistic"]
+    box = next((b for b in sim_map.get("cover_boxes", [sim_map["box"]]) if b["statistic"] == target), sim_map["box"])
+    cmap = ListedColormap([COLOURS[c] for c in ORDER])
+    for g in grids:
+        ax = axes[slices.index(g["slice"])][courses.index(g["course"])]
+        ax.set_facecolor(BG)
+        a, b = g["axes"]
+        arr = _grid_array(g)
+        idx = np.vectorize(lambda c: ORDER.index(c) if c in ORDER else ORDER.index("?"))(arr)
+        sa, sb = g["step"][a], g["step"][b]
+        (ia0, _), (ib0, _) = g["index_extent"][a], g["index_extent"][b]
+        extent = (ia0 * sa - sa / 2, (ia0 + arr.shape[1]) * sa - sa / 2,
+                  ib0 * sb - sb / 2, (ib0 + arr.shape[0]) * sb - sb / 2)
+        ax.imshow(idx, origin="lower", extent=extent, cmap=cmap, vmin=-0.5, vmax=len(ORDER) - 0.5,
+                  aspect="auto", interpolation="nearest")
+        x, y, w, h = _box_rect(g, box)
+        if h < sb:  # a box thinner than one cell (pitch): draw it one cell tall so it shows
+            y, h = y + h / 2 - sb / 2, sb
+        ax.add_patch(Rectangle((x, y), w, h, fill=False, lw=1.6, ls="--", ec="black"))
+        for band in (jam or {}).get("bands", []):
+            if band["slice"] == g["slice"] and band["course"] == g["course"]:
+                (b0, b1), (c0, c1) = band["extent"][a], band["extent"][b]
+                ax.add_patch(Rectangle((b0 - sa / 2, c0 - sb / 2), b1 - b0 + sa, c1 - c0 + sb, fill=False,
+                                       lw=1.4, ec="black"))
+        names = legend_counts(g)
+        ax.legend(handles=[Patch(color=COLOURS[c], label=f"{NAMES[c]} ({names[NAMES[c]]})") for c in ORDER
+                           if NAMES[c] in names]
+                  + [Patch(fill=False, ls="--", ec="black", label=f"{target} target box")],
+                  loc="upper left", fontsize=7, framealpha=0.85)
+        on = "onto the base" if g["course"] == 0 else "onto a seated brick"
+        fixed = _fmt_fixed(g["fixed"])
+        ax.set_title(f"{g['slice']} slice, course {g['course']} ({on}); {fixed}", fontsize=9, loc="left")
+        ax.set_xlabel(AXIS_LABELS[a], fontsize=8)
+        ax.set_ylabel(AXIS_LABELS[b], fontsize=8)
+        ax.tick_params(labelsize=7)
+    fig.suptitle(jam_map_text(sim_map, z, target, title), fontsize=10, x=0.01, y=0.995, ha="left", va="top")
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.75 / fig.get_figheight()))  # room for the three-line title
+    fig.savefig(out, dpi=DPI, facecolor=BG)
+    plt.close(fig)
+    return Path(out)
+
+
+def _plot_polygon(ax, poly, fc, ec, lw=1.0):
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path as MPath
+
+    def ring(coords):
+        coords = np.asarray(coords)
+        return coords, [MPath.MOVETO] + [MPath.LINETO] * (len(coords) - 2) + [MPath.CLOSEPOLY]
+
+    verts, codes = ring(poly.exterior.coords)
+    for hole in poly.interiors:
+        v, c = ring(hole.coords)
+        verts, codes = np.vstack([verts, v]), codes + c
+    ax.add_patch(PathPatch(MPath(verts, codes), fc=fc, ec=ec, lw=lw))
+
+
+def module_png(family, p, out, title=None):
+    """The family's brick: the 2D section of each part (guide faces in orange, grip features
+    marked) and a 3D view of the first part's printed solid."""
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    from brixzle.families import builders as B
+    from brixzle.families.interface import Prismatic
+
+    parts = list(family.parts)
+    fig = plt.figure(figsize=(4.2 * (len(parts) + 1), 4.2), facecolor=BG)
+    for k, part in enumerate(parts):
+        ax = fig.add_subplot(1, len(parts) + 1, k + 1)
+        ax.set_facecolor(BG)
+        if isinstance(family.geometry, Prismatic):
+            sec = family.geometry.section(p, part)
+        else:
+            sec = B.predictor_section(family, p, part) if hasattr(B, "predictor_section") else None
+        if sec is not None:
+            _plot_polygon(ax, sec.outer, "#c9d6ea", "#1f3b63")
+            for hole in sec.holes or ():
+                _plot_polygon(ax, hole, BG, "#1f3b63")
+            for gf in sec.guide_faces:
+                (x0, z0), (x1, z1) = gf.a, gf.b
+                ax.plot([x0, x1], [z0, z1], color=COLOURS["J"], lw=2.4, solid_capstyle="round")
+        for feat in family.pickup(p, part):
+            w, h = feat.size_mm
+            ax.add_patch(Rectangle((feat.x_mm - w / 2, feat.z_mm - h / 2), w, h, fill=False, ec="#444", lw=0.8, ls=":"))
+        ax.set_aspect("equal")
+        ax.autoscale_view()
+        ax.set_title(f"part {part}: section (mm)", fontsize=9, loc="left")
+        ax.tick_params(labelsize=7)
+    ax3 = fig.add_subplot(1, len(parts) + 1, len(parts) + 1, projection="3d")
+    mesh = B.sim_bodies(family, p, parts[0]).mesh
+    tri = mesh.vertices[mesh.faces]
+    ax3.add_collection3d(Poly3DCollection(tri, facecolor="#9fb4d6", edgecolor="#1f3b63", lw=0.05, alpha=1.0))
+    lo, hi = mesh.bounds
+    span = float(max(hi - lo)) / 2
+    mid = (lo + hi) / 2
+    for setter, m in zip((ax3.set_xlim, ax3.set_ylim, ax3.set_zlim), mid):
+        setter(m - span, m + span)
+    ax3.view_init(elev=22, azim=-60)
+    ax3.set_title(f"part {parts[0]}: 3D", fontsize=9, loc="left")
+    ax3.tick_params(labelsize=6)
+    fig.suptitle(title or f"{family.name} {family.version} ({type(family.geometry).__name__})", fontsize=10,
+                 x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(out, dpi=DPI, facecolor=BG)
+    plt.close(fig)
+    return Path(out)
+
+
+def progress_png(history, out, target, title=None):
+    """Z per iteration on the target box (thick) and the other boxes (thin), kept designs filled,
+    rejected ones hollow, iterations with no scored design marked on the axis.
+
+    ``history`` is [{iteration, decision, z: {statistic: counts} | None}]."""
+    fig, ax = plt.subplots(figsize=(7.0, 3.8), facecolor=BG)
+    ax.set_facecolor(BG)
+    stats = []
+    for h in history:
+        for s in (h.get("z") or {}):
+            if s not in stats:
+                stats.append(s)
+    styles = {"mean": "#1f3b63", "p95": "#5b7fb5", "max": "#9fb4d6"}
+    for s in stats:
+        pts = [(h["iteration"], h["z"][s]["Z"]) for h in history if h.get("z")]
+        if pts:
+            xs, ys = zip(*pts)
+            ax.plot(xs, ys, color=styles.get(s, "#555"), lw=2.4 if s == target else 1.0,
+                    label=f"Z {s}" + (" (target)" if s == target else ""))
+    for h in history:
+        if not h.get("z"):
+            ax.plot(h["iteration"], -1.0, marker="x", color=COLOURS["F"], ms=8, ls="none")
+            continue
+        zt = h["z"][target]["Z"]
+        kept = h.get("decision") == "kept"
+        ax.plot(h["iteration"], zt, marker="o", ms=9, ls="none", mec=styles.get(target, "#1f3b63"),
+                mfc=styles.get(target, "#1f3b63") if kept else "white")
+    ax.plot([], [], marker="o", ls="none", mfc="#1f3b63", mec="#1f3b63", label="kept")
+    ax.plot([], [], marker="o", ls="none", mfc="white", mec="#1f3b63", label="rejected")
+    ax.plot([], [], marker="x", ls="none", color=COLOURS["F"], label="no design passed the quick check")
+    ax.axhline(1.0, color=COLOURS["S"], lw=1, ls="--")
+    ax.set_ylim(-1.05, 1.05)
+    ax.set_xlabel("iteration")
+    ax.set_ylabel("Z = (seated - jammed) / drops in box")
+    ax.set_xticks([h["iteration"] for h in history] or [1])
+    ax.legend(fontsize=7, loc="lower right")
+    ax.set_title(title or f"Z per iteration (target {target}); {LABEL}", fontsize=9, loc="left")
+    fig.tight_layout()
+    fig.savefig(out, dpi=DPI, facecolor=BG)
+    plt.close(fig)
+    return Path(out)
+
+
+# --- summaries (markdown) ---
+
+
+def _z_table(z, target):
+    rows = ["| Target | Z | S | J | Fell | Wrong valley | Other | N |", "|---|---|---|---|---|---|---|---|"]
+    for s, c in z.items():
+        name = f"**{s}** (target)" if s == target else s
+        rows.append(f"| {name} | {c['Z']:+.3f} | {c['S']} | {c['J']} | {c.get('fell', 0)} | "
+                    f"{c.get('wrong_valley', 0)} | {c.get('other', 0)} | {c['N']} |")
+    return "\n".join(rows)
+
+
+def _brief_lines(brief):
+    if not brief:
+        return ["- none"]
+    out = [f"- **Decision:** {brief['decision']}. {brief['reason']}"]
+    for c in brief.get("clusters", []):
+        out.append(f"- **{c['failure']}** ({', '.join(c['rules'])}; {c['scope']}): {c['diagnosis']} "
+                   f"Change: {c['change']} Expected: {c['expected_effect']}")
+    return out
+
+
+def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
+    """summary.md for one iteration, from the loop's record of it (orchestrator.Loop.iterate)."""
+    i = rec["iteration"]
+    lines = [f"# {run}: iteration {i:02d}", ""]
+    fam = rec.get("family", "no design")
+    lines += [f"**Design:** {fam}" + (f" (`{rec['module']}`)" if rec.get("module") else "")
+              + f". **Decision: {rec['decision']}.** {rec.get('reason', '')}", "",
+              f"Sim results are {LABEL}; mechanisms in the jam analysis are predicted, quasi-static 2D. "
+              "Neither is a hardware rate.", ""]
+    lines += ["## Z per target box", ""]
+    if rec.get("z"):
+        lines += [_z_table(rec["z"], target), "",
+                  "Z = (S − J) / N over the full sim map's drops inside each box (#61).", ""]
+        if rec.get("held_out"):
+            lines += ["Held-out Z on the target box (poses shifted by another seed; the critic never sees it):", "",
+                      "| Check | Z | S | J | N |", "|---|---|---|---|---|"]
+            lines += [f"| {k} | {c['Z']:+.3f} | {c['S']} | {c['J']} | {c['N']} |" for k, c in rec["held_out"].items()]
+            lines.append("")
+    else:
+        lines += ["No design reached the full map this iteration, so there is no Z.", ""]
+    lines += ["## What changed and why", "", "The brief this iteration followed (the critic's, from the last iteration):", ""]
+    lines += _brief_lines(rec.get("brief_in")) + [""]
+    note = rec.get("note") or {}
+    if note:
+        lines += [f"The design agent's note: {note.get('summary', '')}", "",
+                  f"Changes: {note.get('changes', '')}", "",
+                  f"Geometry: {note.get('geometry', '?')}" + (f" ({note['solid3d_reason']})"
+                                                              if note.get("solid3d_reason") else ""), ""]
+    lines += ["Attempts:", "", "| Attempt | Package | Outcome | Quick check |", "|---|---|---|---|"]
+    for a in rec.get("attempts", []):
+        qc = a.get("quick_check")
+        q = f"{qc['seated']} of {qc['dropped']} seated" if qc else "not run"
+        lines.append(f"| {a['attempt']} | `{a['module']}` | {a.get('decision', '?')} | {q} |")
+    lines += ["", "## The critic's brief for the next iteration", ""]
+    lines += _brief_lines(rec.get("brief")) if rec.get("brief") else [
+        f"- none ({rec.get('critic_error') or 'the critic was not run this iteration'})"]
+    lines += ["", "## Runs behind these numbers", ""]
+    for a in rec.get("attempts", []):
+        lines.append(f"- design package, attempt {a['attempt']}: `{a['root']}/{a['module']}`")
+        if a.get("quick_check"):
+            lines.append(f"- quick check, attempt {a['attempt']} (seed in `check.json`): `{a['quick_check']['run']}`")
+    runs = rec.get("runs", {})
+    if runs.get("map"):
+        lines += [f"- full sim map and report (Z): `{runs['map']}/map.json`, `{runs['map']}/report.json`",
+                  f"- jam analysis: `{runs.get('jam')}`"]
+    lines += [f"- loop state and design log: `{Path(rec['dir']).parent}/state.json`, "
+              f"`{Path(rec['dir']).parent}/design_log.jsonl`",
+              f"- API spend: ${rec.get('spent_usd', 0.0):.4f} this iteration; ${spent_usd:.4f} of ${cap_usd:.2f} "
+              f"in all (`{ledger_path}`)",
+              "- wall-clock (s): " + ", ".join(f"{k} {v:.1f}" for k, v in rec.get("seconds", {}).items())]
+    return "\n".join(lines) + "\n"
+
+
+def run_summary(state, target, ledger_path, spent_usd, cap_usd):
+    """summary.md for the whole run."""
+    lines = [f"# {state['run']}", "", f"Target box: **{target}**. Sim results are {LABEL}.", "",
+             "| Iteration | Design | Decision | Z target | Z mean | Z p95 | Z max |", "|---|---|---|---|---|---|---|"]
+    for it in state["iterations"]:
+        z = it.get("z") or {}
+
+        def zz(s):
+            return f"{z[s]['Z']:+.3f}" if s in z else "–"
+
+        lines.append(f"| {it['iteration']} | {it.get('family', '–')} | {it['decision']} | {zz(target)} | "
+                     f"{zz('mean')} | {zz('p95')} | {zz('max')} |")
+    best = state.get("best")
+    lines += ["", f"**Stopped:** {state.get('stop')}", "",
+              f"**Best:** {best['family']} from iteration {best['iteration']}, Z {target} {best['z_target']:+.3f} "
+              f"(`{best['root']}/{best['module']}`; map `{best['map']}`)" if best else "**Best:** none", ""]
+    tune = state.get("tune")
+    if tune:
+        lines += ["**End tune:** " + (f"error: {tune['error']}" if "error" in tune else
+                                      f"Z {tune['baseline']:+.3f} -> {tune['tuned']:+.3f}, "
+                                      f"{'accepted' if tune['accepted'] else 'not accepted'} (`{tune['run']}`)"), ""]
+    lines += [f"API spend: ${spent_usd:.4f} of ${cap_usd:.2f} (`{ledger_path}`).",
+              f"Wall-clock: {state.get('elapsed_s', 0.0) / 60:.1f} min.", "", "![progress](progress.png)", ""]
+    return "\n".join(lines)

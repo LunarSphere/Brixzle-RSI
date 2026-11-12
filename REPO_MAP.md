@@ -37,4 +37,6 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `tests/fixtures/` | Reference results recorded from aerial-assembly, and the scripts that recorded them |
 | `docs/` | Requirements (R1–R13) as prose (`requirements.md`) and data (`requirements.yaml`), the family interface (`family-interface.md`), architecture, the predictor validation report (`predictor-validation.md`), and the decisions made where an issue left something open (`decisions.md`) |
 | `.github/workflows/ci.yml` | CI: runs the tests on every PR and on pushes to `main` |
+| `src/brixzle/loop/render.py` | Per-iteration renders (issue #15): `jam_map.png`, `module.png`, `summary.md` and the run's `progress.png`, for `RSI_RESULTS/<run>/` |
+| `RSI_RESULTS/` | Git-ignored. One folder per loop run, one `iter-NN/` subfolder per iteration, with the renders and summaries above |
 | `runs/` | Git-ignored. One folder per loop run, one subfolder per iteration |

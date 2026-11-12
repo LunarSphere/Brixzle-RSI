@@ -113,6 +113,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cadquery" },
     { name = "coacd" },
+    { name = "matplotlib" },
     { name = "mujoco" },
     { name = "numpy" },
     { name = "py-bobyqa" },
@@ -138,6 +139,7 @@ requires-dist = [
     { name = "cadquery", specifier = ">=2.5" },
     { name = "claude-agent-sdk", marker = "extra == 'agents'", specifier = ">=0.2.180" },
     { name = "coacd", specifier = "==1.0.14" },
+    { name = "matplotlib", specifier = ">=3.8" },
     { name = "mujoco", specifier = "==3.16.0" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "py-bobyqa", specifier = ">=1.5.0" },

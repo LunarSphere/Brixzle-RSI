@@ -25,6 +25,16 @@ The loop stops when either of these holds:
 
 The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 
+## Per-iteration results
+
+Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/render.py`):
+
+- **`jam_map.png`:** the full sim map, one panel per slice and course. Colours follow aerial-assembly's `figures/biasbrick-drop-grid`: seated green, jammed orange, fell red, plus wrong valley in purple, since it is A/B's main failure and would otherwise be hidden. Each legend gives counts. The target box and the jam bands are drawn, Z per target is in the title, and it is labelled "simulated, uncalibrated contact".
+- **`module.png`:** the brick's 2D section per part (guide faces and grip features marked) and a 3D view of its printed solid.
+- **`summary.md`:** Z per target with its counts (and the held-out Z, which the critic never sees); what changed and why (the brief followed, the design agent's note, every attempt); the decision and its reason; the critic's next brief; and the run directories, spend and wall-clock behind every number.
+
+`RSI_RESULTS/<run>/progress.png` shows Z per iteration, with kept designs filled, rejected ones hollow and iterations with no scored design crossed. `RSI_RESULTS/<run>/summary.md` sums up the run. `RSI_RESULTS/` is git-ignored; figures for the repo still go through #25.
+
 ## Intake
 
 A person gives one or more concept images and adds extra requirements. Today this is a command (`python -m brixzle.intake`, issue #17); a local web page that writes the same `intake.json` is still planned. One Claude call sorts each extra requirement into one of four kinds:

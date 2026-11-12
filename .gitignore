@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 # Loop runs, caches and large media
 runs/
+RSI_RESULTS/
 .cache/
 *.mp4
 *.webm
