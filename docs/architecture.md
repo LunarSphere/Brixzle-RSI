@@ -1,6 +1,6 @@
 # Architecture
 
-The evaluation engine is built. The agents, the intake page and the orchestrator are planned.
+The evaluation engine, the agents, the command-line intake and the orchestrator are built. The intake page (#65) is planned.
 
 ## Loop order
 
@@ -12,16 +12,47 @@ Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
 4. **Jam analysis** inside the green zone (issue #49, built).
 5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
 
-The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). When Z reaches 1 on the target box, or stops improving, a short tune finishes the design (issue #14).
+The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). A redesign replaces the best only if Z on the target improves and a held-out check is not worse. When Z reaches 1 on the target box, or stops improving, a short tune finishes the design (issue #14). The [orchestrator](#orchestrator) runs it all.
 
 ## Orchestrator
 
-The orchestrator runs each iteration without a person prompting it, and enforces the budget and stop rules. Every iteration is written to `runs/loop/<run>/iter-N/`.
+`loop/orchestrator.py` (issue #21) runs the loop without a person prompting it, and enforces the budget and stop rules:
 
-The loop stops when either of these holds:
+    uv run --extra agents python -m brixzle.loop --intake runs/intake-<stamp>/intake.json --target mean
 
-- Z reaches 1 on the target box: every drop inside it seated;
-- Z stops improving, or the budget runs out.
+Each iteration:
+
+1. **Design.** The design agent writes a package. The loop checks it (contract and rules); a package that fails goes back to the agent with the check's output.
+2. **Quick check.** Below 32 of 40 seated, the design goes back to the agent with its failing drops. An iteration gets up to `design_attempts` tries (3).
+3. **Full sim map** covering the mean, p95 and worst boxes, and **Z** per target.
+4. **Jam analysis.**
+5. **Acceptance.** The design replaces the current best only if Z on the target box improves and held-out Z is not worse at either friction. Held-out Z uses the target box's poses shifted by seed + 1, at μ 0.2 and 0.5. The first scored design becomes the best. The critic never sees the held-out results.
+6. **Critic.** It writes a redesign brief, and the loop returns to step 1. It is not called when Z is already 1 or on the last iteration.
+
+Every attempt goes in the design log. Every iteration writes `RSI_RESULTS/<run>/iter-NN/` and updates `progress.png`.
+
+**Stop** when the first of these holds, checked before each iteration:
+
+- Z reaches 1 on the target box;
+- the critic says stop;
+- `max_iterations` have run;
+- `patience` iterations in a row have kept no design;
+- the API budget could not cover one more design and critic call;
+- the wall-clock budget (30 min) is spent.
+
+Then the end tune runs on the best design, with U fixed if intake fixed it.
+
+**Files:**
+
+- `runs/loop/<run>/`: `state.json` (written after every iteration), `design_log.jsonl`, `api-spend.jsonl` (unless `--ledger` names a shared one), and `iter-NN/attempt-K/pkg/<module>/`, each attempt's package;
+- `RSI_RESULTS/<run>/`: the renders and summaries;
+- `runs/check-…`, `runs/map-…`, `runs/tune-…`: the engine's usual run directories.
+
+**Config** (`loop/config.py`, `LoopConfig`) holds the runtime model (Claude Sonnet 5.5), the target, the iteration, patience, API and wall-clock budgets, the per-call caps, the seed and the worker count. The model is set there and nowhere else.
+
+**Resume.** `--resume <run>` reads `state.json` and carries on from the next iteration. An iteration interrupted part-way is run again in a new folder (`iter-NN-2`), so nothing is overwritten.
+
+**Errors.** An SDK or API error in a design call is logged (`error`) and that attempt is retried. One in the critic leaves the next design without a brief. The spend cap (`BudgetExceeded`) ends the run cleanly, and the end tune still runs.
 
 The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 

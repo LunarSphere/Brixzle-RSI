@@ -281,3 +281,18 @@ The maintainer added `RSI_RESULTS/` to this issue on 2026-11-12 (comment on #15)
 - **`summary.md` includes held-out Z.** It is for people. The critic reads the design log, never `RSI_RESULTS/`, so it still never sees held-out results.
 - **matplotlib is a dependency.** Renders run in every loop iteration, and the tests draw them.
 - **`RSI_RESULTS/` is git-ignored,** like `runs/`. Figures for the repo go through #25.
+
+## #21 Orchestrator
+
+The maintainer set the loop's order, acceptance rule and stop rule on 2026-11-12: intake, design agent, quick check (back to the design agent on a fail), full sim map, jam analysis, Z, critic, and back to the design agent. A redesign replaces the best only if Z on the target improves and a held-out check (the same target, different seeds, μ 0.2 and 0.5) does not get worse. The critic never sees the held-out results. Stop at Z ≥ 1, no improvement for a set number of iterations, or a spent budget, then run the end tune.
+
+- **The first scored design becomes the best.** There is nothing to compare it with. Its held-out Z is computed and kept as the baseline for the next one.
+- **"Improves" means strictly higher Z on the target box. "Not worse" means neither held-out Z (μ 0.2, μ 0.5) is below the current best's.** Held-out Z is `zscore.HeldOutZ` with seed + 1 (#61).
+- **Up to 3 design attempts per iteration.** A package that fails the contract or the rules goes back with the check's output. A design that fails the quick check goes back with up to 9 of its failing drops (pose, outcome, where it came to rest). If all three fail, the iteration ends with no scored design and counts as one with no improvement.
+- **Patience is 2 iterations with no kept design, and the default cap is 6 iterations.** The 30-minute wall-clock budget (CLAUDE.md) is checked before each iteration. One A/B-sized iteration costs about 95 s of sim (check 7.6 s, map 65.5 s, jam analysis 12 s, held-out about 10 s) plus the agents.
+- **The API budget stops the loop before it could be passed.** An iteration starts only if the ledger can cover one more design call and one critic call ($1.50 + $0.40 by default). Each call is also capped by the SDK and charged in full if it fails.
+- **The critic is not called when it cannot matter:** when Z is already 1, or on the last allowed iteration.
+- **An SDK or API error in an agent call is logged and survived.** A failed design call is a failed attempt (`error`). A failed critic call leaves the next design without a brief. The wiring checks (#18, #19) showed both kinds of failure happen.
+- **The end tune runs on the best design whatever stopped the loop,** with U fixed if intake fixed it (R2). It is the end tune from #14 on Z (#61).
+- **State is saved after every iteration (`state.json`), and `--resume` carries on.** An interrupted iteration runs again in a new folder (`iter-NN-2`), so no run directory is reused.
+- **One run, one target box.** The three target runs are three invocations with `--target mean`, `p95` and `max`.

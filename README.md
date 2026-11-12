@@ -4,7 +4,15 @@
 
 Given a concept sketch and a set of requirements, two AI agents keep redesigning the brick. The goal is to make the region of drone error it tolerates when placing a brick as large as possible, with no jams inside it. Pickup is deferred until a gripper is designed for the chosen brick.
 
-> **Status:** the evaluation engine is built. The agents, the intake page and the orchestrator are not.
+> **Status:** the loop runs end to end: intake (command line), design agent, quick check, full sim map, jam analysis, Z, critic, acceptance and the end tune. The intake page (#65) and the first full benchmark run (#22) are still to come.
+
+To run it (it spends real API money; the cap is `--budget-usd`):
+
+    uv sync --extra agents
+    uv run python -m brixzle.intake --image path/to/sketch.png
+    uv run --extra agents python -m brixzle.loop --intake runs/intake-<stamp>/intake.json --target mean --budget-usd 5
+
+Results land in `RSI_RESULTS/<run>/`.
 
 ## How it works
 
