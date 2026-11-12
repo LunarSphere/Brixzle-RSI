@@ -54,11 +54,11 @@ Every Claude call goes through `agents/runner.py`:
 - **Tools:** write family code, run the rule checks and `contract.check_family`, render CAD.
 - **Output:** a family package in `src/brixzle/families/<name>/`.
 
-**Critic agent.**
+**Critic agent** (`agents/critic.py`, issue #19).
 
-- **Prompt:** the distilled design rules in `src/brixzle/rules/design_rules.md`. Each rule cites its paper.
-- **Tools:** read the report and jam traces, look up the cited papers, read the design log.
-- **Output:** a redesign brief, which may reshape the current family or invent a new one; or a decision to stop.
+- **Prompt:** the design rules (`rules/design_rules.md`) and the sources they cite (`rules/citations.md`), with Z per target, the fitted map as text grids, the jam analysis (bands with failure types and mechanisms, and the capture limits), the design log and the family's code. It never sees held-out results.
+- **Tools:** none. Everything it needs is in the prompt, and it answers with a structured brief.
+- **Output:** a redesign brief. For each failure cluster it gives the diagnosis, the rules it rests on (by id), the proposed change, whether it reshapes the family or needs a new one, and the expected effect on Z. Or it gives a decision to stop, with its reason. A brief that cites a rule that does not exist, or a redesign with no cluster, is refused.
 
 ## Evaluation engine (no LLM)
 

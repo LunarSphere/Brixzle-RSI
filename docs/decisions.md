@@ -241,3 +241,10 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **Credentials: an API key, else the `ant` profile.** The maintainer logged in with the `ant` CLI. Claude Code does not read that profile itself, so the runner passes the profile's short-lived access token to it as `ANTHROPIC_AUTH_TOKEN`, with the OAuth beta header. The token is never printed or written. Claude Code reports the credential it used. A call fails on anything but an API credential, so spend cannot land on a claude.ai subscription that the ledger does not track.
 - **A call whose cost the SDK does not report counts as its whole budget** in the ledger, so an unknown cost errs toward stopping early.
 - **`fixed.U_mm`** records a voxel pitch fixed at intake (R2), which the end tune then leaves alone.
+
+## #19 Critic agent
+
+- **The critic has no tools; its inputs are in the prompt.** Z per target, the fitted map's grids as text, the jam analysis summary (`jam_analysis.summary`), the design log and the family's `family.py`. One structured answer keeps the call small and cheap: a capped call ($0.40 by default), at most 3 turns. Its contact traces are already reduced by the jam analysis, so the critic does not need to read them raw.
+- **The brief is validated in code.** Each cluster must cite at least one rule id that exists in `design_rules.md`, and give a failure, a diagnosis, a change, a scope (`reshape` or `new_family`) and an expected effect. A redesign needs at least one cluster. A malformed brief is refused, and the loop logs the error instead of passing it on.
+- **The critic optimises Z on the target and is told not to lower it on the other boxes,** to match the end tune (#61).
+- **The design log, not the held-out check, is its memory.** The held-out results never reach its prompt (#21 tests this).

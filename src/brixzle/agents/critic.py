@@ -1,0 +1,124 @@
+"""Critic agent (issue #19): from a scored design, a redesign brief that cites the design rules.
+
+The critic reads, for the current design:
+
+- **Z per target** with its counts (report.json, schema 4, #61);
+- **the jam analysis** (#49, #56): the repeatable jam bands inside the green zone, each with its
+  failure type (from the sim) and mechanism (from the predictor's stability tests), and the
+  capture limits at the zone's X edges;
+- **the fitted map** (#48), as text grids;
+- **the design log** (#20), so it does not suggest an idea that already failed. It never sees the
+  held-out results (#21);
+- **the design rules** (``rules/design_rules.md``, #16) and the sources they cite;
+- **the family's code.**
+
+It answers with a brief (structured output, no tools). For each failure cluster: the diagnosis,
+the rules it rests on (by id), the proposed change, whether it reshapes the family or needs a new
+one, and the expected effect on Z. Or a decision to stop, with its reason. A brief that cites a
+rule that does not exist, or a redesign with no cluster, is refused.
+"""
+
+import json
+from pathlib import Path
+
+from brixzle import rules as RL
+from brixzle.agents.runner import AgentCall
+from brixzle.engine import jam_analysis as JA
+from brixzle.engine import sim_map as SM
+
+CRITIC_BUDGET_USD = 0.40
+MAX_TURNS = 3
+SCOPES = ("reshape", "new_family")
+DECISIONS = ("redesign", "stop")
+BRIEF_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["decision", "reason", "clusters"],
+    "properties": {
+        "decision": {"type": "string", "enum": list(DECISIONS)},
+        "reason": {"type": "string"},
+        "clusters": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["failure", "diagnosis", "rules", "change", "scope", "expected_effect"],
+            "properties": {"failure": {"type": "string"}, "diagnosis": {"type": "string"},
+                           "rules": {"type": "array", "items": {"type": "string"}},
+                           "change": {"type": "string"}, "scope": {"type": "string", "enum": list(SCOPES)},
+                           "expected_effect": {"type": "string"}}}},
+    },
+}
+
+
+def system_prompt():
+    return f"""You are the critic of Brixzle-RSI, a loop that designs brick families a drone can place imprecisely.
+You read one design's simulation results and write a redesign brief for the design agent.
+
+How to work:
+- The objective is Z = (seated - jammed) / drops inside the target box; Z = 1 passes. Seated +1, jammed -1,
+  fell and wrong valley 0. Raise Z on the target box without lowering it on the other boxes.
+- Group the failures into clusters (a jam band, a capture limit on one side, a wrong valley, falls). For each,
+  explain the mechanism and cite the design rules it rests on by id (DR1, DR2, ...). Cite only rules listed
+  below. Propose one concrete geometric change, say whether it reshapes this family or needs a new family, and
+  say what it should do to Z and why. Do not invent results: sim results are "simulated, uncalibrated contact"
+  and mechanisms are "predicted, quasi-static 2D".
+- Do not propose an idea the design log shows already failed, unless you say what is different now.
+- Do not copy a brick, joint or structure from any paper or system.
+- Decide "stop" only if Z is already 1 on the target, or you see no change that could raise it; say why.
+
+Design rules:
+{RL.rules_text()}"""
+
+
+def _z_lines(report):
+    out = []
+    for s in report["statistics"]:
+        c = report["z"][s]
+        out.append(f"- {s}: Z {c['Z']:+.3f} (S {c['S']}, J {c['J']}, fell {c['fell']}, wrong valley "
+                   f"{c['wrong_valley']}, other {c['other']}, N {c['N']})")
+    return "\n".join(out)
+
+
+def task_prompt(report, sim_map, jam, family_source, log_text, target):
+    grids = "\n\n".join(SM.ascii_grid(g) for g in sim_map["grids"])
+    return "\n\n".join([
+        f"Target box: {target}. Z per target box (simulated, uncalibrated contact):\n{_z_lines(report)}",
+        "Fitted sim map (S seated, J jammed, W wrong valley, F fell, ? other; the target box is "
+        f"{json.dumps(sim_map['box']['half_widths'])} about the aim):\n{grids}",
+        "Jam analysis (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D):\n"
+        + (JA.summary(jam) if jam else "not run"),
+        "Design log (earlier attempts):\n" + (log_text or "none"),
+        "The family's code (family.py):\n" + family_source,
+        "Write the brief.",
+    ])
+
+
+def validate_brief(brief):
+    """Raise ValueError unless the brief is well formed and cites only rules that exist."""
+    known = {r.id for r in RL.load_rules()}
+    if not isinstance(brief, dict) or brief.get("decision") not in DECISIONS:
+        raise ValueError(f"a brief needs a decision from {DECISIONS}")
+    if not str(brief.get("reason", "")).strip():
+        raise ValueError("a brief needs a reason")
+    clusters = brief.get("clusters") or []
+    if brief["decision"] == "redesign" and not clusters:
+        raise ValueError("a redesign brief needs at least one failure cluster")
+    for k, c in enumerate(clusters):
+        for f in ("failure", "diagnosis", "change", "expected_effect"):
+            if not str(c.get(f, "")).strip():
+                raise ValueError(f"cluster {k} has no {f}")
+        if c.get("scope") not in SCOPES:
+            raise ValueError(f"cluster {k}: scope must be one of {SCOPES}")
+        rules = c.get("rules") or []
+        if not rules:
+            raise ValueError(f"cluster {k} cites no design rule")
+        unknown = [r for r in rules if r not in known]
+        if unknown:
+            raise ValueError(f"cluster {k} cites rules that do not exist: {unknown}")
+    return brief
+
+
+def critique(runner, report, sim_map, jam, family_source, log_text, target, budget_usd=CRITIC_BUDGET_USD):
+    """Run the critic once; returns (brief, AgentResult). Raises ValueError on a malformed brief."""
+    call = AgentCall(name="critic", system=system_prompt(),
+                     prompt=task_prompt(report, sim_map, jam, family_source, log_text, target),
+                     max_budget_usd=budget_usd, output_schema=BRIEF_SCHEMA, max_turns=MAX_TURNS)
+    result = runner.run(call)
+    brief = result.structured if result.structured is not None else json.loads(result.text)
+    return validate_brief(brief), result

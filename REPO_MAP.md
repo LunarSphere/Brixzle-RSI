@@ -7,6 +7,7 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/` | The `brixzle` package |
 | `src/brixzle/intake/` | Intake (issue #17): `python -m brixzle.intake` takes concept images and extra requirements, sorts each extra against R1–R13 with one Claude call, makes the person resolve every conflict, and writes `runs/intake-<UTC>/intake.json`. A local page is still planned |
 | `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
+| `src/brixzle/agents/critic.py` | Critic agent (issue #19): reads Z, the map, the jam analysis, the design log and the family's code, and writes a redesign brief that cites the design rules by id |
 | `src/brixzle/agents/runner.py` | The one place the loop calls Claude: the Agent SDK runner (credentials from `ANTHROPIC_API_KEY` or the `ant` profile), the spend ledger and its cap, the tool guard, and the scripted runner the tests use |
 | `src/brixzle/engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
 | `src/brixzle/engine/sim/` | MuJoCo sim core ported from aerial-assembly: scene, drop trial, Tolerance and classify, Exp 3 error model |
