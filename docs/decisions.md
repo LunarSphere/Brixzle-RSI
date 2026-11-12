@@ -222,6 +222,15 @@ Numbers are for A/B V0 on macOS arm64 (simulated, uncalibrated contact), each fr
 - **A/B V0's end tune on Z found nothing better,** `runs/tune-20261112T202915149550Z-ab-mean/` (seed 0, default settings): Z on the mean box stayed +0.848 in 269.3 s of search; 19 candidates, 7 scored, 7 broke a rule, and 5 were refused for lowering Z on p95 or worst (for example p95 0.336 to 0.323) while holding the mean at +0.848. The U step that raised the old box scale (25 to 26.4 mm) lowered Z on the mean box (+0.843). Each of the first probes took about 70 s, scored serially in six processes side by side; later candidates took about 28 s on six workers.
 - **R11 is checked by the sim alone** in `docs/requirements.md` and `docs/requirements.yaml` (`checks: [sim]`), since the predictor is no longer part of the score.
 
+## #16 Design rules corpus
+
+- **The PDFs are gone from the repo; `citations.md` holds a citation and a link for each source.** The repo is public, and the issue asks for links rather than PDFs. The papers stay in git history. Links were checked by web search on 2026-11-12: a DOI where one was found, otherwise the authors', publisher's or a library's record. Whitney 1982 has no confirmed DOI, so it links to a library record.
+- **Two files, parsed in code.** `design_rules.md` holds the rules (`## DR<n>.` with Mechanism, In a design, Cites and Evidence lines). `citations.md` holds the sources (`## <key>` with Citation, Link and Read lines). `brixzle.rules` parses both, and a test checks that every rule cites a listed source and every source has an https link and is used.
+- **Every rule says what its evidence is:** "paper" (stated in a source read in this repo), "principle" (standard mechanics the source sets out, not checked against its text here) or "user observation". A test keeps a rule from being labelled "paper" when all its sources are unread. The labels follow the "Read" notes from #10.
+- **The maintainer's rod-lengthening finding is DR10, labelled a user observation.** It is not in any paper (stated 2026-11-06).
+- **Whitney, Gustavson & Hennessey 1983 is not cited.** The maintainer dropped it on 2026-11-06. It is listed under "Removed from the folder, not cited", with `AIM-759.pdf`, whose title was never confirmed.
+- **Robotic-construction papers are context only (DR11).** They motivate R5 and R11; the rule says not to copy their parts. This follows CLAUDE.md.
+
 ## #17 Intake
 
 - **A command first, the page later.** The maintainer said a command-line intake that writes the same `intake.json` is enough to unblock the loop (2026-11-12). `python -m brixzle.intake` asks at a terminal, and takes `--resolve ID=CHOICE` otherwise. The page stays planned under this issue's scope.
