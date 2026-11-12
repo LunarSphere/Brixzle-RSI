@@ -27,7 +27,7 @@ from brixzle.engine import jam_analysis as JA
 from brixzle.engine import sim_map as SM
 
 CRITIC_BUDGET_USD = 0.40
-MAX_TURNS = 3
+MAX_TURNS = 4  # a structured answer takes one tool call; the rest is margin
 SCOPES = ("reshape", "new_family")
 DECISIONS = ("redesign", "stop")
 BRIEF_SCHEMA = {

@@ -37,6 +37,8 @@ OAUTH_BETA = "anthropic-beta: oauth-2025-04-20"  # an OAuth access token needs t
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 READ_TOOLS = ("Read", "Glob", "Grep", "LS")
 MCP_PREFIX = "mcp__brixzle__"  # the loop's own tools (create_sdk_mcp_server name 'brixzle')
+# Claude Code's own tool for a structured answer (output_format): never blocked.
+SDK_TOOLS = ("StructuredOutput",)
 SET_KEY_HELP = ("set ANTHROPIC_API_KEY to an API key, or log in with the ant CLI (`ant auth login`) so its "
                 "active profile can be used")
 
@@ -207,7 +209,7 @@ class ToolGuard:
 
     def decide(self, name, args):
         """(allowed, reason)."""
-        if name.startswith(MCP_PREFIX):
+        if name.startswith(MCP_PREFIX) or name in SDK_TOOLS:
             return True, ""
         if name not in self.tools:
             return False, f"the tool {name} is not available to this agent"
