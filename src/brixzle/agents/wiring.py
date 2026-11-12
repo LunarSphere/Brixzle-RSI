@@ -6,6 +6,8 @@ spend ledger, tools) and checks what comes back. It does not design or critique 
 - **design:** the design agent's system prompt and tools, asked only to call ``check_family`` once
   on an empty package and report ``ok``. That proves the credential, the model, the cost the SDK
   reports, the loop's own MCP tool and the tool guard.
+- **critic:** the critic's system prompt (the design rules) and structured output, asked for a
+  one-cluster brief on a recorded report. That proves the structured answer validates.
 
 These are the only real API calls outside a loop run. They are never run by the tests.
 
@@ -17,6 +19,7 @@ import json
 from pathlib import Path
 import tempfile
 
+from brixzle.agents import critic as CR
 from brixzle.agents import design as DA
 from brixzle.agents.runner import AgentCall, ClaudeRunner, SpendLedger
 from brixzle.loop.config import MODEL
@@ -37,12 +40,27 @@ def design_check(runner):
     return passed, result
 
 
-CHECKS = {"design": design_check}
+def critic_check(runner):
+    """The critic's prompt and structured output on a recorded report (A/B V0's Z, #61)."""
+    report = {"statistics": ["mean"], "z": {"mean": {"Z": 0.848, "S": 154, "J": 3, "fell": 0, "wrong_valley": 21,
+                                                     "other": 0, "N": 178}}}
+    sim_map = {"grids": [], "box": {"half_widths": {"x_mm": 14.8, "z_mm": 3.1, "theta_deg": 0.2}}}
+    call = AgentCall(name="wiring-critic", system=CR.system_prompt(),
+                     prompt=CR.task_prompt(report, sim_map, None, "(wiring check: no code)", "none", "mean")
+                     + "\n\nThis is a wiring check: write a brief with exactly one cluster, one sentence per field.",
+                     max_budget_usd=WIRING_BUDGET_USD, output_schema=CR.BRIEF_SCHEMA, max_turns=CR.MAX_TURNS)
+    result = runner.run(call)
+    brief = result.structured if result.structured is not None else json.loads(result.text)
+    CR.validate_brief(brief)
+    return True, result
+
+
+CHECKS = {"design": design_check, "critic": critic_check}
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--agent", choices=("design",), required=True)
+    ap.add_argument("--agent", choices=tuple(CHECKS), required=True)
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--ledger", default="runs/api-spend.jsonl")
     ap.add_argument("--budget-usd", type=float, default=5.0)
