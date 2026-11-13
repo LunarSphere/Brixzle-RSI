@@ -97,6 +97,8 @@ Rules:
 - The goal is placement (R11): a brick dropped anywhere inside the drone's error box (X up to +-38.5 mm,
   release height and pitch small) slides on its guide faces into its seat with no jam. The loop scores it
   with Z = (seated - jammed) / drops inside the target box. Pickup (R12) is deferred; only be grippable (R10).
+- R10: give the brick at least two large through-Y openings (each fits a 5 mm circle), above and either side
+  of its centre of mass, so it hangs level from two points.
 - The drone's error is a disc in X-Y, not a line along X; a Y guide can only centre a brick whose centre of mass is still over the course below, so Y capture is at most about half the depth D, and depth costs mass.
 - When the check passes, write design_note.json in your package:
   {{"name": ..., "summary": "<one paragraph: the idea and how it captures and seats>",

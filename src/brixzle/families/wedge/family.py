@@ -31,10 +31,10 @@ class WedgeParams(FamilyParams):
     D: float = 25.0             # depth in Y
     H0: float = 15.0            # course pitch (vertical thickness)
     groove_deg: float = 35.0    # groove and ridge flank angle from horizontal (one V per voxel)
-    bore_d: float = 2.0         # bore diameter before clearance
+    bore_d: float = 4.4         # bore diameter before clearance: 5 mm with it, a carrying opening (#87)
     bore_clearance: float = 0.3  # extra radius on each bore
     bore_x_frac: float = 0.6    # bore |x| as a fraction of U
-    bore_z_frac: float = 0.55   # bore height above the ridge flank, as a fraction of H0
+    bore_z_frac: float = 0.6    # bore height above the ridge flank, as a fraction of H0 (above the COM, #87)
 
     def __post_init__(self):
         super().__post_init__()

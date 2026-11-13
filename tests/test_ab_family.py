@@ -74,9 +74,11 @@ def test_reference_is_sourced():
 def test_every_aerial_margin_has_a_key_and_nothing_else_is_reported(part):
     assert set(REFERENCE["parts"][part]["margins"]) == set(AERIAL_TO_KEY)
     # The loop's rule set: every aerial margin except the two fork checks, plus the shared
-    # R6.guide_slides (shallowest guide face), R13.bore_wall and the R10 grippable rules (#50).
+    # R6.guide_slides (shallowest guide face), R13.bore_wall, the R10 grippable rules (#50) and the
+    # R10 carrying-opening rules (#87).
     assert set(_margins(part)) == (set(AERIAL_TO_KEY.values()) - FORK_KEYS) | {
-        "R6.guide_slides", "R13.bore_wall", "R10.grippable", "R10.within_payload"}
+        "R6.guide_slides", "R13.bore_wall", "R10.grippable", "R10.within_payload",
+        "R10.two_openings", "R10.hangs_below", "R10.straddles_com"}
     assert set(_fork_margins(part)) == FORK_KEYS
 
 

@@ -26,10 +26,10 @@ class PyramidParams(FamilyParams):
     peg_base_half: float = 8.0   # frustum half-width at its base
     peg_top_half: float = 1.0    # frustum half-width at its top
     peg_h: float = 6.0           # frustum height
-    bore_d: float = 2.0          # bore diameter before clearance
+    bore_d: float = 4.4          # bore diameter before clearance: 5 mm with it, a carrying opening (#87)
     bore_clearance: float = 0.3  # extra radius on each bore
     bore_x_frac: float = 0.6     # bore |x| as a fraction of U/2
-    bore_z_frac: float = 0.75    # bore height as a fraction of H0
+    bore_z_frac: float = 0.6     # bore height as a fraction of H0 (5 mm bores above the COM with a wall, #87)
 
     def __post_init__(self):
         super().__post_init__()
@@ -49,7 +49,7 @@ BOUNDS = {
     "peg_base_half": (6.0, 9.0),
     "peg_h": (4.0, 7.0),
     "bore_x_frac": (0.5, 0.7),
-    "bore_z_frac": (0.7, 0.8),
+    "bore_z_frac": (0.55, 0.7),
 }
 
 

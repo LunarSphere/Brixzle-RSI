@@ -48,7 +48,7 @@ So the base must receive a brick centred at x = 2U. A base whose pattern repeats
 
 ## Grip features
 
-R10 asks for at least one feature a non-actuated gripper could hold. It does not say which gripper, so don't size a feature for a fork or any other tool.
+R10 asks for at least two large through-Y openings, above and either side of the centre of mass, so the brick hangs level from two points (issue #87, approved by the maintainer on 2026-11-12). Each must fit a 5 mm circle: a bore at least 5 mm across, or an opening (a section hole given with `opening(...)`) whose largest inscribed circle is at least 5 mm across. Smaller features may still be listed, and count for `R10.grippable`. R10 does not say which gripper, so don't size an opening for a fork or any other tool.
 
 - **`kind`** is free text, such as `"bore"`, `"opening"`, `"slot"` or `"lip"`.
 - **A `"bore"` is the one kind the builders act on.** It is a round hole straight through Y, of diameter `size_mm[0]`, and the builders cut it into the solid. Make one with `interface.bore(x_mm, z_mm, d_mm)`.
@@ -80,6 +80,9 @@ A/B gives four: its two 2.6 mm bores and its two big lightening windows.
 | `R6.guide_slides` | The shallowest guide face's angle minus (atan μ_max + 8°), with μ_max = 0.4 |
 | `R9.mass_min`, `R9.mass_max` | Mass − 1 g, and 25 g − mass |
 | `R10.grippable` | Number of grip features − 1 |
+| `R10.two_openings` | Number of carrying openings − 2. A carrying opening is a through-Y grip feature a 5 mm circle fits in: a bore at least 5 mm across, or an opening whose outline's largest inscribed circle is at least 5 mm across (issue #87) |
+| `R10.hangs_below` | Over the two outermost carrying openings in X, the lower of their top points (an outline's highest z, or a bore's centre + d/2), − centre-of-mass height − 1 mm. −1 with fewer than two carrying openings |
+| `R10.straddles_com` | How far the centre of mass lies inside those two openings' centres in X, − 1 mm. −1 with fewer than two carrying openings |
 | `R10.within_payload` | 35 g − (mass + 5 g for the gripper). The 35 g payload carries the brick and the gripper together. The gripper isn't designed yet (issue #24), so 5 g is an allowance, not a measured mass. |
 | `R13.bore_wall` | Thinnest material round any bore, to the outline or a lightening hole, measured in the section, − 1.2 mm. Only if the part has a bore. |
 
