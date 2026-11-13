@@ -133,15 +133,15 @@ def test_thin_bore_wall_is_a_negative_margin_not_a_violation():
     def thin(p, part):
         b, *rest = wedge_module.pickup(p, part)
         top = wedge_module.underside(p, b.x_mm) + p.H0  # the W's top over the bore (#82)
-        return (replace(b, z_mm=top - b.radius_mm - 0.5), *rest)
+        return (replace(b, z_mm=top - b.radius_mm - 1.0), *rest)  # 1.0 mm: the 5 mm bore of #87 stays inside
 
     bad = replace(WEDGE, pickup=thin)
     assert "pickup" not in _checks(bad)
     p = WEDGE.defaults
     margins = R.margins(bad, p, "A", B.sim_bodies(bad, p, "A"))
-    # 0.5 mm below the slanted top vertically is (r + 0.5) cos(groove) - r perpendicular to it.
+    # 1.0 mm below the slanted top vertically is (r + 1.0) cos(groove) - r perpendicular to it.
     r = wedge_module.pickup(p, "A")[0].radius_mm
-    wall = (r + 0.5) * math.cos(math.radians(p.groove_deg)) - r
+    wall = (r + 1.0) * math.cos(math.radians(p.groove_deg)) - r
     assert margins["R13.bore_wall"] == pytest.approx(wall - 1.2, abs=1e-3)
 
 
