@@ -126,3 +126,16 @@ FAMILY = Family(
     pickup=pickup,
     extra_rules=extra_rules,
 )
+
+
+def _with_ring(family):
+    """A/B's ring kit (issue #89): engine/ring_cells.kit_from_cell from its cell."""
+    from dataclasses import replace
+
+    from brixzle.engine import ring_cells
+    from brixzle.families.ab import ring as ab_ring
+
+    return replace(family, ring=ring_cells.kit_from_cell(family, ab_ring.cell, stroke_mm=ab_ring.stroke_mm))
+
+
+FAMILY = _with_ring(FAMILY)

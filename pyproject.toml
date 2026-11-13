@@ -37,3 +37,4 @@ packages = ["src/brixzle"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["slow: a long sim run (deselect with -m 'not slow')"]

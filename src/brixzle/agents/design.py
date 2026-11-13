@@ -107,6 +107,12 @@ Rules:
   simulation after the quick check (the structure gate; the ring joins later). A design that cannot build them
   is rejected before it is scored, and a longer overhang is better: it is the loop's second objective.
   Pickup (R12) is deferred; only be grippable (R10).
+- Give the family a ring kit (Family.ring, a RingKit): a design that cannot close a ring is rejected. The
+  simplest is ring=engine.ring_cells.kit_from_cell(family, cell) from one cell: one voxel of a part's profile,
+  centred on x = 0, as a Section. cell(p, part, hooks=True, exposed_lo=False, exposed_hi=False, cut_hi=0.0):
+  with hooks=False, leave out any feature that seats along a slanted stroke (the turn piece's side arm nests by
+  its keel only); trim an exposed end as the straight brick's ends are; cut cut_hi more off the +x end (the
+  closer, the last brick of each course). check_family reports whether the kit builds ("ring").
 - R10: give the brick at least two large through-Y openings (each fits a 5 mm circle), above and either side
   of its centre of mass, so it hangs level from two points.
 - The drone's error is a disc in X-Y, not a line along X; a Y guide can only centre a brick whose centre of mass is still over the course below, so Y capture is at most about half the depth D, and depth costs mass.
@@ -146,7 +152,11 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
         parts.append(f"Parent design (the current best), to reshape or replace: {parent}")
     if brief is not None:
         parts.append("Redesign brief from the critic:\n" + json.dumps(brief, indent=2))
-    if failures and "structure_gate" in failures:
+    if failures and "ring" in failures:
+        parts.append("The last design was scored and would have been kept, but it could not close a ring (6 x 6 cells, "
+                     "2 courses, ideal placement; simulated, uncalibrated contact), so it was rejected. Where the ring "
+                     "stopped:\n" + json.dumps(failures["ring"], indent=2))
+    elif failures and "structure_gate" in failures:
         parts.append("The last attempt passed the quick check but failed the structure gate: it must build a tower, "
                      "a running-bond wall and a bridge, and an overhang of at least "
                      f"{failures['structure_gate']['overhang_floor']} bricks (each built on seeded repeats; "

@@ -324,6 +324,18 @@ def gate_lines(gate, seconds=None):
     return lines + [""]
 
 
+def ring_lines(ring):
+    """The ring build's line for summary.md (#89)."""
+    if not ring:
+        return []
+    if ring["status"] == "not_run":
+        return ["## Ring", "", f"The ring was not run: {ring['reason']}. Nothing was rejected on that ground.", ""]
+    stop = (ring.get("failure") or {}).get("stopped_at")
+    where = f", stopped at {stop['brick']} ({stop['outcome']})" if stop else ""
+    return ["## Ring", "", f"{ring['status']}: {ring['seated']} of {ring['total']} seated{where}, {ring['seconds']:.1f} s "
+            f"(6 x 6 cells, 2 courses, ideal placement; {LABEL}). Run: `{ring.get('run')}`.", ""]
+
+
 def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     """summary.md for one iteration, from the loop's record of it (orchestrator.Loop.iterate)."""
     i = rec["iteration"]
@@ -356,6 +368,7 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     else:
         lines += ["No design reached the full map this iteration, so there is no Z.", ""]
     lines += gate_lines(rec.get("gate"), (rec.get("seconds") or {}).get("gate"))
+    lines += ring_lines(rec.get("ring"))
     lines += ["## What changed and why", "", "The brief this iteration followed (the critic's, from the last iteration):", ""]
     lines += _brief_lines(rec.get("brief_in")) + [""]
     note = rec.get("note") or {}
@@ -431,6 +444,15 @@ def baseline_table(state):
                    + " |")
     out.append("| mass per part (g) | " + " | ".join(
         ", ".join(f"{k} {v:.2f}" for k, v in (r.get("mass_g") or {}).items()) or "–" for _, r in cols) + " |")
+    out.append("| overhang (bricks, #83) | " + " | ".join(
+        str(r["overhang_n"]) if r.get("overhang_n") is not None else "–" for _, r in cols) + " |")
+    out.append("| structure gate (#83) | " + " | ".join(
+        ("passed" if r["gate"]["passed"] else "failed") + ": " + ", ".join(
+            f"{k} {b['complete']}/{b['n']}" for k, b in r["gate"]["builds"].items() if not b.get("error"))
+        if r.get("gate") else "–" for _, r in cols) + " |")
+    out.append("| ring (#89) | " + " | ".join(
+        (f"{r['ring']['status']}, {r['ring']['seated']} of {r['ring']['total']} seated"
+         if r["ring"]["status"] != "not_run" else "not run") if r.get("ring") else "–" for _, r in cols) + " |")
     out.append("| map | " + " | ".join(f"`{r.get('runs', {}).get('map') or r.get('map')}`" for _, r in cols) + " |")
     if best["iteration"] == 0:
         out += ["", "No design beat the baseline, so the baseline is still the best."]

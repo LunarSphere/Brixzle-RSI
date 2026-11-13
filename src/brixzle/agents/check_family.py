@@ -90,8 +90,33 @@ def check(root, module, samples=2):
         except Exception as e:  # noqa: BLE001 - reported to the agent
             out["error"] = f"the aim drop raised {type(e).__name__}: {e}"
             return out
+    if not out["violations"] and not out["error"]:
+        out["ring"] = ring_report(fam)  # reported, not part of ok: the loop's ring build judges it (#89)
     out["ok"] = not out["violations"] and not any(i["broken"] for i in out["parts"].values()) and not out["error"]
     out["seconds"] = round(time.time() - t0, 2)
+    return out
+
+
+def ring_report(fam):
+    """Whether the family has a ring kit (issue #89) and whether its parts, plan and base build.
+    A design without one is rejected by the loop's ring build, after its map."""
+    from brixzle.families import builders as B
+
+    if fam.ring is None:
+        return {"kit": False, "parts": [], "built": False,
+                "error": "no ring kit: set Family.ring (the simplest is engine/ring_cells.kit_from_cell from one "
+                         "cell); a design that cannot close a ring is rejected"}
+    out = {"kit": True, "parts": sorted(fam.ring.parts), "built": False, "error": None}
+    try:
+        p = fam.defaults
+        plan = fam.ring.plan(p, 6, 2)
+        for part in dict.fromkeys(b.part for b in plan):
+            B.ring_bodies(fam, p, part)
+        if not fam.ring.base(p, 6):
+            raise ValueError("the ring base is empty")
+        out["built"] = True
+    except Exception as e:  # noqa: BLE001 - reported to the agent
+        out["error"] = f"the ring kit raised {type(e).__name__}: {e}"
     return out
 
 

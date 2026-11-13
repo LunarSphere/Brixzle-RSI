@@ -63,6 +63,7 @@ class FakeEngine:
         self.held_targets, self.tune_targets = [], []
         self.zs_x_only = []  # Z without Y offsets per scored design (issue #86); default: the same as zs
         self.gates = []  # (passed, overhang_n) per structure gate (issue #83); default: (True, 5)
+        self.rings = []  # ring build status per call (issue #89); default: 'complete'
 
     def _dir(self, name):
         self.n += 1
@@ -135,6 +136,18 @@ class FakeEngine:
              "builds": {"tower": build(True), "wall": build(ok), "bridge": build(True), "overhang": over},
              "label": "simulated, uncalibrated contact"}
         return g, d
+
+    def ring(self, family, p):
+        """The ring build (#89): ``rings`` is a status per call; default 'complete'."""
+        self.calls.append("ring")
+        status = self.rings.pop(0) if self.rings else "complete"
+        d = self._dir("ring")
+        ok = status == "complete"
+        stage = {"brick": "K2_1_0_2" if not ok else "S2_1_1.5_5", "part": "K2B", "outcome": "seated" if ok else "jammed",
+                 "err_mm": [0.0, 0.0, 0.0] if ok else [2.0, 0.0, 3.0], "angle_deg": 0.5, "collapsed": False,
+                 "sag_mm": 0.1}
+        return {"structure": "ring6x2", "status": status, "seated": 16 if ok else 15, "placed": 16, "total": 16,
+                "stages": [stage], "seconds": 3.0, "run": str(d), "label": "simulated, uncalibrated contact"}, d
 
     def tune(self, family, p, fixed=(), target=None):
         self.calls.append(("tune", tuple(fixed)))
@@ -699,3 +712,66 @@ def test_the_baseline_runs_the_gate_and_sets_the_overhang_to_beat(tmp_path, inta
     rec = loop.iterate(0)
     assert rec["gate"]["passed"] is True and rec["overhang_n"] == 5 and loop.state["best"]["overhang_n"] == 5
     assert engine.calls.index("gate") < next(i for i, c in enumerate(engine.calls) if isinstance(c, tuple))
+
+
+
+# --- the ring (issue #89) ---
+
+
+def test_a_design_that_would_be_kept_but_fails_the_ring_is_rejected(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7, 0.6], held=[0.2] * 6)
+    engine.rings = ["complete", "placement_jammed"]
+    loop, runner = _loop(tmp_path, intake, [design_step("r1"), critic_step(), design_step("r2"), critic_step(),
+                                            design_step("r3")], engine, max_iterations=3)
+    loop.state["iterations"].append(loop.iterate(1))
+    rec = loop.iterate(2)
+    assert rec["decision"] == "failed_ring" and "ring" in rec["reason"] and "placement_jammed" in rec["reason"]
+    assert loop.state["best"]["iteration"] == 1 and rec["ring"]["status"] == "placement_jammed"
+    assert rec["seconds"]["ring"] >= 0
+    log = [json.loads(line)["decision"] for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
+    assert log == ["kept", "failed_ring"]
+    loop.state["iterations"].append(rec)
+    loop.iterate(3)
+    prompt = [c for c in runner.calls if c.name == "design"][-1].prompt
+    assert "ring" in prompt and "K2_1_0_2" in prompt and "jammed" in prompt
+
+
+def test_a_design_that_passes_the_ring_is_kept(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5])
+    loop, _ = _loop(tmp_path, intake, [design_step(), critic_step()], engine, max_iterations=1)
+    rec = loop.iterate(1)
+    assert rec["decision"] == "kept" and rec["ring"]["status"] == "complete" and "ring" in engine.calls
+    text = (tmp_path / "RSI_RESULTS" / "t" / "iter-01" / "summary.md").read_text(encoding="utf-8")
+    assert "Ring" in text and "16 of 16" in text
+
+
+def test_a_design_rejected_anyway_gets_no_ring_build(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.3], held=[0.2] * 4)
+    loop, _ = _loop(tmp_path, intake, [design_step(), critic_step(), design_step(), critic_step()], engine)
+    state = loop.run()
+    assert [i["decision"] for i in state["iterations"]] == ["kept", "rejected"]
+    assert engine.calls.count("ring") == 1 and state["iterations"][1].get("ring") is None
+
+
+def test_the_baseline_gets_a_ring_build(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4])
+    engine.rings = ["placement_jammed"]
+    loop, _ = _loop(tmp_path, intake, [critic_step()], engine, parent="ab", max_iterations=1)
+    rec = loop.iterate(0)
+    assert rec["decision"] == "baseline" and rec["ring"]["status"] == "placement_jammed"  # recorded, not judged
+    assert loop.state["best"]["iteration"] == 0
+    loop.state["iterations"].append(rec)
+    loop.write_run_summary()
+    text = (tmp_path / "RSI_RESULTS" / "t" / "summary.md").read_text(encoding="utf-8")
+    assert "| ring (#89) | placement_jammed, 15 of 16 seated |" in text
+
+
+def test_no_ring_is_started_with_less_than_two_minutes_left(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5])
+    loop, _ = _loop(tmp_path, intake, [design_step(), critic_step()], engine, max_iterations=1, max_minutes=30.0)
+    loop._t0 = __import__("time").time() - (30 * 60 - 60)  # one minute left
+    rec = loop.iterate(1)
+    assert rec["decision"] == "kept" and "ring" not in engine.calls
+    assert rec["ring"]["status"] == "not_run" and "two minutes" in rec["ring"]["reason"]
+    text = (tmp_path / "RSI_RESULTS" / "t" / "iter-01" / "summary.md").read_text(encoding="utf-8")
+    assert "ring was not run" in text

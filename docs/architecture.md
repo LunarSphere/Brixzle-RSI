@@ -37,6 +37,8 @@ Each iteration:
    2. Z on every lower rung of the ladder is not below the best's;
    3. held-out Z on the current target is not worse at either friction.
 
+   A design the rule would keep then builds a **ring** (issue #89): 6 × 6 cells, 2 courses, ideal placement, from the family's ring kit. If it does not come out complete, the design is rejected (`failed_ring`), the best does not change, and the next design call gets the stage where the ring stopped. The ring is slow, so it runs last and only when it can change the decision; with less than two minutes of the run's wall-clock left it is not started and nothing is rejected on that ground. The parent's ring is built and shown too.
+
    Held-out Z uses the current target box's poses shifted by seed + 1, at μ 0.2 and 0.5. When the rung moves up, the best design's held-out Z on the new box is computed once and stored. Without a parent, the first scored design becomes the best. The critic never sees the held-out results.
 7. **Critic.** It writes a redesign brief for the current target, with the gate's results and `overhang_n` in its prompt, and the loop returns to step 1. It is not called when Z is 1 on the last rung, or on the last iteration.
 
@@ -217,6 +219,10 @@ The check is not the score. A design that seats every drop in the box always pas
 **Capture limits (issue #56).** A zone with no jam inside it can still be too narrow for the target box. So on each slice with an X axis, in the row through the aim, the first failing cell past each end of the green band is dropped again and reduced the same way. It is also dropped once at each friction coefficient, to show whether the edge moves with friction. The result is under `capture_limits`, one entry per slice, course and side.
 
 **Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
+
+### Ring build
+
+Issue #89. `engine/sim/ring_build.py` builds the ring a family's `RingKit` plans (see `docs/family-interface.md`), course by course, with the scene's bodies from `builders.ring_bodies` and the kit's base as static pieces. Each brick is released `release_lift_mm` above its seat, judged against its seat carried on the brick below, and the build stops at the first brick that does not seat or at a collapse (#81's test). A family with no kit gives `no_ring_kit`. `engine/ring_cells.py` ports aerial-assembly's ring (turn piece, corner straight, closer, the column check and the assembly order) as `kit_from_cell`. Output: `runs/ring-<UTC>-<family>/ring.json`, labelled "simulated, uncalibrated contact". `python -m brixzle.engine.sim.ring_build --family ab --courses 2`.
 
 ### Structure builds
 

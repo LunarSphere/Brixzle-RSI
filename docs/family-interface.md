@@ -33,6 +33,7 @@ To mark a design as infeasible, for example a profile that can't be built, a fam
 | `base(p, voxels, direction)` | The anchored base that receives course 0, in a frame where x = 0 is the first voxel's left edge. It can be a `Section`, a CadQuery solid (decomposed), or a list of exact convex vertex sets. A `Section` is extruded the same way as the family's bricks (Prismatic, e.g. the A/B gutter shear), or straight through D (Solid3D). |
 | `pickup(p, part)` | The part's **grip features** (R10 grippable, issue #50): a tuple of `GripFeature(kind, x_mm, z_mm, size_mm, outline=None)`, with at least one. A grip feature is anything a non-actuated gripper could hold. The gripper is designed after the brick (issue #24), so a feature says only what it is, where its centre is in the section frame, and its extent in X and Z. See [Grip features](#grip-features). |
 | `extra_rules(p, part, bodies)` | Optional. Family-specific margins `{"R<n>.<name>": value}`, where a value ≥ 0 means satisfied. |
+| `ring` | Optional, but a design without it is rejected: a `RingKit`, how the family turns a corner and closes a ring (issue #89). See [Ring kit](#ring-kit). |
 
 ## Where a brick seats in the checks and the sim
 
@@ -55,6 +56,24 @@ R10 asks for at least two large through-Y openings, above and either side of the
 - **Every other kind is already part of your geometry.** If it has an XZ outline, give it: `interface.opening(polygon)` wraps a section hole and takes its centre and size from the polygon's bounding box (pass `kind="slot"` or another name if "opening" doesn't fit). A feature with no outline, such as a lip on the brick's edge, is just `GripFeature("lip", x_mm, z_mm, (width, height))`.
 
 A/B gives four: its two 2.6 mm bores and its two big lightening windows.
+
+## Ring kit
+
+Issue #89. A design must close a ring: a square of n × n cells, course by course, as in R1. The family says how it turns a corner and how it closes a course; the engine (`engine/sim/ring_build.py`) builds what it plans, with ideal placement, and stops at the first brick that does not seat.
+
+**`RingKit(parts, solid, plan, base, collision=None)`:**
+
+- `parts`: the parts used only in a ring, for example the turn piece (`("L3A", "L3B", …)`).
+- `solid(p, part)`: the CadQuery solid of each, and optionally `collision(p, part)` as exact convex vertex sets (otherwise it is convex-decomposed, as for `Solid3D`).
+- `plan(p, n, courses)`: the ring's bricks in assembly order, each a `RingBrick(kind, part, course, pos_mm, quat, cells, name)`. The part may be one of the family's ordinary parts or one of the kit's; `cells` are the (i, j) cells it fills, which tell the build which brick it sits on.
+- `base(p, n)`: the anchored base under course 0, as convex vertex sets.
+
+**The simplest kit is `engine/ring_cells.kit_from_cell(family, cell, stroke_mm=None)`** (Prismatic families). It builds every ring part from one **cell**: one voxel of a part's profile, centred on x = 0, swept like the brick.
+
+- `cell(p, part, hooks=True, exposed_lo=False, exposed_hi=False, cut_hi=0.0) -> Section`. `hooks=False` leaves out any feature that seats along a slanted stroke: the turn piece's side arm must nest by its keel only. `exposed_lo` and `exposed_hi` say which ends face no neighbour in the same piece, to trim them as the straight brick's ends are. `cut_hi` cuts that much more off the +x end.
+- The parts: **L3**, the turn piece on even courses (a corner cell, one cell along +x and one along +y); **I3**, three straight cells that own the corner on odd courses, so the corner bond alternates; **K2**, the **closer**, the last brick of each course, its upstream end cut back by the stroke's sideways travel. The straight brick is the family's own part.
+- `stroke_mm(p)` is the slanted seating stroke's length for the closer's cut (default: `release_lift_mm`). A/B passes its tooth stroke, `tooth_L + slot_extra`, since its release lift also holds the sawtooth's drop.
+- A/B's kit (`families/ab/ring.py`) is `kit_from_cell` with a port of aerial-assembly's `cell_profile`.
 
 ## Two ways to describe the geometry
 

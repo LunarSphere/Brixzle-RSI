@@ -185,6 +185,35 @@ class SimBodies:
 
 
 @dataclass(frozen=True)
+class RingBrick:
+    """One brick of a ring (issue #89): its part (one of the family's parts or of its ring kit), its
+    course, its seat pose (mm, quaternion [w, x, y, z]) and the cells (i, j) of the course it fills."""
+
+    kind: str                 # e.g. 'S2' (the straight brick), 'L3' (a turn), 'I3', 'K2' (the closer)
+    part: str
+    course: int
+    pos_mm: tuple[float, float, float]
+    quat: tuple[float, float, float, float]
+    cells: tuple[tuple[int, int], ...]
+    name: str
+
+
+@dataclass(frozen=True)
+class RingKit:
+    """What a family needs to close a ring (issue #89). ``parts`` are the parts used only in a ring;
+    ``solid(p, part)`` is the CadQuery solid of each and ``collision(p, part)`` optionally its exact
+    convex vertex sets (otherwise it is convex-decomposed); ``plan(p, n, courses)`` the ring's
+    bricks in assembly order (RingBrick); ``base(p, n)`` the anchored base under course 0, as convex
+    vertex sets (mm, world frame). engine/ring_cells.kit_from_cell builds one from a single cell."""
+
+    parts: tuple[str, ...]
+    solid: Callable[[Any, str], Any]
+    plan: Callable[[Any, int, int], list]
+    base: Callable[[Any, int], list]
+    collision: Callable[[Any, str], list] | None = None
+
+
+@dataclass(frozen=True)
 class Family:
     """The contract. Every callable takes the family's params object ``p`` first."""
 
@@ -203,6 +232,7 @@ class Family:
     base: Callable[[Any, int, int], Any]  # (p, voxels, direction) -> Section | cq shape | pieces
     pickup: Callable[[Any, str], tuple[GripFeature, ...]]    # (p, part) -> the part's grip features (R10)
     extra_rules: Callable[[Any, str, SimBodies], dict[str, float]] | None = None  # (p, part, bodies)
+    ring: RingKit | None = None  # how the family turns a corner and closes a ring (issue #89)
 
     @property
     def defaults(self):
