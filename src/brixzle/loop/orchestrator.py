@@ -54,6 +54,7 @@ from brixzle.engine import boxes as BX
 from brixzle.engine import jam_analysis as JA
 from brixzle.engine import quick_check as QC
 from brixzle.engine import report as RP
+from brixzle.engine import structure_gate as SG
 from brixzle.engine import sim_map as SM
 from brixzle.engine import tune as TU
 from brixzle.engine import zscore as ZS
@@ -82,6 +83,12 @@ class SimEngine:
     def quick_check(self, family, p):
         res = QC.quick_check(family, p, self.boxes[self.cfg.target], seed=self.cfg.seed)  # along X (#97)
         return res, QC.write_check(res, self.cfg.runs)
+
+    def gate(self, family, p):
+        """(gate, run directory): the structure gate (#83), every structure built on seeded repeats."""
+        g = SG.run_gate(family, p, runs=self.cfg.runs, seed=self.cfg.seed, workers=self.cfg.workers)
+        g = {k: v for k, v in g.items() if k != "repeat_results"}  # the full builds are in the run directory
+        return g, Path(g["run"])
 
     def score(self, family, p, check, allow_failed_check=False):
         """(report, map directory): the full map covering every target box, and Z per target.
@@ -153,17 +160,32 @@ def at_top(best, cfg: LoopConfig):
     return best is not None and z_on(best, rungs(cfg)[-1]) >= 1.0
 
 
-def accept(z, held, best, lower=()):
+def accept(z, held, best, lower=(), overhang=None):
     """(kept, reason). ``z`` is the new design's Z on the current target, ``held`` its held-out
-    counts on that box; ``best`` the current best on the same box ({'z_target', 'held_out'}) or
-    None; ``lower`` is (box, new Z, best's Z) for every lower rung of the ladder (#84).
+    counts on that box; ``best`` the current best on the same box ({'z_target', 'held_out'} and,
+    since #83, 'overhang_n') or None; ``lower`` is (box, new Z, best's Z) for every lower rung of
+    the ladder (#84); ``overhang`` the new design's overhang length (#83).
 
-    Kept only if Z on the target improves, Z on no lower rung falls below the best's, and held-out
-    Z is not worse at either friction."""
+    Kept only if, on the pair (Z on the target, overhang length), neither is lower than the best's
+    and at least one is higher (Z alone if either has no overhang length); Z on no lower rung falls
+    below the best's; and held-out Z is not worse at either friction."""
     if best is None:
         return True, "first scored design"
-    if not z > best["z_target"]:
-        return False, f"Z on the target did not improve ({z:+.3f}, best {best['z_target']:+.3f})"
+    bz, bo = best["z_target"], best.get("overhang_n")
+    if overhang is None or bo is None:
+        if not z > bz:
+            return False, f"Z on the target did not improve ({z:+.3f}, best {bz:+.3f})"
+        better = f"Z on the target improved ({bz:+.3f} -> {z:+.3f})"
+    else:
+        if z < bz:
+            return False, f"Z on the target did not improve ({z:+.3f}, best {bz:+.3f})"
+        if overhang < bo:
+            return False, f"the overhang got shorter ({overhang} < best {bo} bricks)"
+        if not (z > bz or overhang > bo):
+            return False, (f"Z on the target did not improve ({z:+.3f}, best {bz:+.3f}) and the overhang did not "
+                           f"grow ({overhang} bricks, best {bo})")
+        better = "; ".join(x for x in (f"Z on the target improved ({bz:+.3f} -> {z:+.3f})" if z > bz else "",
+                                       f"the overhang grew ({bo} -> {overhang} bricks)" if overhang > bo else "") if x)
     down = [f"{s} {zn:+.3f} < {zb:+.3f}" for s, zn, zb in lower if zn < zb]
     if down:
         return False, "Z on a lower rung got worse: " + "; ".join(down)
@@ -171,7 +193,7 @@ def accept(z, held, best, lower=()):
              if k in held and held[k]["Z"] < v["Z"]]
     if worse:
         return False, "held-out Z got worse: " + "; ".join(worse)
-    return True, f"Z on the target improved ({best['z_target']:+.3f} -> {z:+.3f}), held-out not worse"
+    return True, f"{better}, held-out not worse"
 
 
 def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
@@ -202,6 +224,12 @@ def objective_z(report, cfg: LoopConfig):
     """Z per target as the loop judges it: with the X-Y disc (#86), or X offsets only with
     ``y_error=False`` (a report from before #86 has only ``z``)."""
     return report["z"] if cfg.y_error else report.get("z_x_only", report["z"])
+
+
+def gate_record(gate, run_dir):
+    """The gate's verdict as stored in an iteration: per structure, no stages (#83)."""
+    return {"passed": gate["passed"], "overhang_n": gate["overhang_n"], "overhang_floor": gate["overhang_floor"],
+            "builds": gate["builds"], "seconds": gate["seconds"], "repeats": gate.get("repeats"), "run": str(run_dir)}
 
 
 def failures_for_agent(check, limit=9):
@@ -333,7 +361,7 @@ class Loop:
     def render_progress(self):
         its = self.state["iterations"]
         history = [{"iteration": i["iteration"], "decision": i["decision"], "z": i.get("z"),
-                    "target": i.get("target")} for i in its if i["iteration"] >= 1]
+                    "target": i.get("target"), "overhang_n": i.get("overhang_n")} for i in its if i["iteration"] >= 1]
         base = next((i for i in its if i["iteration"] == 0 and i.get("z")), None)
         RD.progress_png(history, self.results / "progress.png", self.cfg.target,
                         title=f"{self.name}: Z per iteration (target {self.cfg.target}); {LABEL}",
@@ -366,6 +394,11 @@ class Loop:
         rec["quick_check"] = {"passed": check["passed"], "seated": check["seated"], "dropped": check["dropped"],
                               "outcomes": check["outcomes"], "run": str(check_dir)}
         rec["runs"]["quick_check"] = str(check_dir)
+        t = time.time()
+        gate, gate_dir = self.engine.gate(fam, fam.defaults)  # recorded, never turned back: it is the reference
+        rec["seconds"]["gate"] = time.time() - t
+        rec["gate"], rec["runs"]["gate"] = gate_record(gate, gate_dir), str(gate_dir)
+        rec["overhang_n"] = gate["overhang_n"]
         return self._score(rec, fam, check, res_dir, None, spent0, t_iter)
 
     def iterate(self, i):
@@ -435,14 +468,28 @@ class Loop:
                 failures = failures_for_agent(check)
                 fam = None
                 continue
-            att["decision"] = "passed_quick_check"
+            t = time.time()
+            gate, gate_dir = self.engine.gate(fam, fam.defaults)
+            rec["seconds"]["gate"] = time.time() - t
+            att["gate"] = gate_record(gate, gate_dir)
+            if not gate["passed"]:
+                att["decision"] = "failed_structure_gate"
+                self.log.append({**entry, "decision": "failed_structure_gate", "quick_check": att["quick_check"],
+                                 "gate": SG.failures_text(gate), "overhang_n": gate["overhang_n"],
+                                 "runs": {"quick_check": str(check_dir), "gate": str(gate_dir)}})
+                failures = {"structure_gate": SG.failures_for_agent(gate)}
+                fam = None
+                continue
+            att["decision"] = "passed_structure_gate"
             rec.update(module=module, root=str(outcome.workspace.root), family=att["family"], note=outcome.note)
             rec["runs"]["quick_check"] = str(check_dir)
+            rec["gate"], rec["runs"]["gate"], rec["overhang_n"] = att["gate"], str(gate_dir), gate["overhang_n"]
             break
         if fam is None:
             rec["reason"] = (f"the design call failed twice with the same error, so it was not tried again: "
                              f"{repeated[:300]}" if repeated else
-                             f"no design passed the contract and the quick check in {cfg.design_attempts} attempts")
+                             f"no design passed the contract, the quick check and the structure gate in "
+                             f"{cfg.design_attempts} attempts")
             rec["spent_usd"] = self.ledger.spent() - spent0
             rec["seconds"]["total"] = time.time() - t_iter
             if outcome is not None and outcome.ok:
@@ -484,12 +531,14 @@ class Loop:
         else:
             ladder = rungs(cfg)
             lower = [(s, rec["z"][s]["Z"], z_on(best, s)) for s in ladder[:ladder.index(target)]] if best else []
-            view = {"z_target": z_on(best, target), "held_out": {}} if best else None
-            kept, why = accept(z_t, held, view, lower)
+            view = ({"z_target": z_on(best, target), "held_out": {}, "overhang_n": best.get("overhang_n")}
+                    if best else None)
+            over = rec.get("overhang_n")
+            kept, why = accept(z_t, held, view, lower, over)
             if kept and view is not None and held:
                 # The best's held-out Z on this box, computed once when the rung moves up (#84).
                 view["held_out"] = self._best_held_out(target, rec)
-                kept, why = accept(z_t, held, view, lower)
+                kept, why = accept(z_t, held, view, lower, over)
             rec["decision"] = "kept" if kept else "rejected"
         rec["reason"] = why
         if kept:
@@ -497,11 +546,13 @@ class Loop:
                                   "family_py": str(family_py(rec)), "registry": rec.get("registry"),
                                   "z_target": z_t, "target": target, "z": rec["z"], "held_out": held,
                                   "held_out_by": {target: held} if held else {}, "map": str(map_dir),
-                                  "mass_g": rec.get("mass_g")}
+                                  "mass_g": rec.get("mass_g"), "overhang_n": rec.get("overhang_n"),
+                                  "gate": (rec.get("runs") or {}).get("gate")}
         sim_map = self.engine.read_map(map_dir)
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
                          "module": rec["module"], "decision": rec["decision"], "reason": why, "note": rec["note"],
                          "z": rec["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
+                         "overhang_n": rec.get("overhang_n"),
                          "brief_followed": (brief or {}).get("reason"), "runs": dict(rec["runs"])})
         t = time.time()
         picks = []
@@ -526,7 +577,7 @@ class Loop:
                 rec["critic_target"] = current_target(self.state, cfg)  # the rung the next design is judged on
                 brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
                                             rec["critic_target"], budget_usd=cfg.critic_budget_usd,
-                                            lessons_text=self.lessons_text())
+                                            lessons_text=self.lessons_text(), gate=rec.get("gate"))
                 rec["brief"], rec["critic_cost_usd"] = brief, result.cost_usd
             except BudgetExceeded:
                 raise

@@ -20,13 +20,14 @@ Each iteration of the loop redesigns the brick's shape and tests it in simulatio
 
 1. The design agent builds a brick family from the concept sketch, the requirements and the last redesign brief.
 2. A quick check drops the brick 40 times inside the target error box in MuJoCo. A weak design goes straight back to step 1.
-3. A full map of drops shows where the brick seats, jams, lands in the wrong valley or falls.
-4. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
-5. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
+3. A structure gate builds a tower, a running-bond wall, a bridge and an overhang in simulation, each on seeded repeats. A design that cannot build them goes back to step 1.
+4. A full map of drops shows where the brick seats, jams, lands in the wrong valley or falls.
+5. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
+6. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
 
 The loop does not tune numbers inside an iteration. When Z reaches 1 on the last box or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
 
-The target climbs a ladder (issue #84): a run starts on `--target`, and once the best design reaches Z = 1 there it is judged on the next box (mean, then p95, then max). A design is kept only if it raises Z on the current box without lowering it on a box below. `--no-ladder` stays on `--target`.
+The target climbs a ladder (issue #84): a run starts on `--target`, and once the best design reaches Z = 1 there it is judged on the next box (mean, then p95, then max). A design is kept only if, on Z on the current box and the overhang's length (issue #83), neither is lower than the best's and one is higher, without lowering Z on a box below. `--no-ladder` stays on `--target`.
 
 A design's objective is **Z** (issue #61). For a target error box in X, release height and θ, take every drop of the full sim map inside the box: Z = (seated − jammed) / drops, so it runs from −1 to 1, and Z = 1 (every drop seated) passes. Each design is scored on three target boxes, sized to the drone's mean, 95th-percentile and worst measured error. Z is counted over the box, not the green zone, so a design cannot raise it by narrowing where it seats.
 

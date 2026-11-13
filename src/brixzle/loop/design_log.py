@@ -24,7 +24,8 @@ from pathlib import Path
 
 FILE = "design_log.jsonl"
 HIDDEN = ("held_out",)  # keys the agents never see
-DECISIONS = ("baseline", "kept", "rejected", "failed_contract", "failed_quick_check", "error")
+DECISIONS = ("baseline", "kept", "rejected", "failed_contract", "failed_quick_check", "failed_structure_gate",
+             "error")
 REQUIRED = ("iteration", "attempt", "family", "decision")
 
 

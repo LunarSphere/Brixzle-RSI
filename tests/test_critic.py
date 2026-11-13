@@ -90,3 +90,18 @@ def test_the_critic_reads_y_capture_and_the_x_y_disc():
     assert "Y capture, course 0" in call.prompt and "-y 6.0 mm, +y 4.0 mm" in call.prompt
     assert "Z with X offsets only" in call.prompt
     assert "disc in X-Y" in call.system and "half the depth" in call.system
+
+
+def test_the_critic_reads_the_structure_gate_and_the_overhang():
+    """Issue #83: the gate's results and overhang_n go to the critic, which must keep the gate passing."""
+    gate = {"passed": True, "overhang_n": 5, "overhang_floor": 3, "repeats": 5, "run": "runs/gate-x-ab",
+            "builds": {name: {"passed": True, "complete": 5, "n": 5, "stable_bricks": [k] * 5, "total": k,
+                              "failed_brick": [None] * 5, "error": None, **({"overhang_n": 5} if name == "overhang" else {})}
+                       for name, k in (("tower", 3), ("wall", 10), ("bridge", 7), ("overhang", 12))}}
+    gate["builds"]["overhang"]["stable_bricks"] = [5] * 5
+    gate["builds"]["overhang"]["failed_brick"] = ["b5_5"] * 5
+    runner = RN.ScriptedRunner([RN.AgentResult(structured=GOOD, cost_usd=0.03)])
+    CR.critique(runner, REPORT, MAP, JAM, "FAMILY = Family(...)", "none", "mean", gate=gate)
+    call = runner.calls[0]
+    assert "Structure gate" in call.prompt and "overhang_n 5" in call.prompt and "b5_5" in call.prompt
+    assert "keep the structure gate passing" in call.system and "raise the overhang" in call.system

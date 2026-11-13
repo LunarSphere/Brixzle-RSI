@@ -220,7 +220,8 @@ def progress_png(history, out, target, title=None, baseline=None):
     ``history`` is [{iteration, decision, z: {statistic: counts} | None, target}]: ``target`` is
     the rung each design was judged on (#84; default ``target``); a dashed line marks where it
     changed, and the marker shows Z on that rung. ``baseline`` is the parent's {family, z}
-    (iteration 0, #85), drawn as one horizontal line per box."""
+    (iteration 0, #85), drawn as one horizontal line per box. An ``overhang_n`` in the history
+    (#83) is drawn on a second axis, in bricks."""
     fig, ax = plt.subplots(figsize=(7.0, 3.8), facecolor=BG)
     ax.set_facecolor(BG)
     stats = []
@@ -254,7 +255,16 @@ def progress_png(history, out, target, title=None, baseline=None):
                 mfc=styles.get(t, "#1f3b63") if kept else "white")
     ax.plot([], [], marker="o", ls="none", mfc="#1f3b63", mec="#1f3b63", label="kept (Z on its rung)")
     ax.plot([], [], marker="o", ls="none", mfc="white", mec="#1f3b63", label="rejected")
-    ax.plot([], [], marker="x", ls="none", color=COLOURS["F"], label="no design passed the quick check")
+    ax.plot([], [], marker="x", ls="none", color=COLOURS["F"], label="no design passed the quick check and the gate")
+    over = [(h["iteration"], h["overhang_n"]) for h in history if h.get("overhang_n") is not None]
+    if over:
+        ax2 = ax.twinx()
+        xs, ys = zip(*over)
+        ax2.plot(xs, ys, color="#b5651d", lw=1.2, ls="-.", marker="s", ms=4)
+        ax2.set_ylabel("overhang (bricks)", color="#b5651d")
+        ax2.set_ylim(0, max(12, max(ys)) + 0.5)
+        ax2.tick_params(axis="y", colors="#b5651d")
+        ax.plot([], [], color="#b5651d", lw=1.2, ls="-.", marker="s", ms=4, label="overhang (right axis)")
     ax.axhline(1.0, color=COLOURS["S"], lw=1, ls="--")
     ax.set_ylim(-1.05, 1.05)
     ax.set_xlabel("iteration")
@@ -290,6 +300,30 @@ def _brief_lines(brief):
     return out
 
 
+GATE_SLOW_S = 60.0  # a gate slower than this is flagged in the summary (#83)
+
+
+def gate_lines(gate, seconds=None):
+    """The structure gate's table for summary.md (#83)."""
+    if not gate:
+        return []
+    lines = [f"## Structure gate", "",
+             f"{'Passed' if gate['passed'] else 'FAILED'}: overhang {gate['overhang_n']} bricks "
+             f"(floor {gate['overhang_floor']}). Each structure built on {gate.get('repeats', '?')} seeded repeats with "
+             f"ideal placement and a tiny release jitter; it passes when most complete. {LABEL}.", "",
+             "| Structure | Verdict | Complete | Stable bricks per repeat | Stopped at |", "|---|---|---|---|---|"]
+    for name, b in gate["builds"].items():
+        if b.get("error"):
+            lines.append(f"| {name} | failed | - | - | {b['error']} |")
+            continue
+        stops = ", ".join(sorted({x for x in b["failed_brick"] if x})) or "-"
+        lines.append(f"| {name} | {'passed' if b['passed'] else 'failed'} | {b['complete']} of {b['n']} | "
+                     f"{b['stable_bricks']} of {b['total']} | {stops} |")
+    if seconds is not None and seconds > GATE_SLOW_S:
+        lines += ["", f"The gate took {seconds:.1f} s, more than {GATE_SLOW_S:.0f} s."]
+    return lines + [""]
+
+
 def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     """summary.md for one iteration, from the loop's record of it (orchestrator.Loop.iterate)."""
     i = rec["iteration"]
@@ -306,6 +340,8 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
         qc = rec["quick_check"]
         lines += [f"Quick check: {qc['seated']} of {qc['dropped']} seated ("
                   + ("passed" if qc["passed"] else "failed; the baseline is scored either way") + ").", ""]
+    if rec.get("overhang_n") is not None:
+        lines += [f"Overhang: {rec['overhang_n']} bricks (the second objective, #83).", ""]
     if rec.get("mass_g"):
         lines += ["Mass per part: " + ", ".join(f"{k} {v:.2f} g" for k, v in rec["mass_g"].items()) + ".", ""]
     lines += ["## Z per target box", ""]
@@ -319,6 +355,7 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
             lines.append("")
     else:
         lines += ["No design reached the full map this iteration, so there is no Z.", ""]
+    lines += gate_lines(rec.get("gate"), (rec.get("seconds") or {}).get("gate"))
     lines += ["## What changed and why", "", "The brief this iteration followed (the critic's, from the last iteration):", ""]
     lines += _brief_lines(rec.get("brief_in")) + [""]
     note = rec.get("note") or {}
@@ -327,11 +364,12 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
                   f"Changes: {note.get('changes', '')}", "",
                   f"Geometry: {note.get('geometry', '?')}" + (f" ({note['solid3d_reason']})"
                                                               if note.get("solid3d_reason") else ""), ""]
-    lines += ["Attempts:", "", "| Attempt | Package | Outcome | Quick check |", "|---|---|---|---|"]
+    lines += ["Attempts:", "", "| Attempt | Package | Outcome | Quick check | Structure gate |", "|---|---|---|---|---|"]
     for a in rec.get("attempts", []):
-        qc = a.get("quick_check")
+        qc, g = a.get("quick_check"), a.get("gate")
         q = f"{qc['seated']} of {qc['dropped']} seated" if qc else "not run"
-        lines.append(f"| {a['attempt']} | `{a['module']}` | {a.get('decision', '?')} | {q} |")
+        gt = (f"{'passed' if g['passed'] else 'failed'}, overhang {g['overhang_n']}" if g else "not run")
+        lines.append(f"| {a['attempt']} | `{a['module']}` | {a.get('decision', '?')} | {q} | {gt} |")
     lines += ["", "## The critic's brief for the next iteration", ""]
     lines += _brief_lines(rec.get("brief")) if rec.get("brief") else [
         f"- none ({rec.get('critic_error') or 'the critic was not run this iteration'})"]
@@ -350,10 +388,14 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     lines += ["", "## Runs behind these numbers", ""]
     if rec.get("runs", {}).get("quick_check") and not rec.get("attempts"):
         lines.append(f"- quick check (seed in `check.json`): `{rec['runs']['quick_check']}`")
+    if rec.get("runs", {}).get("gate") and not rec.get("attempts"):
+        lines.append(f"- structure gate (seed in `gate.json`): `{rec['runs']['gate']}`")
     for a in rec.get("attempts", []):
         lines.append(f"- design package, attempt {a['attempt']}: `{a['root']}/{a['module']}`")
         if a.get("quick_check"):
             lines.append(f"- quick check, attempt {a['attempt']} (seed in `check.json`): `{a['quick_check']['run']}`")
+        if a.get("gate"):
+            lines.append(f"- structure gate, attempt {a['attempt']} (seed in `gate.json`): `{a['gate']['run']}`")
     runs = rec.get("runs", {})
     if runs.get("map"):
         lines += [f"- full sim map and report (Z): `{runs['map']}/map.json`, `{runs['map']}/report.json`",
