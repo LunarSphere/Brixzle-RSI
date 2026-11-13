@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/cad.py @ a649663
-# Changed: _wire, _swept, _pieces and _mesh take an Extrusion instead of BrickParams; the bore cut and mass properties follow build_brick; Solid3D support (y = 0 slice, CoACD decomposition), coverage and caching are new.
+# Changed: _wire, _swept, _pieces and _mesh take an Extrusion instead of BrickParams; the bore cut and mass properties follow build_brick; Solid3D support (y = 0 slice, CoACD decomposition), coverage and caching are new; _pieces cuts a canonical ring with the fewest parts (canonical_ring, convex_cut; issue #98) instead of polygon.simplify(1e-4).
 """Shared builders: everything the engine needs from a family, derived from its geometry.
 
 Prismatic families give a section and an extrusion; the solid is the section swept through the
@@ -57,11 +57,74 @@ def _swept(polygon, holes, extrusion: Extrusion):
     return shape.clean()
 
 
+RING_TOL_MM = 1e-4  # a vertex this close to the line through its neighbours is on an edge
+START_ROUND_MM = 1e-6  # the start vertex is picked on coordinates rounded to this
+
+
+def _off_line(a, b, c):
+    """Distance (mm) from b to the line through a and c (to a if they coincide)."""
+    ac = c - a
+    n = float(np.hypot(*ac))
+    if n < 1e-12:
+        return float(np.hypot(*(b - a)))
+    return abs(float(ac[0] * (b[1] - a[1]) - ac[1] * (b[0] - a[0]))) / n
+
+
+def canonical_ring(polygon, tol=RING_TOL_MM):
+    """The outline's vertices (an (n, 2) array, open ring) in a form that does not depend on how the
+    ring was written: counter-clockwise, without points on straight edges or repeated points, and
+    starting at the lowest vertex (then the leftmost).
+
+    The convex cut (ear clipping, then Hertel-Mehlhorn) depends on the vertex order, so the same
+    outline written from a different start, or with an extra point on an edge, was cut into
+    different pieces, and A/B part B's outline is written differently on Linux x86_64 and macOS
+    arm64 (issue #98). Points are removed one at a time, the one nearest its neighbours' line first,
+    so the result does not depend on the start either."""
+    pts = np.asarray(polygon.exterior.coords, dtype=float)[:-1]
+    x, z = pts[:, 0], pts[:, 1]
+    if float(np.sum(x * np.roll(z, -1) - np.roll(x, -1) * z)) < 0:
+        pts = pts[::-1]
+    pts = [p for p in pts]
+    while len(pts) > 3:
+        n = len(pts)
+        off = [_off_line(pts[i - 1], pts[i], pts[(i + 1) % n]) for i in range(n)]
+        i = int(np.argmin(off))
+        if off[i] > tol:
+            break
+        pts.pop(i)
+    pts = np.asarray(pts)
+    key = np.round(pts / START_ROUND_MM).astype(np.int64)
+    start = min(range(len(pts)), key=lambda i: (key[i, 1], key[i, 0]))
+    return np.roll(pts, -start, axis=0)
+
+
+_cuts: dict = {}
+
+
+def convex_cut(polygon):
+    """Convex 2D parts of the outline: the canonical ring cut from each of its vertices in turn,
+    keeping the cut with the fewest parts (the first such start, in the canonical ring's order).
+
+    Hertel-Mehlhorn's result depends on where the ring starts (the wedge's W: 4 to 6 parts); the
+    fewest gives fewer collision geoms, and the rule fixes the cut whatever the platform (issue
+    #98). Memoised per ring (coordinates rounded to START_ROUND_MM), since a large base takes about
+    2 s (59 vertices)."""
+    ring = canonical_ring(polygon)
+    key = (ring.shape, np.round(ring / START_ROUND_MM).astype(np.int64).tobytes())
+    if key not in _cuts:
+        best = None
+        for k in range(len(ring)):
+            parts = convex_parts(np.roll(ring, -k, axis=0))
+            if best is None or len(parts) < len(best):
+                best = parts
+        _cuts[key] = best
+    return _cuts[key]
+
+
 def _pieces(polygon, extrusion: Extrusion):
-    """Convex 3D vertex sets (mm) covering the banded sweep of polygon."""
-    coords = np.asarray(polygon.simplify(1e-4).exterior.coords)[:-1]
+    """Convex 3D vertex sets (mm) covering the banded sweep of polygon, cut by convex_cut."""
     pieces = []
-    for q in convex_parts(coords):
+    for q in convex_cut(polygon):
         for y0, y1, z0, z1 in extrusion.resolved_bands():
             near = np.column_stack([q[:, 0], np.full(len(q), y0), q[:, 1] + z0])
             far = np.column_stack([q[:, 0], np.full(len(q), y1), q[:, 1] + z1])

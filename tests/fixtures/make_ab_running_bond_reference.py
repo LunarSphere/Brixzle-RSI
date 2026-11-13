@@ -7,9 +7,10 @@ their outcomes and settled poses. The sampled errors are still checked against a
 
     uv run python tests/fixtures/make_ab_running_bond_reference.py tests/fixtures/ab_drop_running_bond.json
 
-It adds (or refuses to replace) the entry for the platform it runs on. On macOS arm64 (the reference
-platform) it also keeps the settled poses. The Linux x86_64 outcomes were copied from the CI runner's
-failure message, which lists them when a platform has no entry. Simulated, uncalibrated contact.
+Since issue #98 (a canonical convex cut, multiccd off) the outcomes are the same on every platform, so
+one set is written; CI checks it on Linux x86_64. The settled poses are kept for the exact check on
+macOS arm64 (the reference platform), since mass properties still differ by platform at 1e-3.
+Run it on macOS arm64; it overwrites the file. Simulated, uncalibrated contact.
 """
 
 import json
@@ -29,10 +30,9 @@ from brixzle.engine.sim import trials as T  # noqa: E402
 
 def main(out):
     out = Path(out)
-    doc = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {"platforms": {}}
     here = f"{platform.system()} {platform.machine()}".replace("Darwin", "macOS")
-    if here in doc["platforms"]:
-        raise SystemExit(f"{out} already has {here}; remove that entry first if you mean to regenerate it")
+    if here != "macOS arm64":
+        raise SystemExit(f"run this on macOS arm64 (the poses are pinned there), not {here}")
     cases = []
     for case in R.CASES:
         rows, _ = T.drop_trials(R.AB, R.V0, R._config(case["error"]), samples=case["samples"], seed=case["seed"],
@@ -40,11 +40,13 @@ def main(out):
         cases.append({"name": case["name"], "rows": [{"outcome": r["outcome"], "floor": bool(r["floor"]),
                                                       "err_mm": [float(v) for v in r["err_mm"]],
                                                       "angle_deg": float(r["angle_deg"])} for r in rows]})
-    doc["label"] = "simulated, uncalibrated contact"
-    doc["platforms"][here] = {"source": {"what": "this repo's DropRig, course 1 across two seated course-0 bricks "
-                                                 "(issue #82)", "platform": here, "mujoco": mujoco.__version__,
-                                         "date": date.today().isoformat()},
-                              "cases": cases}
+    doc = {"label": "simulated, uncalibrated contact",
+           "note": "Outcomes of A/B's two course-1 reference cases under the running bond (issue #82), the same "
+                   "on every platform since the canonical cut and multiccd off (issue #98). Settled poses are "
+                   "checked exactly on macOS arm64 only.",
+           "source": {"what": "this repo's DropRig, course 1 across two seated course-0 bricks (issues #82, #98)",
+                      "platform": here, "mujoco": mujoco.__version__, "date": date.today().isoformat()},
+           "cases": cases}
     out.write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n", encoding="utf-8")
 
 

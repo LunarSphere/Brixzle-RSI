@@ -44,7 +44,6 @@ from brixzle.engine.sim.fork import ForkParams, build_fork
 from brixzle.engine.sim.scene import MM, _numbers, activate, body_pose, build_scene
 from brixzle.engine.sim.trials import TrialConfig, _brick_geoms, _contact_name, _trace_rows
 from brixzle.families import builders as B
-from brixzle.families.convex import convex_parts
 from brixzle.families.interface import Placement, Prismatic, grip_bores, grip_openings
 
 SEAT = Placement(0, 1)   # the waiting brick: course 0 at voxel 1, as in the drop trial
@@ -159,8 +158,7 @@ def bored_collision(family, p, part, sub_bands=3):
                     continue
                 if poly.interiors:
                     raise ValueError("bored section still has a hole")
-                coords = np.asarray(poly.simplify(1e-4).exterior.coords)[:-1]
-                for q in convex_parts(coords):
+                for q in B.convex_cut(poly):  # issue #98
                     near = np.column_stack([q[:, 0], np.full(len(q), ya), q[:, 1] + za])
                     far = np.column_stack([q[:, 0], np.full(len(q), yb), q[:, 1] + zb])
                     pieces.append(np.vstack([near, far]))
