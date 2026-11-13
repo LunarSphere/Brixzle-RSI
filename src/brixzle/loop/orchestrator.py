@@ -247,6 +247,7 @@ class Loop:
         rec = {"iteration": i, "dir": str(iter_dir), "results": str(res_dir), "brief_in": brief, "attempts": [],
                "decision": "no_design", "z": None, "runs": {}, "seconds": {}}
         failures, fam, outcome, check = None, None, None, None
+        last_err, repeated = None, None
         for a in range(1, cfg.design_attempts + 1):
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
@@ -264,6 +265,10 @@ class Loop:
                                  "decision": "error", "reason": err[:500]})
                 failures = {"error": "the last design call failed before it finished; start again"}
                 outcome = None
+                if err == last_err:  # the same call would fail the same way and cost the same again (#79)
+                    repeated = err
+                    break
+                last_err = err
                 continue
             att = {"attempt": a, "module": module, "root": str(outcome.workspace.root),
                    "design_cost_usd": outcome.result.cost_usd, "design_s": time.time() - t,
@@ -299,7 +304,9 @@ class Loop:
             rec["runs"]["quick_check"] = str(check_dir)
             break
         if fam is None:
-            rec["reason"] = f"no design passed the contract and the quick check in {cfg.design_attempts} attempts"
+            rec["reason"] = (f"the design call failed twice with the same error, so it was not tried again: "
+                             f"{repeated[:300]}" if repeated else
+                             f"no design passed the contract and the quick check in {cfg.design_attempts} attempts")
             rec["spent_usd"] = self.ledger.spent() - spent0
             rec["seconds"]["total"] = time.time() - t_iter
             if outcome is not None and outcome.ok:

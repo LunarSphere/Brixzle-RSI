@@ -34,6 +34,7 @@ import sys
 from brixzle.requirements import load_requirements
 
 SCHEMA_VERSION = 1
+MAX_IMAGE_EDGE = 1600  # concept images longer than this are kept as a downscaled copy (issue #79)
 KINDS = ("compatible", "refines", "conflicts", "unclear")
 NEEDS_ANSWER = ("conflicts", "unclear")
 CHOICES = ("keep_base", "use_extra", "drop_extra", "clarify")
@@ -174,6 +175,28 @@ def new_run_dir(root):
             continue
 
 
+def copy_image(source, dest, max_edge=MAX_IMAGE_EDGE):
+    """Copy a concept image to ``dest``, downscaled so its longer edge is at most ``max_edge``
+    pixels. The agent reads the copy, and an 18.7 MB phone photo broke its call (issue #79). The
+    SHA-256 in intake.json stays the original's. A file that Pillow cannot open, or is small enough,
+    is copied unchanged. Returns what to add to the image's entry."""
+    from PIL import Image
+
+    try:
+        with Image.open(source) as im:
+            size = list(im.size)
+            if max(size) <= max_edge:
+                shutil.copyfile(source, dest)
+                return {"size": size}
+            small = im.copy()
+    except (OSError, ValueError):
+        shutil.copyfile(source, dest)
+        return {}
+    small.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    small.save(dest)
+    return {"downscaled": True, "original_size": size, "size": list(small.size)}
+
+
 def write_intake(d, runs="runs"):
     """Copy the images and write intake.json to a new runs/intake-<UTC> directory; returns it."""
     text = json.dumps(d, indent=2, allow_nan=False)  # check before making the directory
@@ -182,7 +205,7 @@ def write_intake(d, runs="runs"):
     d = json.loads(text)
     for k, img in enumerate(d["concept_images"]):
         dest = out / "concept" / f"{k + 1}-{img['name']}"
-        shutil.copyfile(img["source"], dest)
+        img.update(copy_image(img["source"], dest))
         img["path"] = str(dest.relative_to(out))
     (out / "intake.json").write_text(json.dumps(d, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return out

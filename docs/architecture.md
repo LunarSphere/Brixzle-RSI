@@ -77,7 +77,7 @@ A person gives one or more concept images and adds extra requirements. Today thi
 - conflicts with a base requirement;
 - unclear.
 
-For each conflict or unclear item, the person chooses: keep the base requirement, use the extra instead, drop the extra, or clarify it in their own words. At a terminal the command asks; otherwise each answer is given with `--resolve ID=CHOICE`. Nothing reaches the loop until every conflict is resolved. With no extras there is nothing to sort and no call is made. The output is `runs/intake-<UTC>/intake.json`, with copies of the images beside it. It is the only input to the first iteration, and it may fix the voxel pitch U (R2).
+For each conflict or unclear item, the person chooses: keep the base requirement, use the extra instead, drop the extra, or clarify it in their own words. At a terminal the command asks; otherwise each answer is given with `--resolve ID=CHOICE`. Nothing reaches the loop until every conflict is resolved. With no extras there is nothing to sort and no call is made. A concept image over 1600 px on its longer edge is kept as a downscaled copy (the original's SHA-256 stays in `intake.json`), so a phone photo does not bloat the agent's reads. The output is `runs/intake-<UTC>/intake.json`, with copies of the images beside it. It is the only input to the first iteration, and it may fix the voxel pitch U (R2).
 
 ## Talking to Claude
 
@@ -87,6 +87,7 @@ Every Claude call goes through `agents/runner.py`:
 - **Credentials:** `ANTHROPIC_API_KEY` if it is set, otherwise the active `ant` CLI profile's access token, handed to the Agent SDK's Claude Code process. The token is never printed. A call fails if Claude Code reports using any other credential, such as a claude.ai login.
 - **Spend:** each call reserves its own cap against a spend ledger (a JSON-lines file with a cap in dollars) before it starts. It gets the Agent SDK's per-call cap and is recorded with the cost the SDK reports.
 - **Tools:** each call lists the built-in tools it may use, and a guard refuses writes outside the call's own folder and reads outside its read roots. No settings files or CLAUDE.md are loaded.
+- **Message buffer:** the SDK's 1 MB limit on a Claude Code message is raised to 16 MB, because an image the agent reads comes back as one message (issue #79).
 - **Tests** use a scripted runner. The Agent SDK is an optional extra (`uv sync --extra agents`), so CI never installs or imports it.
 
 ## Design log

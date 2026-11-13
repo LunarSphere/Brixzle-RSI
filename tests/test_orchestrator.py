@@ -265,3 +265,32 @@ def test_an_agent_error_is_logged_and_the_loop_carries_on(tmp_path, intake):
     assert rec["decision"] == "kept" and rec["brief"] is None and "maximum number of turns" in rec["critic_error"]
     log = [json.loads(line)["decision"] for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
     assert log == ["error", "kept"]
+
+
+def test_a_design_call_that_fails_twice_the_same_way_is_not_called_a_third_time(tmp_path, intake):
+    """Two identical failures cost $3.00 of the ledger before the cause was found (issue #79); a third
+    identical call would only repeat them."""
+    def broken(call):
+        raise RuntimeError("JSON message exceeded maximum buffer size")
+
+    engine = FakeEngine(tmp_path / "eng", zs=[])
+    loop, runner = _loop(tmp_path, intake, [broken, broken, design_step()], engine, max_iterations=1,
+                         design_attempts=3)
+    rec = loop.iterate(1)
+    assert len(runner.calls) == 2 and rec["decision"] == "no_design"
+    assert [a["decision"] for a in rec["attempts"]] == ["error", "error"]
+    assert "twice" in rec["reason"] and "maximum buffer size" in rec["reason"]
+
+
+def test_two_different_errors_still_get_another_attempt(tmp_path, intake):
+    def one(call):
+        raise RuntimeError("one")
+
+    def two(call):
+        raise RuntimeError("two")
+
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4])
+    loop, runner = _loop(tmp_path, intake, [one, two, design_step(), critic_step()], engine, max_iterations=1,
+                         design_attempts=3)
+    rec = loop.iterate(1)
+    assert len(runner.calls) >= 3 and rec["decision"] == "kept"
