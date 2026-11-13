@@ -248,6 +248,29 @@ def sim_bodies(family: Family, p, part) -> SimBodies:
                      inertia_g_mm2=mesh.moment_inertia.tolist(), mesh=mesh)
 
 
+def ring_bodies(family: Family, p, part):
+    """SimBodies of any part a ring uses (issue #89): one of the family's parts, or one of its ring
+    kit's (solid infill PLA; the kit's exact collision if it gives one, otherwise CoACD)."""
+    if part in family.parts:
+        return sim_bodies(family, p, part)
+    kit = family.ring
+    if kit is None or part not in kit.parts:
+        raise ValueError(f"{family.name} has no ring part {part!r}")
+
+    def build():
+        mesh = _mesh(kit.solid(p, part))
+        mesh.density = PLA_DENSITY
+        if kit.collision is not None:
+            pieces, source = [np.asarray(v, dtype=float) for v in kit.collision(p, part)], "exact"
+        else:
+            pieces, source = decompose(mesh), "decomposed"
+        return SimBodies(collision=pieces, collision_source=source, mass_g=float(mesh.mass),
+                         volume_mm3=float(mesh.volume), com_mm=mesh.center_mass.tolist(),
+                         inertia_g_mm2=mesh.moment_inertia.tolist(), mesh=mesh)
+
+    return _cached("ring", family, p, part, build)
+
+
 def base(family: Family, p, voxels, direction=1):
     """(convex pieces, lowest z) of an anchored base, in mm, base frame: x = 0 at the first voxel."""
     out = family.base(p, voxels, direction)

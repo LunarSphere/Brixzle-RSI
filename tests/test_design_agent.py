@@ -175,3 +175,11 @@ def test_the_design_prompt_says_a_brick_must_build_the_structures():
     for want in ("running-bond wall", "a bridge", "a ring", "an overhang", "straight lift cannot free",
                  "is rejected", "longer overhang is better"):
         assert want in text, want
+
+
+def test_the_design_prompt_asks_for_a_ring_kit():
+    """Issue #89: a family must come with a ring kit; the simplest is kit_from_cell from one cell."""
+    text = DA.system_prompt()
+    for want in ("ring kit", "kit_from_cell", "hooks=False", "one voxel", "closer"):
+        assert want in text, want
+    assert "RingKit" in text  # the interface doc describes it

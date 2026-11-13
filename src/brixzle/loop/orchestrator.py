@@ -55,6 +55,7 @@ from brixzle.engine import jam_analysis as JA
 from brixzle.engine import quick_check as QC
 from brixzle.engine import report as RP
 from brixzle.engine import structure_gate as SG
+from brixzle.engine.sim import ring_build as RB
 from brixzle.engine import sim_map as SM
 from brixzle.engine import tune as TU
 from brixzle.engine import zscore as ZS
@@ -89,6 +90,11 @@ class SimEngine:
         g = SG.run_gate(family, p, runs=self.cfg.runs, seed=self.cfg.seed, workers=self.cfg.workers)
         g = {k: v for k, v in g.items() if k != "repeat_results"}  # the full builds are in the run directory
         return g, Path(g["run"])
+
+    def ring(self, family, p):
+        """(result, run directory): the ring build (#89), 6 x 6 cells, 2 courses, ideal placement."""
+        r = RB.build_ring(family, p, runs=self.cfg.runs, seed=self.cfg.seed)
+        return r, Path(r["run"])
 
     def score(self, family, p, check, allow_failed_check=False):
         """(report, map directory): the full map covering every target box, and Z per target.
@@ -317,7 +323,7 @@ class Loop:
     # --- the run ---
 
     def run(self):
-        t0 = time.time() - self.state.get("elapsed_s", 0.0)
+        t0 = self._t0 = time.time() - self.state.get("elapsed_s", 0.0)
         stop = self.state.get("stop")
         while stop is None:
             stop = stop_reason(self.state, self.cfg, self.ledger.remaining(), time.time() - t0)
@@ -415,6 +421,9 @@ class Loop:
         rec = {"iteration": i, "dir": str(iter_dir), "results": str(res_dir), "brief_in": brief, "attempts": [],
                "decision": "no_design", "z": None, "runs": {}, "seconds": {}}
         failures, fam, outcome, check = None, None, None, None
+        last = self.state["iterations"][-1] if self.state["iterations"] else None
+        if last and last.get("decision") == "failed_ring":
+            failures = {"ring": last["ring"]["failure"]}  # the last design closed no ring (#89)
         last_err, repeated = None, None
         for a in range(1, cfg.design_attempts + 1):
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
@@ -528,6 +537,7 @@ class Loop:
         z_t = rec["z"][target]["Z"]
         if baseline:
             kept, why = True, f"the parent family {rec['family']!r}, scored as the baseline the designs must beat"
+            self._ring(rec, fam, p)  # recorded, not judged: it is the reference
         else:
             ladder = rungs(cfg)
             lower = [(s, rec["z"][s]["Z"], z_on(best, s)) for s in ladder[:ladder.index(target)]] if best else []
@@ -540,6 +550,15 @@ class Loop:
                 view["held_out"] = self._best_held_out(target, rec)
                 kept, why = accept(z_t, held, view, lower, over)
             rec["decision"] = "kept" if kept else "rejected"
+            if kept:
+                # The ring is slow, so it runs only on a design the rule would keep (#89).
+                ring = self._ring(rec, fam, p)
+                if ring is not None and ring["status"] != "complete":
+                    kept = False
+                    stop = (rec["ring"]["failure"].get("stopped_at") or {}).get("brick")
+                    why = (f"the ring did not close ({ring['status']}" + (f" at {stop}" if stop else "")
+                           + f", {ring['seated']} of {ring['total']} seated); otherwise: {why}")
+                    rec["decision"] = "failed_ring"
         rec["reason"] = why
         if kept:
             self.state["best"] = {"iteration": i, "module": rec["module"], "root": rec["root"], "family": rec["family"],
@@ -589,6 +608,25 @@ class Loop:
         rec["seconds"]["total"] = time.time() - t_iter
         self.write_iteration_summary(rec, res_dir)
         return rec
+
+    RING_MIN_LEFT_S = 120.0  # no ring is started with less of the run's wall-clock left (#89)
+
+    def _ring(self, rec, fam, p):
+        """Build the ring for ``rec`` (#89) and record it; returns the result, or None if it was not
+        run because the run has less than two minutes left."""
+        left = self.cfg.max_minutes * 60 - (time.time() - getattr(self, "_t0", time.time()))
+        if left < self.RING_MIN_LEFT_S:
+            rec["ring"] = {"status": "not_run",
+                           "reason": f"less than two minutes of the run's {self.cfg.max_minutes:g} min were left "
+                                     f"({left:.0f} s)"}
+            return None
+        t = time.time()
+        ring, ring_dir = self.engine.ring(fam, p)
+        rec["seconds"]["ring"] = time.time() - t
+        rec["ring"] = {"status": ring["status"], "seated": ring["seated"], "total": ring["total"],
+                       "seconds": ring["seconds"], "run": str(ring_dir), "failure": RB.failure_for_agent(ring)}
+        rec["runs"]["ring"] = str(ring_dir)
+        return ring
 
     def _best_held_out(self, target, rec):
         """The best design's held-out counts on ``target``'s box: stored, or computed once and stored

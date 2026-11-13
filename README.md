@@ -20,7 +20,7 @@ Each iteration of the loop redesigns the brick's shape and tests it in simulatio
 
 1. The design agent builds a brick family from the concept sketch, the requirements and the last redesign brief.
 2. A quick check drops the brick 40 times inside the target error box in MuJoCo. A weak design goes straight back to step 1.
-3. A structure gate builds a tower, a running-bond wall, a bridge and an overhang in simulation, each on seeded repeats. A design that cannot build them goes back to step 1.
+3. A structure gate builds a tower, a running-bond wall, a bridge and an overhang in simulation, each on seeded repeats. A design that cannot build them goes back to step 1. A design good enough to keep must also close a ring (issue #89).
 4. A full map of drops shows where the brick seats, jams, lands in the wrong valley or falls.
 5. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
 6. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
