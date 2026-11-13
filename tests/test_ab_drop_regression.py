@@ -38,8 +38,12 @@ REFERENCE = json.loads(
 COURSE = {"A": 0, "B": 1}  # the reference's part B drops onto a seated A, i.e. course 1
 SAMPLE_KEYS = ("dx", "dy", "aim", "yaw", "roll", "pitch", "clear", "vel")
 CASES = REFERENCE["cases"]
-RUNNING_BOND = {c["name"]: c["rows"] for c in json.loads(
-    (Path(__file__).parent / "fixtures" / "ab_drop_running_bond.json").read_text(encoding="utf-8"))["cases"]}
+_BOND = json.loads((Path(__file__).parent / "fixtures" / "ab_drop_running_bond.json").read_text(encoding="utf-8"))
+# Since #82 the course-1 outcomes are pinned per platform: a jam near the capture edge is a near-miss rest
+# that follows the platform's convex pieces (exp3-mean-seed0 drop 1 jams 0.4 mm short of a one-voxel-over
+# seat on macOS arm64 and seats there on Linux x86_64).
+PLATFORM = f"{platform.system()} {platform.machine()}".replace("Darwin", "macOS")
+RUNNING_BOND = {plat: {c["name"]: c["rows"] for c in v["cases"]} for plat, v in _BOND["platforms"].items()}
 REFERENCE_PLATFORM = REFERENCE["source"]["platform"]
 ON_REFERENCE_PLATFORM = (
     platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -108,11 +112,13 @@ def test_mass_properties_match_reference_exactly(ab_bodies, part):
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
 def test_drop_samples_reproduce_aerial_assembly_and_outcomes_the_running_bond(drops, case):
     rows = drops[case["name"]]
-    assert len(rows) == len(case["rows"]) == len(RUNNING_BOND[case["name"]])
-    for i, (row, ref, bond) in enumerate(zip(rows, case["rows"], RUNNING_BOND[case["name"]])):
+    assert len(rows) == len(case["rows"])
+    for i, (row, ref) in enumerate(zip(rows, case["rows"])):
         assert {k: row[k] for k in SAMPLE_KEYS} == {k: ref[k] for k in SAMPLE_KEYS}, i
-        assert row["outcome"] == bond["outcome"], i
-        assert row["floor"] == bond["floor"], i
+    got = [{"outcome": r["outcome"], "floor": bool(r["floor"])} for r in rows]
+    assert PLATFORM in RUNNING_BOND, f"no running-bond outcomes pinned for {PLATFORM}; {case['name']} gives {got}"
+    pinned = [{"outcome": b["outcome"], "floor": b["floor"]} for b in RUNNING_BOND[PLATFORM][case["name"]]]
+    assert got == pinned, f"{PLATFORM} {case['name']}: got {got}"
 
 
 @exact_platform_only
@@ -126,6 +132,6 @@ def test_collision_pieces_match_reference_exactly(ab_bodies, part):
 @exact_platform_only
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
 def test_settled_poses_match_reference_exactly(drops, case):
-    for i, (row, ref) in enumerate(zip(drops[case["name"]], RUNNING_BOND[case["name"]])):
+    for i, (row, ref) in enumerate(zip(drops[case["name"]], RUNNING_BOND["macOS arm64"][case["name"]])):
         assert row["err_mm"] == pytest.approx(ref["err_mm"], abs=1e-6), i
         assert row["angle_deg"] == pytest.approx(ref["angle_deg"], abs=1e-6), i
