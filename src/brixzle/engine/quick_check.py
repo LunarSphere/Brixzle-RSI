@@ -136,7 +136,7 @@ def drop_row(index, course, unit, sample, row):
     return out
 
 
-def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, workers=DEFAULT_WORKERS, disc=None):
+def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, workers=DEFAULT_WORKERS, disc=False):
     """Drop ``n`` evenly spread poses inside a placement box; passes if at least ``need`` seat.
 
     Returns a JSON-safe dict: the verdict and counts, every drop that was judged ('drops', in pose
@@ -145,12 +145,13 @@ def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, w
     processes; the default, 1, runs in this process and is the fastest for this few drops (see
     DEFAULT_WORKERS). The verdict and the drops are the same for any worker count.
 
-    ``disc``: sample X and Y inside the box's X-Y disc (issue #86); default: when the box is a disc."""
+    ``disc``: sample X and Y inside the box's X-Y disc (issue #86). The default samples along X only,
+    as the loop's gate does (issue #97): Y error counts in the full map's Z, not in this filter."""
     if box.task != "placement":
         raise ValueError(f"the quick check covers placement boxes (issue #46), got {box.task!r}")
     limit = max_failures(n, need)
     cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
-    disc = box.xy_shape == "disc" if disc is None else bool(disc)
+    disc = bool(disc)
     poses = check_poses(n, seed, disc=disc)
     samples = [disc_sample(box, unit, cfg) if disc else BS.pose_sample(box, 1.0, unit, cfg) for _, unit in poses]
     t0 = time.time()

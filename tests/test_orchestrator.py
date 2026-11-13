@@ -535,6 +535,32 @@ def test_no_y_error_judges_designs_on_z_without_y_offsets(tmp_path, intake):
 
 
 
+@pytest.mark.parametrize("y_error", [True, False])
+def test_the_engine_quick_check_samples_along_x_and_the_map_keeps_y(monkeypatch, tmp_path, y_error):
+    """Issue #97: the gate samples along X whatever ``y_error`` is; the map still has the X-Y slice."""
+    from brixzle.engine import quick_check as QC
+    from brixzle.engine import report as RP
+    from brixzle.engine import sim_map as SM
+
+    calls = []
+    monkeypatch.setattr(QC, "quick_check", lambda *a, **k: calls.append(("check", k.get("disc", False))) or {"passed": True})
+    monkeypatch.setattr(QC, "write_check", lambda res, runs: tmp_path)
+
+    def fake_map(*a, slices=None, **k):
+        calls.append(("map", tuple(slices)))
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(SM, "sim_map", fake_map)
+    engine = OR.SimEngine(LoopConfig(y_error=y_error, runs=str(tmp_path)))
+    engine.quick_check(None, None)
+    with pytest.raises(RuntimeError, match="stop"):
+        RP.score_family(None, None, statistic="mean", runs=tmp_path, y_error=y_error)
+    (check1, check2, (_, slices)) = calls
+    assert check1 == check2 == ("check", False)
+    assert ("xy" in slices) is y_error
+
+
+
 # --- lessons carried between iterations and runs (issue #88) ---
 
 

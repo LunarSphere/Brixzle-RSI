@@ -163,9 +163,24 @@ def test_ab_v0_fails_the_mean_disc():
     """Issue #86: with Y offsets inside the mean disc (r 14.8 mm), A/B stopped at its 9th failure with 13 of
     22 seated (macOS arm64, 2026-11-13, simulated, uncalibrated contact). Its 30 deg gutter centres Y
     misses up to about 6 mm; past about 10 mm it jams or falls, as the issue's single drops showed."""
-    r = QC.quick_check(AB, V0, BOXES["mean"], seed=0)
+    r = QC.quick_check(AB, V0, BOXES["mean"], seed=0, disc=True)
     assert r["disc"] is True and r["passed"] is False and r["stopped_early"] is True
     assert any(abs(d["dy_mm"]) >= 10.0 and d["outcome"] in ("jammed", "fell") for d in r["failures"])
+
+
+def test_the_check_samples_along_x_by_default_on_a_disc_box(monkeypatch):
+    """Issue #97: the quick check is a filter along X; Y error counts in the full map's Z."""
+    seen = {}
+
+    def poses(n, seed, disc=False):
+        seen["disc"] = disc
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(QC, "check_poses", poses)
+    assert BOXES["mean"].xy_shape == "disc"
+    with pytest.raises(RuntimeError, match="stop"):
+        QC.quick_check(AB, V0, BOXES["mean"], seed=0)
+    assert seen["disc"] is False
 
 
 @pytest.mark.parametrize("workers", [0, -1, 2.5, True])
