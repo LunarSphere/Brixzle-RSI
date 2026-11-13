@@ -85,8 +85,9 @@ def test_box_cells_lie_inside_a_box_and_cover_every_slice_and_course():
     assert {(c["slice"], c["course"]) for c in cells} == {(s, k) for s in SM.SLICES for k in (0, 1)}
     assert all(ZS.inside(c["pose"], MEAN) for c in cells)
     # 1 mm cells in X over +-14.8 mm: 29 columns; 5 mm cells in Z over 0 to 6.2 mm: 2 rows; pitch 0 only.
+    # xy (#86): 4 mm X and 2 mm Y cells, 7 x 15 of them in the square, 89 inside the r = 14.8 mm disc.
     per_course = {s: sum(c["slice"] == s and c["course"] == 0 for c in cells) for s in SM.SLICES}
-    assert per_course == {"xz": 29 * 2, "xt": 29, "zt": 2}
+    assert per_course == {"xz": 29 * 2, "xt": 29, "zt": 2, "xy": 89}
 
 
 def test_the_cells_of_the_largest_box_hold_those_of_the_smaller_ones():
@@ -108,7 +109,8 @@ def test_held_out_poses_are_seeded_inside_the_box_and_differ_from_the_grid():
 # --- against the sim ---
 
 
-COARSE = SM.MapConfig(x_step_U=0.2, z_step_U=0.5, theta_step_deg=5.0, z_limit_U=0.5, theta_limit_deg=5.0)
+COARSE = SM.MapConfig(x_step_U=0.2, z_step_U=0.5, theta_step_deg=5.0, z_limit_U=0.5, theta_limit_deg=5.0,
+                      y_step_U=0.2)
 
 
 def test_the_direct_z_matches_the_full_maps_z():
@@ -125,3 +127,45 @@ def test_the_direct_z_matches_the_full_maps_z():
     assert direct["targets"] == from_map
     assert direct["score"] == from_map["mean"]["Z"]
     assert m["cover"] == ["mean", "p95"]
+
+
+
+# --- the X-Y disc (issue #86) ---
+
+
+def test_a_drop_counts_only_inside_the_x_y_disc():
+    r = MEAN.half_widths["x_mm"]
+    assert not ZS.inside({"x": 0.8 * r, "y": 0.8 * r, "z": 1.0, "t": 0.0}, MEAN)  # 1.13 r from the aim
+    assert ZS.inside({"x": 0.6 * r, "y": 0.6 * r, "z": 1.0, "t": 0.0}, MEAN)      # 0.85 r
+    assert ZS.inside({"x": r, "z": 1.0, "t": 0.0}, MEAN)                          # no y: on the X axis
+
+
+def test_z_x_only_is_the_z_of_the_drops_with_no_y_offset():
+    flat = [_drop("seated", x=1.0), _drop("jammed", x=2.0), _drop("seated", x=-3.0), _drop("fell", x=4.0)]
+    old = {"Z": (2 - 1) / 4}  # what Z gave before #86: every map drop had y = 0
+    off = [_drop("jammed", x=1.0, dy_mm=4.0), _drop("jammed", x=0.0, dy_mm=-6.0)]
+    both = ZS.z_from_drops(flat + off, {"mean": MEAN}, C0)
+    only = ZS.z_from_drops(flat + off, {"mean": MEAN}, C0, x_only=True)
+    assert only["mean"]["Z"] == old["Z"] == ZS.z_from_drops(flat, {"mean": MEAN}, C0)["mean"]["Z"]
+    assert both["mean"]["N"] == 6 and both["mean"]["Z"] == pytest.approx((2 - 3) / 6)
+    # The xy slice's y = 0 row repeats the xt slice's poses at coarser X: it is not part of the X-only Z.
+    row = [_drop("jammed", x=4.0, slice="xy", dy_mm=0.0)]
+    assert ZS.z_from_drops(flat + row, {"mean": MEAN}, C0, x_only=True)["mean"]["N"] == 4
+
+
+def test_a_straight_extruded_v_scores_lower_with_y_than_without(stack_v):
+    """The stack-only V has no Y guide: a Y miss jams where an X-only drop seats (simulated, uncalibrated
+    contact; the issue's table shows the same for the chevron)."""
+    from brixzle.engine import quick_check as QC
+    from brixzle.engine.sim import trials as T
+
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    rig = T.DropRig(stack_v, stack_v.defaults, cfg, course=0)
+    drops = []
+    for dy in (0.0, 3.0, -3.0, 6.0, -6.0):
+        s = SM.cell_sample(cfg, "xy", (0, int(dy)), {"x": 4.0, "y": 1.0, "z": 5.0, "t": 2.0}, SM.aim_point(MEAN))
+        assert s["dy"] == dy  # the Y offset reaches the rig
+        drops.append(QC.drop_row(len(drops), 0, (0.0, 0.0, 0.0), s, rig.drop(s, trace=False)))
+    z = ZS.z_from_drops(drops, {"mean": MEAN}, C0)["mean"]
+    zx = ZS.z_from_drops(drops, {"mean": MEAN}, C0, x_only=True)["mean"]
+    assert zx["N"] == 1 and z["N"] == 5 and z["Z"] < zx["Z"]

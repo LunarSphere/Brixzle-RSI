@@ -79,14 +79,15 @@ class SimEngine:
         self.boxes = BX.default_boxes()["placement"]
 
     def quick_check(self, family, p):
-        res = QC.quick_check(family, p, self.boxes[self.cfg.target], seed=self.cfg.seed)
+        res = QC.quick_check(family, p, self.boxes[self.cfg.target], seed=self.cfg.seed, disc=self.cfg.y_error)
         return res, QC.write_check(res, self.cfg.runs)
 
     def score(self, family, p, check, allow_failed_check=False):
         """(report, map directory): the full map covering every target box, and Z per target.
         ``allow_failed_check`` maps a design that failed the quick check: only the baseline (#85)."""
         return RP.score_family(family, p, statistic=self.cfg.target, seed=self.cfg.seed, runs=self.cfg.runs,
-                               workers=self.cfg.workers, check=check, allow_failed_check=allow_failed_check)
+                               workers=self.cfg.workers, check=check, allow_failed_check=allow_failed_check,
+                               y_error=self.cfg.y_error)
 
     def masses(self, family, p):
         """{part: printed mass in g}."""
@@ -107,7 +108,7 @@ class SimEngine:
         """Held-out Z on ``target``'s box (default: the run's target): its poses shifted by seed + 1,
         at friction 0.2 and 0.5."""
         fns = ZS.held_out_scores(family, self.boxes[target or self.cfg.target], self.cfg.seed + 1,
-                                 workers=self.cfg.workers)
+                                 workers=self.cfg.workers, y_error=self.cfg.y_error)
         return {name: fn(p)["counts"] for name, fn in fns.items()}
 
     def drop_videos(self, family, p, sim_map, map_dir, out_dir, n, seed):
@@ -116,7 +117,7 @@ class SimEngine:
 
     def tune(self, family, p, fixed=(), target=None):
         s = TU.TuneSettings(statistic=target or self.cfg.target, fixed=tuple(fixed), seed=self.cfg.seed,
-                            workers=self.cfg.workers, max_seconds=self.cfg.tune_seconds)
+                            workers=self.cfg.workers, max_seconds=self.cfg.tune_seconds, y_error=self.cfg.y_error)
         return TU.tune_family(family, p, s, runs=self.cfg.runs)
 
 
@@ -194,6 +195,12 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
     if elapsed_s > cfg.max_minutes * 60:
         return f"wall-clock budget spent ({elapsed_s / 60:.1f} of {cfg.max_minutes:g} min)"
     return None
+
+
+def objective_z(report, cfg: LoopConfig):
+    """Z per target as the loop judges it: with the X-Y disc (#86), or X offsets only with
+    ``y_error=False`` (a report from before #86 has only ``z``)."""
+    return report["z"] if cfg.y_error else report.get("z_x_only", report["z"])
 
 
 def failures_for_agent(check, limit=9):
@@ -437,7 +444,9 @@ class Loop:
         t = time.time()
         report, map_dir = self.engine.score(fam, p, check, allow_failed_check=baseline and not check["passed"])
         rec["seconds"]["map"] = time.time() - t
-        rec["z"], rec["runs"]["map"] = report["z"], str(map_dir)
+        rec["z"], rec["runs"]["map"] = objective_z(report, cfg), str(map_dir)
+        rec["z_with_y"], rec["z_x_only"] = report["z"], report.get("z_x_only")
+        rec["y_capture_mm"] = report.get("y_capture_mm")
         t = time.time()
         jam = self.engine.jam(fam, p, map_dir)
         rec["seconds"]["jam"] = time.time() - t
@@ -452,12 +461,12 @@ class Loop:
             rec["mass_g"] = self.engine.masses(fam, p)
         except Exception as e:  # noqa: BLE001 - a mass for the report must not stop the loop
             rec["mass_error"] = f"{type(e).__name__}: {e}"[:300]
-        z_t = report["z"][target]["Z"]
+        z_t = rec["z"][target]["Z"]
         if baseline:
             kept, why = True, f"the parent family {rec['family']!r}, scored as the baseline the designs must beat"
         else:
             ladder = rungs(cfg)
-            lower = [(s, report["z"][s]["Z"], z_on(best, s)) for s in ladder[:ladder.index(target)]] if best else []
+            lower = [(s, rec["z"][s]["Z"], z_on(best, s)) for s in ladder[:ladder.index(target)]] if best else []
             view = {"z_target": z_on(best, target), "held_out": {}} if best else None
             kept, why = accept(z_t, held, view, lower)
             if kept and view is not None and held:
@@ -469,13 +478,13 @@ class Loop:
         if kept:
             self.state["best"] = {"iteration": i, "module": rec["module"], "root": rec["root"], "family": rec["family"],
                                   "family_py": str(family_py(rec)), "registry": rec.get("registry"),
-                                  "z_target": z_t, "target": target, "z": report["z"], "held_out": held,
+                                  "z_target": z_t, "target": target, "z": rec["z"], "held_out": held,
                                   "held_out_by": {target: held} if held else {}, "map": str(map_dir),
                                   "mass_g": rec.get("mass_g")}
         sim_map = self.engine.read_map(map_dir)
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
                          "module": rec["module"], "decision": rec["decision"], "reason": why, "note": rec["note"],
-                         "z": report["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
+                         "z": rec["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
                          "brief_followed": (brief or {}).get("reason"), "runs": dict(rec["runs"])})
         t = time.time()
         picks = []
@@ -485,7 +494,7 @@ class Loop:
             rec["videos"] = picks
             rec["seconds"]["videos"] = time.time() - t
         t = time.time()
-        RD.jam_map(sim_map, report["z"], res_dir / "jam_map.png", target=cfg.target, jam=jam,
+        RD.jam_map(sim_map, rec["z"], res_dir / "jam_map.png", target=cfg.target, jam=jam,
                    title=f"{self.name} iteration {i}: {rec['family']} ({rec['decision']})", picks=picks)
         self._module_png_of(fam, res_dir)
         try:
@@ -575,6 +584,8 @@ def parser():
     ap.add_argument("--target", choices=BX.STATISTICS, default=d.target,
                     help="the box the run starts on; it climbs mean -> p95 -> max as Z reaches 1")
     ap.add_argument("--no-ladder", action="store_true", help="stay on --target (no climbing)")
+    ap.add_argument("--no-y-error", action="store_true",
+                    help="score X offsets only, as before issue #86 (for comparisons with earlier runs)")
     ap.add_argument("--parent", default=d.parent,
                     help="a registry family scored as iteration 0, the baseline to beat ('none': from scratch)")
     ap.add_argument("--baseline-only", action="store_true",
@@ -607,7 +618,8 @@ def _interrupt_on_sigterm():
 
 def config_from_args(args):
     parent = None if str(args.parent).lower() == "none" else args.parent
-    return LoopConfig(target=args.target, ladder=not args.no_ladder, parent=parent, baseline_only=args.baseline_only,
+    return LoopConfig(target=args.target, ladder=not args.no_ladder, y_error=not args.no_y_error, parent=parent,
+                      baseline_only=args.baseline_only,
                       max_iterations=args.max_iterations, patience=args.patience,
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
                       design_attempts=args.design_attempts, seed=args.seed, workers=args.workers,

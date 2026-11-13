@@ -12,7 +12,7 @@ from brixzle.engine.sim import approach_error as AE
 
 ROOT = Path(__file__).resolve().parents[1]
 STATS = ("mean", "p95", "max")
-AXES = {"placement": {"x_mm", "z_mm", "theta_deg"}, "pickup": {"x_mm", "z_mm", "psi_deg"}}
+AXES = {"placement": {"x_mm", "y_mm", "z_mm", "theta_deg"}, "pickup": {"x_mm", "z_mm", "psi_deg"}}  # y: #86
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +57,9 @@ def test_every_side_says_whether_it_is_measured_or_estimated(boxes):
         for box in by_stat.values():
             assert set(box.sources) == set(box.half_widths)
             assert box.sources["x_mm"].startswith("measured")
-            assert all(box.sources[a].startswith("estimated") for a in box.half_widths if a != "x_mm")
+            # Y is the same measured radius as X: the X-Y disc of placement (#86).
+            assert all(box.sources[a].startswith("measured" if a == "y_mm" else "estimated")
+                       for a in box.half_widths if a != "x_mm")
 
 
 def test_boxes_are_json_safe(boxes):
@@ -109,10 +111,10 @@ def _doc_table():
     text = (ROOT / "docs" / "requirements.md").read_text(encoding="utf-8")
     section = text.split("## Target boxes", 1)[1].split("\n## ", 1)[0]
     rows = {}
-    for m in re.finditer(r"^\| (Placement|Pickup) \| (mean|p95|worst) \| ([\d.]+) \| ([\d.]+) \| ([\d.]+) \|",
-                         section, re.M):
+    for m in re.finditer(r"^\| (Placement|Pickup) \| (mean|p95|worst) \| ([\d.]+) \| ([\d.]+|–) \| ([\d.]+) \| "
+                         r"([\d.]+) \|", section, re.M):
         task, stat = m.group(1).lower(), {"worst": "max"}.get(m.group(2), m.group(2))
-        rows[(task, stat)] = tuple(m.group(i) for i in (3, 4, 5))
+        rows[(task, stat)] = tuple(m.group(i) for i in (3, 4, 5, 6))
     return rows
 
 
@@ -122,4 +124,15 @@ def test_docs_list_the_same_boxes(boxes):
     for task, angle in (("placement", "theta_deg"), ("pickup", "psi_deg")):
         for stat in STATS:
             w = boxes[task][stat].half_widths
-            assert rows[(task, stat)] == (f"{w['x_mm']:.1f}", f"{w['z_mm']:.1f}", f"{w[angle]:.1f}"), (task, stat)
+            y = f"{w['y_mm']:.1f}" if "y_mm" in w else "–"  # placement only (#86)
+            assert rows[(task, stat)] == (f"{w['x_mm']:.1f}", y, f"{w['z_mm']:.1f}", f"{w[angle]:.1f}"), (task, stat)
+
+
+def test_placement_boxes_are_discs_in_x_y(boxes):
+    """Issue #86: the measured error is a radius in a random X-Y direction, so Y gets the X half-width."""
+    for stat in STATS:
+        b = boxes["placement"][stat]
+        assert math.isfinite(b.half_widths["y_mm"]) and b.half_widths["y_mm"] == b.half_widths["x_mm"]
+        assert b.xy_shape == "disc" and b.to_dict()["xy_shape"] == "disc"
+        assert b.sources["y_mm"] == "measured: runs/exp3-r4 positioning radius (X-Y disc)"
+        assert "y_mm" not in boxes["pickup"][stat].half_widths

@@ -150,13 +150,22 @@ def test_a_different_seed_drops_different_poses(ab_max):
     assert [d["dx_mm"] for d in other["drops"]] != [d["dx_mm"] for d in ab_max["drops"]]
 
 
-def test_ab_v0_passes_the_mean_box():
+def test_ab_v0_passes_the_mean_box_along_x():
     """On 2026-11-11, seed 0 seated 35 of 40 here (macOS arm64). The count is not pinned exactly:
-    a drop at a capture edge can flip between platforms."""
-    r = QC.quick_check(AB, V0, BOXES["mean"], seed=0)
+    a drop at a capture edge can flip between platforms. Along X only (``disc=False``), as before #86."""
+    r = QC.quick_check(AB, V0, BOXES["mean"], seed=0, disc=False)
     assert r["passed"] is True and r["stopped_early"] is False and r["dropped"] == 40
     assert 32 <= r["seated"] <= 38 and r["seated"] + r["failed"] == 40
     assert r["workers"] == 1  # one process by default: the fastest for this few drops
+
+
+def test_ab_v0_fails_the_mean_disc():
+    """Issue #86: with Y offsets inside the mean disc (r 14.8 mm), A/B stopped at its 9th failure with 13 of
+    22 seated (macOS arm64, 2026-11-13, simulated, uncalibrated contact). Its 30 deg gutter centres Y
+    misses up to about 6 mm; past about 10 mm it jams or falls, as the issue's single drops showed."""
+    r = QC.quick_check(AB, V0, BOXES["mean"], seed=0)
+    assert r["disc"] is True and r["passed"] is False and r["stopped_early"] is True
+    assert any(abs(d["dy_mm"]) >= 10.0 and d["outcome"] in ("jammed", "fell") for d in r["failures"])
 
 
 @pytest.mark.parametrize("workers", [0, -1, 2.5, True])
@@ -181,3 +190,16 @@ def test_check_json_goes_to_a_new_run_directory(ab_max, tmp_path):
     saved = json.loads((a / "check.json").read_text(encoding="utf-8"))
     assert saved["label"] == "simulated, uncalibrated contact"
     assert saved["passed"] is False and saved["seed"] == 0 and saved["box"]["statistic"] == "max"
+
+
+
+def test_disc_poses_lie_inside_the_target_disc():
+    """Issue #86: Y joins the hypercube, and (X, Y) lands inside the disc."""
+    box = BOXES["p95"]
+    r = box.half_widths["x_mm"]
+    poses = QC.check_poses(seed=0, disc=True)
+    assert all(len(u) == 4 for _, u in poses)
+    samples = [QC.disc_sample(box, unit, CFG) for _, unit in poses]
+    assert all((s["dx"] - s["aim"]) ** 2 + s["dy"] ** 2 <= r * r + 1e-9 for s in samples)
+    assert sum(abs(s["dy"]) > 0.3 * r for s in samples) >= 10  # Y really varies
+    assert sorted(k for k, _ in poses) == [0] * 20 + [1] * 20

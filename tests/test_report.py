@@ -37,7 +37,7 @@ def _report(cover=("mean", "p95", "max"), drops=DROPS, total=10.0):
 
 def test_the_report_holds_z_per_target_with_its_counts():
     rep = _report()
-    assert rep["schema_version"] == 4 and rep["label"] == "simulated, uncalibrated contact"
+    assert rep["schema_version"] == 5 and rep["label"] == "simulated, uncalibrated contact"
     assert rep["statistics"] == ["mean", "p95", "max"] and rep["statistic"] == "mean"
     assert rep["z"]["mean"] == {"Z": 0.0, "S": 1, "J": 1, "N": 2, "fell": 0, "wrong_valley": 0, "other": 0,
                                 "passed": False}

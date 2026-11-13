@@ -6,7 +6,9 @@ contact trace:
 
 - ``xz``: X against release height, at zero pitch;
 - ``xt``: X against pitch (theta), at the target box's centre height;
-- ``zt``: release height against pitch, at the aim in X.
+- ``zt``: release height against pitch, at the aim in X;
+- ``xy``: X against Y offset, at zero pitch and the target box's centre height (issue #86), with
+  X cells four times the others' and 2 mm Y cells, so the X-Y disc is covered cheaply.
 
 Coordinates, around the aim: ``x`` is the X offset (mm), ``z`` the release height above the
 minimum release clearance (mm, never below 0), ``t`` the pitch (deg). A cell is index * step, so
@@ -53,9 +55,11 @@ SEATED = BS.SUCCESS["placement"]
 DROPS_FILE = "drops.json.gz"  # every drop with its contact trace: tens of MB as plain JSON
 CODES = {"seated": "S", "jammed": "J", "wrong_valley": "W", "fell": "F"}
 OTHER = "?"  # any other outcome (for example 'unstable')
-SLICES = {"xz": ("x", "z"), "xt": ("x", "t"), "zt": ("z", "t")}
-AXIS_UNITS = {"x": "mm", "z": "mm", "t": "deg"}
-AXIS_NAMES = {"x": "X offset about the aim", "z": "release height above the minimum clearance", "t": "pitch"}
+SLICES = {"xz": ("x", "z"), "xt": ("x", "t"), "zt": ("z", "t"), "xy": ("x", "y")}
+AXES = ("x", "y", "z", "t")
+AXIS_UNITS = {"x": "mm", "y": "mm", "z": "mm", "t": "deg"}
+AXIS_NAMES = {"x": "X offset about the aim", "y": "Y offset about the aim (across the wall)",
+              "z": "release height above the minimum clearance", "t": "pitch"}
 FIXED_GRID_MM = 30.0  # the old fixed grid's half-width in X (aerial-assembly figures/biasbrick-drop-grid)
 # Measured on A/B V0's mean-box map, 2026-11-11 (14-core Mac, 1,254 drops): 48.8 s on 4 workers,
 # 40.1 s on 6 and 37.8 s on 8 (runs/map-20261111T193311241213Z-ab-mean, ...193402487600Z...,
@@ -80,6 +84,11 @@ class MapConfig:
     margin: int = 1                 # cells added round the starting extent
     grow: int = 2                   # rows or columns added to an edge per growth step
     max_drops: int = 12000          # stop growing once this many drops are planned
+    # The X-Y slice (issue #86): Y cells of 2 mm at U = 25 mm, X cells four times the map's, Y out
+    # to +-2 U like X. Small on purpose (CLAUDE.md, Speed); the target discs always win over it.
+    y_step_U: float = 0.08
+    y_limit_U: float = 2.0
+    xy_x_factor: float = 4.0
 
     def __post_init__(self):
         for name, v in asdict(self).items():
@@ -90,15 +99,21 @@ class MapConfig:
                 raise ValueError(f"{name} must be an integer, got {getattr(self, name)!r}")
 
     def steps(self, U):
-        """Cell size per axis: mm for x and z, degrees for t."""
-        return {"x": self.x_step_U * U, "z": self.z_step_U * U, "t": self.theta_step_deg}
+        """Cell size per axis: mm for x, y and z, degrees for t."""
+        return {"x": self.x_step_U * U, "y": self.y_step_U * U, "z": self.z_step_U * U, "t": self.theta_step_deg}
 
-    def limits(self, U):
-        """Hard index limits per axis as (lo, hi). Release height never goes below 0."""
+    def slice_steps(self, U, slice_name):
+        """The cell sizes of one slice: the ``xy`` slice has coarser X cells (#86)."""
         s = self.steps(U)
+        return {**s, "x": s["x"] * self.xy_x_factor} if slice_name == "xy" else s
+
+    def limits(self, U, slice_name=None):
+        """Hard index limits per axis as (lo, hi). Release height never goes below 0."""
+        s = self.slice_steps(U, slice_name)
         nx, nz = math.floor(self.x_limit_U * U / s["x"] + 1e-9), math.floor(self.z_limit_U * U / s["z"] + 1e-9)
+        ny = math.floor(self.y_limit_U * U / s["y"] + 1e-9)
         nt = math.floor(self.theta_limit_deg / s["t"] + 1e-9)
-        return {"x": (-nx, nx), "z": (0, nz), "t": (-nt, nt)}
+        return {"x": (-nx, nx), "y": (-ny, ny), "z": (0, nz), "t": (-nt, nt)}
 
 
 @dataclass(frozen=True)
@@ -273,12 +288,14 @@ def _floor(v):
 def box_ranges(box):
     """The target box as (lo, hi) per axis, in mm and degrees about the aim."""
     w = box.half_widths
-    return {"x": (-w["x_mm"], w["x_mm"]), "z": (0.0, 2 * w["z_mm"]), "t": (-w["theta_deg"], w["theta_deg"])}
+    y = w.get("y_mm", 0.0)
+    return {"x": (-w["x_mm"], w["x_mm"]), "y": (-y, y), "z": (0.0, 2 * w["z_mm"]),
+            "t": (-w["theta_deg"], w["theta_deg"])}
 
 
 def aim_point(box):
-    """The aim, where the slices cross: zero X offset, the box's centre height, zero pitch."""
-    return {"x": 0.0, "z": box.half_widths["z_mm"], "t": 0.0}
+    """The aim, where the slices cross: zero X and Y offset, the box's centre height, zero pitch."""
+    return {"x": 0.0, "y": 0.0, "z": box.half_widths["z_mm"], "t": 0.0}
 
 
 def index_extent(ranges, steps, axes, pad=0):
@@ -296,8 +313,8 @@ def check_ranges(check, box):
     if not check or not check.get("drops"):
         return ranges
     c0 = check["config"]["error"]["clearance"][0]
-    got = {"x": [d["dx_mm"] for d in check["drops"]], "z": [d["clear_mm"] - c0 for d in check["drops"]],
-           "t": [d["pitch_deg"] for d in check["drops"]]}
+    got = {"x": [d["dx_mm"] for d in check["drops"]], "y": [d.get("dy_mm", 0.0) for d in check["drops"]],
+           "z": [d["clear_mm"] - c0 for d in check["drops"]], "t": [d["pitch_deg"] for d in check["drops"]]}
     return {a: (min(got[a]), max(got[a])) for a in ranges}
 
 
@@ -307,8 +324,8 @@ def cell_sample(cfg, slice_name, cell, steps, aim):
     for axis, index in zip(SLICES[slice_name], cell):
         v[axis] = index * steps[axis]
     bias = cfg.error.aim_bias
-    return {"dx": bias + v["x"], "dy": 0.0, "aim": bias, "yaw": 0.0, "roll": 0.0, "pitch": v["t"] + 0.0,
-            "clear": cfg.error.clearance[0] + v["z"], "vel": [0.0, 0.0, 0.0]}
+    return {"dx": bias + v["x"], "dy": v.get("y", 0.0) + 0.0, "aim": bias, "yaw": 0.0, "roll": 0.0,
+            "pitch": v["t"] + 0.0, "clear": cfg.error.clearance[0] + v["z"], "vel": [0.0, 0.0, 0.0]}
 
 
 # --- the map ---
@@ -393,14 +410,15 @@ def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(
         _check_zoom(z)
     cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
     U = float(family.lattice(p).U_mm)
-    steps, limits, aim = config.steps(U), config.limits(U), aim_point(box)
+    steps, aim = config.steps(U), aim_point(box)
+    sl_steps = {s: config.slice_steps(U, s) for s in slices}
     start_ranges, must_ranges = check_ranges(check, box), _union(cover)
     fits = {}
     for s in slices:
-        axes = SLICES[s]
+        axes, limits = SLICES[s], config.limits(U, s)
         for course in courses:
-            fits[(s, course)] = GridFit(index_extent(start_ranges, steps, axes, pad=config.margin),
-                                        index_extent(must_ranges, steps, axes), tuple(limits[a] for a in axes),
+            fits[(s, course)] = GridFit(index_extent(start_ranges, sl_steps[s], axes, pad=config.margin),
+                                        index_extent(must_ranges, sl_steps[s], axes), tuple(limits[a] for a in axes),
                                         grow=config.grow, budget=max(1, config.max_drops // (len(slices) * len(courses))))
     t0 = time.time()
     drops = []
@@ -409,7 +427,7 @@ def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(
         rounds = 0
         while not all(f.done for f in fits.values()):
             batch = [(key, cell) for key, f in fits.items() for cell in f.pending()]
-            jobs = [(key[1], cell_sample(cfg, key[0], cell, steps, aim)) for key, cell in batch]
+            jobs = [(key[1], cell_sample(cfg, key[0], cell, sl_steps[key[0]], aim)) for key, cell in batch]
             for (key, cell), (_, sample), row in zip(batch, jobs, pool.imap(jobs)):
                 d = QC.drop_row(len(drops), key[1], (0.0, 0.0, 0.0), sample, {**row, "contacts": row.get("contacts", [])})
                 d.pop("unit")
@@ -421,13 +439,14 @@ def sim_map(family, p, box, check=None, config=None, config_reason=None, zooms=(
             rounds += 1
         grids = []
         for (s, course), f in fits.items():
-            grids.append(_grid_summary(s, course, f.extent, f.kept(), f.edges(), steps, U, box, aim, len(f.cells)))
+            grids.append(_grid_summary(s, course, f.extent, f.kept(), f.edges(), sl_steps[s], U, box, aim,
+                                       len(f.cells)))
         kept = {(s, c): f.kept() for (s, c), f in fits.items()}
         for d in drops:
             d["kept"] = tuple(d["cell"]) in kept[(d["slice"], d["course"])]
         zoom_grids = []
         for z in zooms:
-            zoom_grids.append(_run_zoom(z, pool, cfg, steps, U, box, aim, drops))
+            zoom_grids.append(_run_zoom(z, pool, cfg, config.slice_steps(U, z.slice), U, box, aim, drops))
             overrides.append({"kind": "zoom", "slice": z.slice, "course": z.course, "extent": {k: list(v) for k, v in z.extent.items()},
                               "step": zoom_grids[-1]["step"], "reason": z.reason.strip(), "cells": zoom_grids[-1]["cells"]})
         used = pool.workers
@@ -469,7 +488,7 @@ def _cover(box, cover):
 
 def _union(boxes):
     rs = [box_ranges(b) for b in boxes]
-    return {a: (min(r[a][0] for r in rs), max(r[a][1] for r in rs)) for a in ("x", "z", "t")}
+    return {a: (min(r[a][0] for r in rs), max(r[a][1] for r in rs)) for a in AXES}
 
 
 def _check_zoom(z):
@@ -519,6 +538,27 @@ def ascii_grid(g):
     for k in range(len(g["rows"]) - 1, -1, -1):
         lines.append(f"{b} {(lo + k) * g['step'][b]:+7.2f} {AXIS_UNITS[b]:<3} {g['rows'][k]}")
     return "\n".join(lines)
+
+
+def y_capture(m):
+    """Y capture, measured (issue #86): on each course's ``xy`` grid, in the column through the aim
+    (X offset 0), the largest |Y| on each side reached by an unbroken run of seated cells from
+    Y = 0. {course: {'-y': mm, '+y': mm}} (0 if the aim itself does not seat); {} without the slice."""
+    out = {}
+    for g in m["grids"]:
+        if g["slice"] != "xy":
+            continue
+        (i0, _), (j0, j1) = g["index_extent"]["x"], g["index_extent"]["y"]
+        col = {j: g["rows"][j - j0][-i0] for j in range(j0, j1 + 1)}  # the X = 0 column
+        side = {}
+        for name, sign in (("-y", -1), ("+y", 1)):
+            reach, j = 0.0, 0
+            while col.get(j) == CODES["seated"]:
+                reach = abs(j) * g["step"]["y"]
+                j += sign
+            side[name] = reach if col.get(0) == CODES["seated"] else 0.0
+        out[str(g["course"])] = side
+    return out
 
 
 def summary(m):

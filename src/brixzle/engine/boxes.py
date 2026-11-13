@@ -2,7 +2,9 @@
 
 A box is a half-width per axis around the aim point:
 
-- placement (R11): X, Z and theta, the brick's profile plane (theta is pitch, rotation about Y);
+- placement (R11): X, Z and theta, the brick's profile plane (theta is pitch, rotation about Y), and
+  Y across it. X and Y form a disc (issue #86): the measured error is a radius in a random X-Y
+  direction, so a pose is inside when x^2 + y^2 <= r^2, with r the X half-width;
 - pickup (R12): X across the tines, Z, and psi (yaw).
 
 X is measured: the full Exp 3 positioning radius (exp3-r4, ``error-exp3-r4.json``), so the whole
@@ -32,12 +34,13 @@ class TargetBox:
     statistic: str     # 'mean', 'p95' or 'max' (worst)
     half_widths: dict  # axis -> half-width; axes x_mm, z_mm and theta_deg (placement) or psi_deg (pickup)
     sources: dict      # axis -> 'measured: ...' or 'estimated: ...'
+    xy_shape: str = "box"  # 'disc': x^2 + y^2 <= x_mm^2 (placement, #86); 'box': each axis on its own
 
     def to_dict(self):
         if not all(math.isfinite(v) and v >= 0 for v in self.half_widths.values()):
             raise ValueError("box half-widths must be finite and >= 0")
-        return {"task": self.task, "statistic": self.statistic,
-                "half_widths": dict(self.half_widths), "sources": dict(self.sources)}
+        return {"task": self.task, "statistic": self.statistic, "half_widths": dict(self.half_widths),
+                "sources": dict(self.sources), "xy_shape": self.xy_shape}
 
 
 def load_hover(path):
@@ -63,6 +66,7 @@ def target_boxes(error_summary, hover):
     session = error_summary.get("source", {}).get("run", "") or "approach-error file"
     hover_session = hover["source"].get("session", "hover file")
     x_src = f"measured: {session} positioning radius (X-Y, applied along X)"
+    y_src = "measured: runs/exp3-r4 positioning radius (X-Y disc)"
     est = f"estimated: {hover_session} hover, RMS deviation from the command"
     out = {}
     for task in TASKS:
@@ -70,12 +74,13 @@ def target_boxes(error_summary, hover):
         for stat in STATISTICS:
             angle = ("theta_deg", hover[f"{stat}_pitch_deg"], f"{est} (pitch)") if task == "placement" else \
                     ("psi_deg", hover[f"{stat}_yaw_deg"], f"{est} (yaw)")
-            out[task][stat] = TargetBox(
-                task=task, statistic=stat,
-                half_widths={"x_mm": AE.required_tolerance(error_summary, stat),
-                             "z_mm": hover[f"{stat}_z_mm"], angle[0]: angle[1]},
-                sources={"x_mm": x_src, "z_mm": f"{est} (Lighthouse height; likely an underestimate)",
-                         angle[0]: angle[2]})
+            r = AE.required_tolerance(error_summary, stat)
+            half = {"x_mm": r, "z_mm": hover[f"{stat}_z_mm"], angle[0]: angle[1]}
+            src = {"x_mm": x_src, "z_mm": f"{est} (Lighthouse height; likely an underestimate)", angle[0]: angle[2]}
+            if task == "placement":  # the X-Y disc (issue #86); pickup keeps its own axes
+                half["y_mm"], src["y_mm"] = r, y_src
+            out[task][stat] = TargetBox(task=task, statistic=stat, half_widths=half, sources=src,
+                                        xy_shape="disc" if task == "placement" else "box")
     return out
 
 
