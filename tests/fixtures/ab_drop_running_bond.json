@@ -101,6 +101,59 @@
      ]
     }
    ]
+  },
+  "Linux x86_64": {
+   "source": {
+    "what": "copied from the failure message of CI run 43360853889 (ubuntu-latest), which lists a platform's outcomes when it has no entry",
+    "platform": "Linux x86_64",
+    "mujoco": "3.16.0",
+    "date": "2026-11-13",
+    "why_it_differs": "A/B part B's outline carries two redundant on-edge vertices at platform-dependent places, so its convex collision pieces are cut differently on Linux (PR #92 comment)"
+   },
+   "cases": [
+    {
+     "name": "gauss-seed0",
+     "rows": [
+      {
+       "outcome": "seated",
+       "floor": false
+      },
+      {
+       "outcome": "seated",
+       "floor": false
+      },
+      {
+       "outcome": "seated",
+       "floor": false
+      },
+      {
+       "outcome": "seated",
+       "floor": false
+      }
+     ]
+    },
+    {
+     "name": "exp3-mean-seed0",
+     "rows": [
+      {
+       "outcome": "wrong_valley",
+       "floor": false
+      },
+      {
+       "outcome": "wrong_valley",
+       "floor": false
+      },
+      {
+       "outcome": "jammed",
+       "floor": false
+      },
+      {
+       "outcome": "jammed",
+       "floor": false
+      }
+     ]
+    }
+   ]
   }
  }
 }
