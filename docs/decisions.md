@@ -326,3 +326,16 @@ The maintainer decided on 2026-11-12 that, for now, each iteration reports the j
 - **The views are front (X–Z, looking along +Y), side (Y–Z, from +X) and top (X–Y, looking down),** one row per part, to scale. Each title gives the view's size in mm.
 - **They are drawn from the printed solid's mesh,** with its bores and windows, not from the 2D section. Each view keeps the faces that face the viewer and draws them farthest first, so nearer surfaces cover farther ones. Faces are shaded by a light set off the view axis, so faces at different angles read differently.
 - **`module.png` replaces its section-and-3D render** with these views. The file name is kept, so the orchestrator and `summary.md` are unchanged.
+
+## #77 Drop videos and STL in the results
+
+The maintainer asked on 2026-11-12 for five random drop videos per iteration, with their positions marked, and the STL of the design.
+
+- **The five drops are picked from the full map's own drops** (the fitted grids, not zooms), with a seed of run seed × 1000 + iteration. A run is then repeatable, and two iterations do not show the same cells. Any outcome can be picked; the user asked for a random pick, not a selection of failures.
+- **Each pick is dropped again with recording on, not replayed.** The map keeps contact traces, not frames, and a drop depends only on its pose. The summary gives the re-run's outcome if it ever differs from the map's.
+- **Recording is at 240 frames per second of sim time, played at 30 fps (8 times slower), with the last frame held 0.75 s.** At the trial's old 60 fps a drop that settles in 0.27 s was 16 frames, too short to see. `DropRig` gained a `record_fps` setting for this. On the dummy wedge, a video is 65 frames and 2.9 s.
+- **The camera looks along +Y at the X–Z profile, the plane the map is drawn in,** pulled back so the falling brick stays in frame. The caption gives the drop number, slice, course, X, release height, pitch and outcome, and the label.
+- **Videos are MP4, written through the ffmpeg binary.** Without ffmpeg, a GIF is written instead (Pillow), so no new Python dependency is needed. The renderer is aerial-assembly's (`brixzle/src/brixzle/render.py` @ a649663), adapted.
+- **A drop that cannot be rendered keeps its pick with the error,** and the loop carries on. A headless machine without a GL context gets no videos rather than a failed run. Its test is skipped there.
+- **The STL is the printed solid** (with bores) from the builders, one file per part, in mm.
+- **`videos` in the loop's config (default 5; `--videos 0` turns them off).** They add the re-drops and the rendering to each iteration's time; see the PR for measurements.

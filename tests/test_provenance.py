@@ -21,6 +21,7 @@ BORROWED = [
     "src/brixzle/families/rules.py",
     "tests/test_trials.py",
     "tests/test_approach_error.py",
+    "src/brixzle/loop/videos.py",
 ]
 HEADER = "# From LunarSphere/aerial-assembly "
 

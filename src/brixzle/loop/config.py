@@ -25,6 +25,7 @@ class LoopConfig:
     workers: int | None = None       # sim drop processes
     held_out: bool = True
     tune: bool = True                # the end tune on the final design (#14)
+    videos: int = 5                  # drop videos per iteration, picked at random from the map (#77; 0: none)
     tune_seconds: float = 420.0
     runs: str = "runs"
     results: str = "RSI_RESULTS"
@@ -40,6 +41,8 @@ class LoopConfig:
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
                 raise ValueError(f"{name} must be a finite number > 0, got {v!r}")
+        if isinstance(self.videos, bool) or not isinstance(self.videos, int) or self.videos < 0:
+            raise ValueError(f"videos must be an integer >= 0, got {self.videos!r}")
         if not self.model.strip():
             raise ValueError("model must be named")
         return self

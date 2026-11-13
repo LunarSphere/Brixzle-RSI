@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
-# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once), which can also return the contacts at rest (rest_contacts, issue #49); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial.
+# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once), which can also return the contacts at rest (rest_contacts, issue #49); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial; DropRig's recording rate is settable (record_fps, issue #77).
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -279,8 +279,10 @@ class DropRig:
     """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 onto
     an ideally seated course-0 brick), so many poses don't rebuild the model."""
 
-    def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False, bodies=None):
-        """``bodies`` ({part: SimBodies}) skips rebuilding the bricks, e.g. in a worker process."""
+    def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False, bodies=None, record_fps=60):
+        """``bodies`` ({part: SimBodies}) skips rebuilding the bricks, e.g. in a worker process.
+        ``record_fps``: frames per second of sim time kept when recording."""
+        self.record_fps = record_fps
         if course not in (0, 1):
             raise ValueError('course must be 0 or 1')
         self.family, self.p, self.cfg, self.course, self.record = family, p, cfg, course, record
@@ -313,7 +315,7 @@ class DropRig:
         activate(model, data, info, self.j, pos, quat, linvel=sample['vel'])
         frames = [] if self.record else None
         contacts = {} if trace else None
-        m = run_until_settled(model, data, info, self.j, self.cfg.tolerance, self.owner, frames=frames,
+        m = run_until_settled(model, data, info, self.j, self.cfg.tolerance, self.owner, frames=frames, fps=self.record_fps,
                               watch=range(self.j), contacts=contacts, names=self.names)
         ref = (0, self.support) if self.support is not None else None
         err, angle = pose_error(family, p, data, info, self.j, self.target, ref)

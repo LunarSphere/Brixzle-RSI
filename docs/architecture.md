@@ -62,6 +62,8 @@ Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/rend
 
 - **`jam_map.png`:** the full sim map, one panel per slice and course. Colours follow aerial-assembly's `figures/biasbrick-drop-grid`: seated green, jammed orange, fell red, plus wrong valley in purple, since it is A/B's main failure and would otherwise be hidden. Each legend gives counts. The target box and the jam bands are drawn, Z per target is in the title, and it is labelled "simulated, uncalibrated contact".
 - **`module.png`:** the latest design as three orthographic views of its printed solid: front (X–Z), side (Y–Z) and top (X–Y), one row per part, to scale in mm (issue #74).
+- **`drop-1.mp4` … `drop-5.mp4`:** five drops of the iteration's full map, picked at random. The seed is the run's seed and the iteration, so a run can be repeated. Each is dropped again with recording on, at 240 frames per second of sim time, and played 8 times slower, with its pose and outcome as a caption. Each pick is marked with its number on `jam_map.png` and listed in `summary.md` (issue #77).
+- **`<family>-<part>.stl`:** the printed solid of each part, in mm (issue #77).
 - **`summary.md`:** Z per target with its counts (and the held-out Z, which the critic never sees); what changed and why (the brief followed, the design agent's note, every attempt); the decision and its reason; the critic's next brief; and the run directories, spend and wall-clock behind every number.
 
 `RSI_RESULTS/<run>/progress.png` shows Z per iteration, with kept designs filled, rejected ones hollow and iterations with no scored design crossed. `RSI_RESULTS/<run>/summary.md` sums up the run. `RSI_RESULTS/` is git-ignored; figures for the repo still go through #25.

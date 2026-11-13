@@ -90,3 +90,23 @@ def test_the_run_summary_lists_every_iteration_and_the_stop(tmp_path):
              "stop": "2 iterations run", "tune": None, "elapsed_s": 300.0}
     text = RD.run_summary(state, "mean", "spend.jsonl", 0.3, 5.0)
     assert "| 1 | zig | kept | +0.500 |" in text and "2 iterations run" in text and "$0.3000 of $5.00" in text
+
+
+PICKS = [{"k": 1, "slice": "xz", "course": 0, "pose": {"x": 2.0, "z": 5.0, "t": 0.0}, "outcome": "seated",
+          "video": "drop-1.mp4", "rerun_outcome": "seated"},
+         {"k": 2, "slice": "xt", "course": 0, "pose": {"x": -1.0, "z": 3.1, "t": -2.0}, "outcome": "jammed",
+          "video": "drop-2.mp4", "rerun_outcome": "jammed"}]
+
+
+def test_the_picked_drops_are_marked_on_their_panels(tmp_path):
+    marks = RD.pick_marks(MAP, PICKS)
+    assert marks == [("xz", 0, 2.0, 5.0, 1), ("xt", 0, -1.0, -2.0, 2)]
+    assert _png(RD.jam_map(MAP, Z, tmp_path / "jam_map.png", target="mean", picks=PICKS))
+
+
+def test_the_summary_lists_the_videos_and_the_stl(tmp_path):
+    rec = {"iteration": 1, "dir": str(tmp_path / "runs/loop/r/iter-01"), "decision": "kept", "z": Z, "attempts": [],
+           "runs": {}, "videos": PICKS, "stl": ["toy-A.stl"]}
+    text = RD.iteration_summary(rec, "r", "mean", "spend.jsonl", 0.1, 5.0)
+    assert "## Drop videos" in text and "drop-2.mp4" in text and "x -1.0 mm" in text and "jammed" in text
+    assert "toy-A.stl" in text
