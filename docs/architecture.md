@@ -216,6 +216,25 @@ The check is not the score. A design that seats every drop in the box always pas
 
 **Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
 
+### Structure builds
+
+Issue #81. `engine/structures.py` and `engine/sim/assemble.py` port aerial-assembly's trial structures and its sequential assembly trial to the family interface.
+
+- **Structures** (`structures.py`):
+  - `tower(height)`: a stack bond.
+  - `overhang(n, direction)`: one brick per course, stepping one voxel past a two-voxel base.
+  - `wall(width, height)`: a running bond.
+  - `bridge(arm_courses)`: two corbelled arms closed by a key brick.
+
+  Each lists its bricks as `Placement`s and its anchored bases as voxel ranges. They are laid out for a two-voxel brick; `structure_for` raises `ValueError` for any other `span_voxels`.
+- **Order** (`assembly_order`): supporters first, lowest course first, and a brick only when its nominal approach is clear of the bricks already placed. The approach is a vertical drop, then the final stroke of length `release_lift_mm` along `insertion_axis`. The check uses the brick's section outline at its seat, which must be upright or turned 180° about Z.
+- **Assembly** (`assemble`): each brick is released above its seat, with the error model's sample, and judged against its seat on its actual supporter. The build stops at the first brick that does not seat, or at a collapse: a placed brick moves more than 2 mm, sag exceeds half a course, or a brick touches the floor. It returns the status, the bricks placed and stable, the largest sag, each stage and the wall-clock.
+- **Repeats** (`repeat_builds`, `repeat_structures`): a structure is judged on 5 seeded builds, each brick's release moved by a seeded offset of up to 0.05 mm in X and Y, and passes when most complete. An ideal drop onto a symmetric seat can tip either way on numerical noise (issue #98: A/B's bridge flipped between 7 of 7 and 3 of 7 when friction moved by 5e-5), so one deterministic build is not a reliable verdict. The repeats run in parallel processes.
+- **Push** (`push_test`): an ideal build, then a ramped sideways force on the top brick until it moves (R3).
+- **Output:** `runs/builds-<UTC>-<family>-<structure>/builds.json` (every repeat) or, for one build, `runs/build-…/build.json`, with the family, parameters, seeds and config, labelled "simulated, uncalibrated contact". `python -m brixzle.engine.sim.assemble <structure> --family <name> --ideal` runs the repeats (`--repeats 1` builds once, without jitter).
+
+Only ideal placement is reported so far.
+
 ### End tune
 
 `engine/tune.py` runs once, on the family the loop settled on (issue #14). The loop itself changes shapes, not numbers; this last step moves the numbers.
