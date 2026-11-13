@@ -14,12 +14,36 @@ from brixzle.engine import boxes as BX
 from brixzle.loop import orchestrator as OR
 from brixzle.loop.config import LoopConfig
 
+from brixzle.agents import check_family as CF
+
 REPO = Path(__file__).resolve().parents[1]
 WEDGE = (REPO / "src/brixzle/families/wedge/family.py").read_text(encoding="utf-8")
 BOXES = BX.default_boxes()["placement"]
 GRID = {"slice": "xz", "course": 0, "axes": ["x", "z"], "step": {"x": 1.0, "z": 5.0},
         "index_extent": {"x": [-3, 3], "z": [0, 1]}, "extent": {"x": [-3.0, 3.0], "z": [0.0, 5.0]},
         "rows": ["WSSJSSJ", "FSSSSSJ"], "fixed": {"t": 0.0}}
+
+
+_CHECKS = {}
+
+
+@pytest.fixture(autouse=True)
+def _memo_family_check(monkeypatch):
+    """The family check (contract, rules, two aim drops) runs in a subprocess in about 2.5 s, and
+    every scripted design here writes one of a few identical sources: check each source once per
+    session. tests/test_design_agent.py covers the real check."""
+    real = CF.check_in_subprocess
+
+    def memo(root, module, **kw):
+        path = Path(root) / module / "family.py"
+        key = path.read_text(encoding="utf-8") if path.exists() else None
+        if key is None:
+            return real(root, module, **kw)
+        if key not in _CHECKS:
+            _CHECKS[key] = real(root, module, **kw)
+        return {**_CHECKS[key], "module": module}
+
+    monkeypatch.setattr(CF, "check_in_subprocess", memo)
 
 
 def counts(z, n=100):
@@ -51,8 +75,8 @@ class FakeEngine:
                                            "outcome": "jammed", "err_mm": [3.0, 0.0, 4.0], "angle_deg": 20.0}]}
         return res, self._dir("check")
 
-    def score(self, family, p, check):
-        self.calls.append("score")
+    def score(self, family, p, check, allow_failed_check=False):
+        self.calls.append(("score", family.name, allow_failed_check))
         z = self.zs.pop(0)
         d = self._dir("map")
         m = {"family": family.name, "box": BOXES["mean"].to_dict(), "cover_boxes": [b.to_dict() for b in BOXES.values()],
@@ -68,6 +92,9 @@ class FakeEngine:
         return {"family": family.name, "box": BOXES["mean"].to_dict(), "seconds": 1.0, "one_offs": [], "bands": [],
                 "capture_limits": [], "counts": {"inside_failures": 0, "repeatable": 0, "bands": 0, "three_d": 0,
                                                  "reruns": 0, "capture_limits": 0}}
+
+    def masses(self, family, p):
+        return {part: 10.0 for part in family.parts}
 
     def held_out(self, family, p):
         self.calls.append("held_out")
@@ -117,8 +144,9 @@ def intake(tmp_path):
 
 
 def _cfg(tmp_path, **kw):
+    """The existing cases run from scratch (``--parent none``); the baseline tests pass parent='ab'."""
     return LoopConfig(runs=str(tmp_path / "runs"), results=str(tmp_path / "RSI_RESULTS"),
-                      **{"max_iterations": 2, "budget_usd": 5.0, **kw})
+                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, **kw})
 
 
 def _loop(tmp_path, intake, script, engine, **kw):
@@ -294,3 +322,76 @@ def test_two_different_errors_still_get_another_attempt(tmp_path, intake):
                          design_attempts=3)
     rec = loop.iterate(1)
     assert len(runner.calls) >= 3 and rec["decision"] == "kept"
+
+
+# --- the parent family as iteration 0 (issue #85) ---
+
+
+def test_with_a_parent_iteration_0_scores_it_with_no_design_call_and_it_is_the_best(tmp_path, intake):
+    # The parent fails its quick check, and is still scored: it is the reference, not a candidate.
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4], checks=[False])
+    loop, runner = _loop(tmp_path, intake, [critic_step()], engine, parent="ab", max_iterations=1)
+    rec = loop.iterate(0)
+    assert rec["iteration"] == 0 and rec["decision"] == "baseline" and rec["family"] == "ab"
+    assert rec["attempts"] == [] and not any(c.name == "design" for c in runner.calls)
+    assert ("score", "ab", True) in engine.calls and rec["quick_check"]["passed"] is False
+    assert rec["z"]["mean"]["Z"] == pytest.approx(0.4) and rec["mass_g"] == {"A": 10.0, "B": 10.0}
+    assert rec["spent_usd"] == pytest.approx(0.02) and rec.get("design_cost_usd") is None  # the critic only
+    best = loop.state["best"]
+    assert best["iteration"] == 0 and best["family"] == "ab" and best["z_target"] == pytest.approx(0.4)
+    assert best["family_py"].endswith("src/brixzle/families/ab/family.py")
+    d = tmp_path / "RSI_RESULTS" / "t" / "iter-00"
+    assert (d / "jam_map.png").exists() and (d / "module.png").exists() and "baseline" in (d / "summary.md").read_text()
+
+
+def test_baseline_only_scores_the_parent_and_spends_nothing(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4])
+    loop, runner = _loop(tmp_path, intake, [], engine, parent="ab", baseline_only=True, tune=False)
+    state = loop.run()
+    assert [i["iteration"] for i in state["iterations"]] == [0] and runner.calls == []
+    assert state["stop"] == "baseline only" and loop.ledger.spent() == 0.0
+    text = (tmp_path / "RSI_RESULTS" / "t" / "summary.md").read_text(encoding="utf-8")
+    assert "## Best against the baseline" in text and "+0.400" in text
+    assert "src/brixzle/families/ab/family.py" in text and "brixzle.families.ab`" not in text
+
+
+def test_a_first_design_must_beat_the_parent(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.3, 0.7], held=[0.2, 0.2, 0.2])
+    loop, runner = _loop(tmp_path, intake, [critic_step(), design_step("lo"), critic_step(), design_step("hi")],
+                         engine, parent="ab", max_iterations=2, patience=3)
+    state = loop.run()
+    assert [(i["iteration"], i["decision"]) for i in state["iterations"]] == [(0, "baseline"), (1, "rejected"),
+                                                                              (2, "kept")]
+    assert "did not improve" in state["iterations"][1]["reason"]
+    assert state["best"]["iteration"] == 2 and state["stop"] == "2 iterations run"
+    assert [c.name for c in runner.calls] == ["critic", "design", "critic", "design"]
+    text = (tmp_path / "RSI_RESULTS" / "t" / "summary.md").read_text(encoding="utf-8")
+    assert "## Best against the baseline" in text and "+0.700" in text and "+0.500" in text
+
+
+def test_the_critic_reads_the_parent_and_its_brief_reaches_the_first_design(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.6])
+    loop, runner = _loop(tmp_path, intake, [critic_step(), design_step()], engine, parent="ab", max_iterations=1)
+    state = loop.run()
+    critic, design = runner.calls
+    assert critic.name == "critic" and "FAMILY" in critic.prompt and "Target box: mean" in critic.prompt
+    assert design.name == "design" and "jams at the +X edge" in design.prompt
+    assert "src/brixzle/families/ab/family.py" in design.prompt and "Parent design" in design.prompt
+    assert state["iterations"][1]["brief_in"]["reason"] == "jams at the +X edge"
+
+
+def test_parent_none_runs_from_scratch_and_the_cli_takes_the_parent():
+    assert LoopConfig().parent == "ab"
+    assert OR.config_from_args(OR.parser().parse_args(["--intake", "x"])).parent == "ab"
+    assert OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--parent", "none"])).parent is None
+    assert OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--baseline-only"])).baseline_only
+    with pytest.raises(ValueError, match="parent"):
+        LoopConfig(parent="no_such_family").validate()
+
+
+def test_parent_none_starts_at_iteration_1(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.2])
+    loop, runner = _loop(tmp_path, intake, [design_step()], engine, max_iterations=1)
+    state = loop.run()
+    assert [i["iteration"] for i in state["iterations"]] == [1] and state["best"]["iteration"] == 1
+    assert [c.name for c in runner.calls] == ["design"]

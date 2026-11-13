@@ -6,7 +6,8 @@ Every attempt the orchestrator (#21) makes is logged, kept or not:
 - a design the quick check turned back (``failed_quick_check``, #47), with its counts by outcome;
 - a design that was mapped and scored (Z per target, #61), and then ``kept`` or ``rejected`` by
   the acceptance rule, with the reason;
-- a call that failed (``error``).
+- a call that failed (``error``);
+- the parent family, scored as iteration 0 (``baseline``, #85).
 
 Grid overrides made for the map (#48) are logged with their reasons (``overrides``). Each entry
 names the run directories its numbers came from (``runs``).
@@ -23,7 +24,7 @@ from pathlib import Path
 
 FILE = "design_log.jsonl"
 HIDDEN = ("held_out",)  # keys the agents never see
-DECISIONS = ("kept", "rejected", "failed_contract", "failed_quick_check", "error")
+DECISIONS = ("baseline", "kept", "rejected", "failed_contract", "failed_quick_check", "error")
 REQUIRED = ("iteration", "attempt", "family", "decision")
 
 

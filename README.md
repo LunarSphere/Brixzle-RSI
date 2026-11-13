@@ -12,7 +12,7 @@ To run it (it spends real API money; the cap is `--budget-usd`):
     uv run python -m brixzle.intake --image path/to/sketch.png
     uv run --extra agents python -m brixzle.loop --intake runs/intake-<stamp>/intake.json --target mean --budget-usd 5
 
-Results land in `RSI_RESULTS/<run>/`.
+Results land in `RSI_RESULTS/<run>/`. The run first scores the A/B baseline as iteration 0, with no Claude call, and every design must beat it (`--parent none` starts from scratch; `--baseline-only` scores A/B and stops).
 
 ## How it works
 

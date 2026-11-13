@@ -145,3 +145,14 @@ def test_the_agent_cannot_read_the_dummy_families(tmp_path):
     for ok in (fam / "ab" / "family.py", fam / "interface.py", REPO / "docs" / "family-interface.md",
                out.workspace.pkg / "family.py"):
         assert guard.decide("Read", {"file_path": str(ok)})[0], ok
+
+
+def test_the_prompts_let_the_agent_build_on_a_b_but_not_copy_papers(tmp_path):
+    """The maintainer's own designs may be reused (2026-11-12, issue #85); papers and other groups'
+    systems may not."""
+    ws = DA.Workspace.make(tmp_path / "a1", "rsi_x_i01_a8")
+    system, task = DA.system_prompt(), DA.task_prompt(ws, _intake(tmp_path))
+    for text in (system, task):
+        assert "not a design to copy" not in text and "do not copy its shape" not in text
+    assert "maintainer's own design" in system and "brixzle.families.ab" in system
+    assert "never copy a brick, joint or structure from a paper or from another group's system" in system

@@ -14,8 +14,8 @@ directory, not in ``src/``, and is imported by path (check_family.load_family).
 
 **Prismatic by default** (maintainer, 2026-11-06, on #18): a ``Solid3D`` family is allowed only
 when a needed feature cannot be prismatic, and the agent must say which feature and why in its
-``design_note.json``, which the design log records. **Original designs only** (CLAUDE.md): papers
-are for mechanics, never for a brick to copy.
+``design_note.json``, which the design log records. **No copying from papers or other groups**
+(CLAUDE.md): papers are for mechanics. The maintainer's own designs (A/B) may be reused (#85).
 """
 
 from dataclasses import dataclass
@@ -86,8 +86,10 @@ Rules:
 - Write only inside your package directory. Its family.py must export FAMILY = Family(...).
 - Prismatic (2.5D: an XZ section swept through Y) by default. Use Solid3D only if a feature you need cannot be
   prismatic; then say which feature and why in design_note.json.
-- Design originally. Use mechanics and principles; never copy a brick, joint or structure from a paper or an
-  existing system. The example family (A/B, the baseline) is there to show the interface, not a design to copy.
+- A/B is the maintainer's own design, so reuse or change any part of it; your package may import from
+  brixzle.families.ab (for example profile, params). It is also the baseline your design must beat.
+  Use papers for mechanics and principles only:
+  never copy a brick, joint or structure from a paper or from another group's system.
 - Units: mm, degrees, grams; quaternions [w, x, y, z]. Give every tunable parameter a bounds entry.
 - The goal is placement (R11): a brick dropped anywhere inside the drone's error box (X up to +-38.5 mm,
   release height and pitch small) slides on its guide faces into its seat with no jam. The loop scores it
@@ -117,7 +119,8 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
     parts = [f"Your package directory: {ws.pkg}\nIts package name: {ws.module} (import siblings relatively).",
              f"Concept images (read them with the Read tool):\n{images}",
              f"Extra requirements from intake:\n{extra_lines}",
-             f"Example family to read for the interface (the A/B baseline; do not copy its shape): " + ", ".join(str(REPO / e) for e in EXAMPLES)]
+             "The A/B family (the maintainer's own design and the baseline; you may reuse or change any part of "
+             "it): " + ", ".join(str(REPO / e) for e in EXAMPLES)]
     if (fixed or {}).get("U_mm"):
         parts.append(f"The voxel pitch U is fixed at intake: {fixed['U_mm']} mm. Do not give U a bounds entry.")
     if parent is not None:

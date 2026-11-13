@@ -6,6 +6,7 @@ package without a ``family`` module, such as ``ab`` until it adopts the interfac
 
 import importlib
 import importlib.util
+from pathlib import Path
 import pkgutil
 
 import brixzle.families as families_pkg
@@ -39,6 +40,17 @@ def discover() -> dict[str, Family]:
 
 def names() -> list[str]:
     return sorted(discover())
+
+
+def source(name: str):
+    """(module name, path of family.py) of a registry family, for a prompt or a record (#85)."""
+    for info in sorted(pkgutil.iter_modules(families_pkg.__path__), key=lambda i: i.name):
+        module_name = f"{families_pkg.__name__}.{info.name}.family"
+        if info.ispkg and importlib.util.find_spec(module_name) is not None:
+            module = importlib.import_module(module_name)
+            if getattr(getattr(module, "FAMILY", None), "name", None) == name:
+                return f"{families_pkg.__name__}.{info.name}", Path(module.__file__)
+    raise KeyError(f"no family {name!r}; known: {names()}")
 
 
 def get(name: str) -> Family:

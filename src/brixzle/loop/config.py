@@ -12,6 +12,8 @@ MODEL = "claude-sonnet-5-5"  # the design agent and the critic (maintainer, 2026
 class LoopConfig:
     model: str = MODEL
     target: str = "mean"             # the run's target box; Z on it decides acceptance and the stop
+    parent: str | None = "ab"        # a registry family scored as iteration 0, the baseline (#85); None: from scratch
+    baseline_only: bool = False      # score the parent (iteration 0) and stop: no Claude call (#85)
     max_iterations: int = 6
     patience: int = 2                # stop after this many iterations in a row with no kept design
     budget_usd: float = 5.0          # cap on real API spend, over the ledger
@@ -43,6 +45,14 @@ class LoopConfig:
                 raise ValueError(f"{name} must be a finite number > 0, got {v!r}")
         if isinstance(self.videos, bool) or not isinstance(self.videos, int) or self.videos < 0:
             raise ValueError(f"videos must be an integer >= 0, got {self.videos!r}")
+        if self.parent is not None:
+            from brixzle.families import registry
+
+            if self.parent not in registry.names():
+                raise ValueError(f"parent must be a registry family or None, got {self.parent!r}; "
+                                 f"known: {registry.names()}")
+        if self.baseline_only and self.parent is None:
+            raise ValueError("baseline_only needs a parent family to score")
         if not self.model.strip():
             raise ValueError("model must be named")
         return self

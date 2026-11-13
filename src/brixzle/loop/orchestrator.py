@@ -1,5 +1,10 @@
 """Orchestrator (issue #21): runs the design loop headless, from intake to a tuned brick family.
 
+**Iteration 0** (#85): the parent family (``--parent``, A/B by default) is scored with the same
+stages as a design, with no Claude call; it becomes the best, so every design must beat it, and the
+critic's first brief comes from its results. ``--parent none`` starts from scratch;
+``--baseline-only`` scores the parent and stops.
+
 Each outer iteration:
 
 1. **Design:** the design agent (#18) writes a family package, from the concept, the critic's
@@ -56,6 +61,7 @@ from brixzle.loop.design_log import DesignLog
 
 STATE = "state.json"
 LABEL = ZS.LABEL
+BASELINE = "baseline"  # iteration 0's decision: the parent family, scored as the reference (#85)
 
 
 # --- the engine, as the loop calls it (tests replace it) ---
@@ -72,10 +78,17 @@ class SimEngine:
         res = QC.quick_check(family, p, self.boxes[self.cfg.target], seed=self.cfg.seed)
         return res, QC.write_check(res, self.cfg.runs)
 
-    def score(self, family, p, check):
-        """(report, map directory): the full map covering every target box, and Z per target."""
+    def score(self, family, p, check, allow_failed_check=False):
+        """(report, map directory): the full map covering every target box, and Z per target.
+        ``allow_failed_check`` maps a design that failed the quick check: only the baseline (#85)."""
         return RP.score_family(family, p, statistic=self.cfg.target, seed=self.cfg.seed, runs=self.cfg.runs,
-                               workers=self.cfg.workers, check=check)
+                               workers=self.cfg.workers, check=check, allow_failed_check=allow_failed_check)
+
+    def masses(self, family, p):
+        """{part: printed mass in g}."""
+        from brixzle.families import builders as B
+
+        return {part: float(B.sim_bodies(family, p, part).mass_g) for part in family.parts}
 
     def read_map(self, map_dir):
         return json.loads((Path(map_dir) / "map.json").read_text(encoding="utf-8"))
@@ -118,17 +131,21 @@ def accept(z, held, best):
 
 
 def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
-    """Why the loop stops now, or None."""
+    """Why the loop stops now, or None. Iteration 0, the parent's baseline (#85), is not one of the
+    ``max_iterations`` design iterations."""
     best = state.get("best")
     its = state["iterations"]
+    if cfg.baseline_only:
+        return "baseline only" if its else None
     if best and best["z_target"] >= 1.0:
         return "Z reached 1 on the target box"
     if its and (its[-1].get("brief") or {}).get("decision") == "stop":
         return f"the critic said stop: {its[-1]['brief']['reason']}"
-    if len(its) >= cfg.max_iterations:
+    designs = [i for i in its if i["iteration"] >= 1]
+    if len(designs) >= cfg.max_iterations:
         return f"{cfg.max_iterations} iterations run"
-    last_kept = max((i["iteration"] for i in its if i.get("decision") == "kept"), default=0)
-    if its and len(its) - last_kept >= cfg.patience:
+    last_kept = max((i["iteration"] for i in its if i.get("decision") in ("kept", BASELINE)), default=0)
+    if designs and its[-1]["iteration"] - last_kept >= cfg.patience:
         return f"no kept design for {cfg.patience} iterations"
     if remaining_usd < cfg.design_budget_usd + cfg.critic_budget_usd:
         return f"API budget spent (${remaining_usd:.2f} left of ${cfg.budget_usd:.2f})"
@@ -159,6 +176,21 @@ def _save(run_dir, state):
     tmp = Path(run_dir) / (STATE + ".tmp")
     tmp.write_text(json.dumps(state, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     tmp.replace(Path(run_dir) / STATE)
+
+
+def load_scored(rec):
+    """The family of a scored record (an iteration or the best): from the registry for the
+    baseline (#85), otherwise from the attempt's package."""
+    if rec.get("registry"):
+        from brixzle.families import registry
+
+        return registry.get(rec["registry"])
+    return CF.load_family(rec["root"], rec["module"])
+
+
+def family_py(rec):
+    """The path of a scored record's family.py."""
+    return Path(rec["family_py"]) if rec.get("family_py") else Path(rec["root"]) / rec["module"] / "family.py"
 
 
 def _free(path):
@@ -208,8 +240,9 @@ class Loop:
             stop = stop_reason(self.state, self.cfg, self.ledger.remaining(), time.time() - t0)
             if stop:
                 break
+            its = self.state["iterations"]
             try:
-                rec = self.iterate(len(self.state["iterations"]) + 1)
+                rec = self.iterate(its[-1]["iteration"] + 1 if its else (0 if self.cfg.parent else 1))
             except BudgetExceeded as e:
                 stop = f"API budget spent: {e}"
                 break
@@ -219,7 +252,7 @@ class Loop:
             self.render_progress()
         self.state["stop"] = stop
         _save(self.run_dir, self.state)
-        if self.cfg.tune and self.state["best"] and self.state.get("tune") is None:
+        if self.cfg.tune and self.state["best"] and self.state.get("tune") is None and not self.cfg.baseline_only:
             self.state["tune"] = self.end_tune()
         self.state["elapsed_s"] = time.time() - t0
         self.state["spent_usd"] = self.ledger.spent()
@@ -228,21 +261,53 @@ class Loop:
         return self.state
 
     def render_progress(self):
-        history = [{"iteration": i["iteration"], "decision": i["decision"], "z": i.get("z")}
-                   for i in self.state["iterations"]]
+        its = self.state["iterations"]
+        history = [{"iteration": i["iteration"], "decision": i["decision"], "z": i.get("z")} for i in its
+                   if i["iteration"] >= 1]
+        base = next((i for i in its if i["iteration"] == 0 and i.get("z")), None)
         RD.progress_png(history, self.results / "progress.png", self.cfg.target,
-                        title=f"{self.name}: Z per iteration (target {self.cfg.target}); {LABEL}")
+                        title=f"{self.name}: Z per iteration (target {self.cfg.target}); {LABEL}",
+                        baseline=({"family": base["family"], "z": base["z"]} if base else None))
 
     # --- one iteration ---
 
+    def baseline(self):
+        """Iteration 0 (#85): the parent family from the registry, scored with the same stages as a
+        design but with no Claude call. It is recorded even if it fails the quick check (it is the
+        reference, not a candidate to turn back), and it becomes the best."""
+        from brixzle.families import registry
+
+        cfg, t_iter = self.cfg, time.time()
+        iter_dir = _free(self.run_dir / "iter-00")
+        iter_dir.mkdir(parents=True)
+        res_dir = self.results / "iter-00"
+        res_dir.mkdir(parents=True, exist_ok=True)
+        fam = registry.get(cfg.parent)
+        module, path = registry.source(cfg.parent)
+        spent0 = self.ledger.spent()
+        rec = {"iteration": 0, "dir": str(iter_dir), "results": str(res_dir), "brief_in": None, "attempts": [],
+               "decision": BASELINE, "z": None, "runs": {}, "seconds": {}, "family": fam.name, "module": module,
+               "root": str(path.parents[len(module.split("."))]), "family_py": str(path), "registry": cfg.parent,
+               "note": {"summary": f"the parent family {fam.name!r} from the registry, scored as the baseline",
+                        "changes": "none: this is the reference the designs must beat"}}
+        t = time.time()
+        check, check_dir = self.engine.quick_check(fam, fam.defaults)
+        rec["seconds"]["quick_check"] = time.time() - t
+        rec["quick_check"] = {"passed": check["passed"], "seated": check["seated"], "dropped": check["dropped"],
+                              "outcomes": check["outcomes"], "run": str(check_dir)}
+        rec["runs"]["quick_check"] = str(check_dir)
+        return self._score(rec, fam, check, res_dir, None, spent0, t_iter)
+
     def iterate(self, i):
+        if i == 0:
+            return self.baseline()
         cfg, t_iter = self.cfg, time.time()
         iter_dir = _free(self.run_dir / f"iter-{i:02d}")
         res_dir = self.results / f"iter-{i:02d}"
         res_dir.mkdir(parents=True, exist_ok=True)
-        best = self.state["best"]
         brief = self.state["iterations"][-1].get("brief") if self.state["iterations"] else None
-        parent = Path(best["root"]) / best["module"] / "family.py" if best else None
+        best = self.state["best"]
+        parent = family_py(best) if best else None
         spent0 = self.ledger.spent()
         rec = {"iteration": i, "dir": str(iter_dir), "results": str(res_dir), "brief_in": brief, "attempts": [],
                "decision": "no_design", "z": None, "runs": {}, "seconds": {}}
@@ -313,9 +378,16 @@ class Loop:
                 self._module_png(outcome, res_dir)
             self.write_iteration_summary(rec, res_dir)
             return rec
+        return self._score(rec, fam, check, res_dir, brief, spent0, t_iter, outcome)
+
+    def _score(self, rec, fam, check, res_dir, brief, spent0, t_iter, outcome=None):
+        """Map, Z, jam analysis, held-out Z, the decision, renders and the critic, for a design
+        that passed the quick check or for the baseline (iteration 0)."""
+        cfg, i, best = self.cfg, rec["iteration"], self.state["best"]
+        baseline = rec["decision"] == BASELINE
         p = fam.defaults
         t = time.time()
-        report, map_dir = self.engine.score(fam, p, check)
+        report, map_dir = self.engine.score(fam, p, check, allow_failed_check=baseline and not check["passed"])
         rec["seconds"]["map"] = time.time() - t
         rec["z"], rec["runs"]["map"] = report["z"], str(map_dir)
         t = time.time()
@@ -328,12 +400,22 @@ class Loop:
             held = self.engine.held_out(fam, p)
             rec["seconds"]["held_out"] = time.time() - t
         rec["held_out"] = held
+        try:
+            rec["mass_g"] = self.engine.masses(fam, p)
+        except Exception as e:  # noqa: BLE001 - a mass for the report must not stop the loop
+            rec["mass_error"] = f"{type(e).__name__}: {e}"[:300]
         z_t = report["z"][cfg.target]["Z"]
-        kept, why = accept(z_t, held, best)
-        rec["decision"], rec["reason"] = ("kept" if kept else "rejected"), why
+        if baseline:
+            kept, why = True, f"the parent family {rec['family']!r}, scored as the baseline the designs must beat"
+        else:
+            kept, why = accept(z_t, held, best)
+            rec["decision"] = "kept" if kept else "rejected"
+        rec["reason"] = why
         if kept:
             self.state["best"] = {"iteration": i, "module": rec["module"], "root": rec["root"], "family": rec["family"],
-                                  "z_target": z_t, "z": report["z"], "held_out": held, "map": str(map_dir)}
+                                  "family_py": str(family_py(rec)), "registry": rec.get("registry"),
+                                  "z_target": z_t, "z": report["z"], "held_out": held, "map": str(map_dir),
+                                  "mass_g": rec.get("mass_g")}
         sim_map = self.engine.read_map(map_dir)
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
                          "module": rec["module"], "decision": rec["decision"], "reason": why, "note": rec["note"],
@@ -349,15 +431,15 @@ class Loop:
         t = time.time()
         RD.jam_map(sim_map, report["z"], res_dir / "jam_map.png", target=cfg.target, jam=jam,
                    title=f"{self.name} iteration {i}: {rec['family']} ({rec['decision']})", picks=picks)
-        self._module_png(outcome, res_dir)
+        self._module_png_of(fam, res_dir)
         try:
             rec["stl"] = [path.name for path in VD.export_stl(fam, p, res_dir)]
         except Exception as e:  # noqa: BLE001 - an export must not stop the loop
             rec["stl_error"] = f"{type(e).__name__}: {e}"[:300]
         rec["seconds"]["render"] = time.time() - t
         z_best = (self.state["best"] or {}).get("z_target", -2.0)
-        if z_best < 1.0 and i < cfg.max_iterations:
-            family_source = (Path(rec["root"]) / rec["module"] / "family.py").read_text(encoding="utf-8")
+        if z_best < 1.0 and i < cfg.max_iterations and not cfg.baseline_only:
+            family_source = family_py(rec).read_text(encoding="utf-8")
             t = time.time()
             try:
                 brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
@@ -377,6 +459,13 @@ class Loop:
     def _module_png(self, outcome, res_dir):
         try:
             fam = CF.load_family(outcome.workspace.root, outcome.workspace.module)
+        except Exception as e:  # noqa: BLE001 - a render must not stop the loop
+            (res_dir / "module.png.error.txt").write_text(f"{type(e).__name__}: {e}\n", encoding="utf-8")
+            return
+        self._module_png_of(fam, res_dir)
+
+    def _module_png_of(self, fam, res_dir):
+        try:
             RD.module_png(fam, fam.defaults, res_dir / "module.png")
         except Exception as e:  # noqa: BLE001 - a render must not stop the loop
             (res_dir / "module.png.error.txt").write_text(f"{type(e).__name__}: {e}\n", encoding="utf-8")
@@ -385,7 +474,7 @@ class Loop:
 
     def end_tune(self):
         best = self.state["best"]
-        fam = CF.load_family(best["root"], best["module"])
+        fam = load_scored(best)
         fixed = ("U",) if self.intake.get("fixed", {}).get("U_mm") and "U" in fam.bounds else ()
         t = time.time()
         try:
@@ -413,6 +502,10 @@ def parser():
     ap.add_argument("--resume", metavar="RUN", help="carry on a run in runs/loop/RUN")
     ap.add_argument("--name", help="the run's name (default: <UTC>-<target>)")
     ap.add_argument("--target", choices=BX.STATISTICS, default=d.target)
+    ap.add_argument("--parent", default=d.parent,
+                    help="a registry family scored as iteration 0, the baseline to beat ('none': from scratch)")
+    ap.add_argument("--baseline-only", action="store_true",
+                    help="score the parent (iteration 0) and stop; no Claude call")
     ap.add_argument("--max-iterations", type=int, default=d.max_iterations)
     ap.add_argument("--patience", type=int, default=d.patience)
     ap.add_argument("--budget-usd", type=float, default=d.budget_usd, help="cap on real API spend")
@@ -439,15 +532,21 @@ def _interrupt_on_sigterm():
     signal.signal(signal.SIGTERM, handler)
 
 
+def config_from_args(args):
+    parent = None if str(args.parent).lower() == "none" else args.parent
+    return LoopConfig(target=args.target, parent=parent, baseline_only=args.baseline_only,
+                      max_iterations=args.max_iterations, patience=args.patience,
+                      budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
+                      design_attempts=args.design_attempts, seed=args.seed, workers=args.workers,
+                      tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results).validate()
+
+
 def main(argv=None):
     _interrupt_on_sigterm()
     args = parser().parse_args(argv)
     if not (args.intake or args.resume):
         raise SystemExit("give --intake (a new run) or --resume RUN")
-    cfg = LoopConfig(target=args.target, max_iterations=args.max_iterations, patience=args.patience,
-                     budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
-                     design_attempts=args.design_attempts, seed=args.seed, workers=args.workers,
-                     tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results)
+    cfg = config_from_args(args)
     loop = Loop(args.intake, cfg, name=args.resume or args.name, resume=bool(args.resume))
     state = loop.run()
     for it in state["iterations"]:
