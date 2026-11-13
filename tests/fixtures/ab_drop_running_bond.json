@@ -1,0 +1,159 @@
+{
+ "label": "simulated, uncalibrated contact",
+ "note": "Outcomes of A/B's two course-1 reference cases under the running bond (issue #82), pinned per platform. Jams near the capture edge are near-miss rests whose outcome follows the platform's convex pieces, so each platform is pinned exactly; the settled poses are pinned on macOS arm64 only.",
+ "platforms": {
+  "macOS arm64": {
+   "source": {
+    "what": "this repo's DropRig, course 1 across two seated course-0 bricks (issue #82)",
+    "platform": "macOS arm64",
+    "mujoco": "3.16.0",
+    "date": "2026-11-12"
+   },
+   "cases": [
+    {
+     "name": "gauss-seed0",
+     "rows": [
+      {
+       "outcome": "seated",
+       "floor": false,
+       "err_mm": [
+        -0.00012398517469591752,
+        0.0019263784211053445,
+        -0.00024476365496894914
+       ],
+       "angle_deg": 0.003967220632890456
+      },
+      {
+       "outcome": "seated",
+       "floor": false,
+       "err_mm": [
+        -5.6974060512970937e-05,
+        -2.111077088677025e-07,
+        -0.00063744527712295
+       ],
+       "angle_deg": 4.998017610290547e-05
+      },
+      {
+       "outcome": "seated",
+       "floor": false,
+       "err_mm": [
+        -5.55532271988568e-05,
+        -0.0008534348154974739,
+        -0.00029666254572369155
+       ],
+       "angle_deg": 0.001797465486180605
+      },
+      {
+       "outcome": "seated",
+       "floor": false,
+       "err_mm": [
+        -0.002712178660416953,
+        0.028207182404760896,
+        0.007898279495080374
+       ],
+       "angle_deg": 0.058551742601212306
+      }
+     ]
+    },
+    {
+     "name": "exp3-mean-seed0",
+     "rows": [
+      {
+       "outcome": "wrong_valley",
+       "floor": false,
+       "err_mm": [
+        -25.000104286793025,
+        -0.004647595337116421,
+        0.0006990747217425763
+       ],
+       "angle_deg": 0.007469505419261316
+      },
+      {
+       "outcome": "jammed",
+       "floor": false,
+       "err_mm": [
+        -24.616447486021322,
+        2.373606711817986,
+        1.786613586552356
+       ],
+       "angle_deg": 3.9742287122978923
+      },
+      {
+       "outcome": "jammed",
+       "floor": false,
+       "err_mm": [
+        0.2811741958078784,
+        -11.777707437426855,
+        5.856681604155455
+       ],
+       "angle_deg": 12.770443052843993
+      },
+      {
+       "outcome": "jammed",
+       "floor": false,
+       "err_mm": [
+        -24.43382379085176,
+        -11.283843375157891,
+        6.347072383802937
+       ],
+       "angle_deg": 24.583275511611973
+      }
+     ]
+    }
+   ]
+  },
+  "Linux x86_64": {
+   "source": {
+    "what": "copied from the failure message of CI run 43360853889 (ubuntu-latest), which lists a platform's outcomes when it has no entry",
+    "platform": "Linux x86_64",
+    "mujoco": "3.16.0",
+    "date": "2026-11-13",
+    "why_it_differs": "A/B part B's outline carries two redundant on-edge vertices at platform-dependent places, so its convex collision pieces are cut differently on Linux (PR #92 comment)"
+   },
+   "cases": [
+    {
+     "name": "gauss-seed0",
+     "rows": [
+      {
+       "outcome": "seated",
+       "floor": false
+      },
+      {
+       "outcome": "seated",
+       "floor": false
+      },
+      {
+       "outcome": "seated",
+       "floor": false
+      },
+      {
+       "outcome": "seated",
+       "floor": false
+      }
+     ]
+    },
+    {
+     "name": "exp3-mean-seed0",
+     "rows": [
+      {
+       "outcome": "wrong_valley",
+       "floor": false
+      },
+      {
+       "outcome": "wrong_valley",
+       "floor": false
+      },
+      {
+       "outcome": "jammed",
+       "floor": false
+      },
+      {
+       "outcome": "jammed",
+       "floor": false
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

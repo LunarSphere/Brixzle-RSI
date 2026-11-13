@@ -93,7 +93,7 @@ def test_rejects_a_bore_that_breaks_into_a_hole():
 def test_any_kind_of_feature_on_the_brick_makes_it_grippable():
     """No bore and no fork: a lip a hook could catch is enough for R10 (the gripper comes later)."""
     def lip(p, part):
-        h = p.U * math.tan(math.radians(p.groove_deg))
+        h = wedge_module._rise(p)
         return (GripFeature(kind="lip", x_mm=-p.U + 2.0, z_mm=h + p.H0 - 1.0, size_mm=(4.0, 2.0)),)
 
     family = replace(WEDGE, pickup=lip)
@@ -132,7 +132,7 @@ def test_rejects_a_malformed_grip_feature(feature):
 def test_thin_bore_wall_is_a_negative_margin_not_a_violation():
     def thin(p, part):
         b, *rest = wedge_module.pickup(p, part)
-        top = abs(b.x_mm) * math.tan(math.radians(p.groove_deg)) + p.H0
+        top = wedge_module.underside(p, b.x_mm) + p.H0  # the W's top over the bore (#82)
         return (replace(b, z_mm=top - b.radius_mm - 0.5), *rest)
 
     bad = replace(WEDGE, pickup=thin)
@@ -165,7 +165,7 @@ def test_the_fork_checks_are_kept_for_the_gripper_step():
     fork = R.fork_margins(WEDGE, p, "A", bodies, tine_d_mm=2.0)
     assert set(fork) == {"R10.hangs_stable", "R10.tines_straddle_com"}
     x = p.bore_x_frac * p.U
-    z = x * math.tan(math.radians(p.groove_deg)) + p.bore_z_frac * p.H0
+    z = wedge_module.underside(p, x) + p.bore_z_frac * p.H0
     assert fork["R10.hangs_stable"] == pytest.approx(z + 1.0 - bodies.com_mm[2] - 1.0)
     assert fork["R10.tines_straddle_com"] == pytest.approx(x - abs(bodies.com_mm[0]) - 1.0)
     lip_only = replace(WEDGE, pickup=lambda p, part: (GripFeature("lip", 0.0, p.H0, (4.0, 2.0)),))
@@ -268,3 +268,9 @@ def test_rejects_phantom_collision_material():
         return [np.array([[x, y, z] for x in (-p.U, p.U) for y in (-p.D / 2, p.D / 2) for z in (0.0, h + p.H0)])]
 
     assert "sim_bodies" in _checks(_wedge_with_collision(box))
+
+
+def test_a_stack_only_v_cannot_lay_a_running_bond(stack_v):
+    """Issue #82: a course-1 brick shifted half a brick must not overlap the two below it."""
+    found = [v for v in C.check_family(stack_v, samples=0) if v.check == "lattice"]
+    assert found and "running bond" in found[0].message, found

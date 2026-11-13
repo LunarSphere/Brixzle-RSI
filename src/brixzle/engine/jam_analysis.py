@@ -416,7 +416,13 @@ class _Frames:
             self.below_part = family.part_for(0, 1)
             self.below_section = B.section(family, p, self.below_part)
             self.below = (np.asarray(rest["support"]["pos_mm"], float), _rot(rest["support"]["quat"]))
-        base = family.base(p, 4, 1)  # the rig's base: voxels 0 to 4, base frame = world
+        # Every brick placed below (two on course 1 since #82), by body name: (part, section, frame).
+        self.placed = {}
+        for b in rest.get("placed") or ():
+            self.placed[b["brick"]] = (b["part"], B.section(family, p, b["part"]),
+                                       (np.asarray(b["pos_mm"], float), _rot(b["quat"])))
+        _, _, (v0, v1) = T.rig_layout(family.lattice(p), course)
+        base = family.base(p, v1 - v0, 1)  # the rig's base, base frame = world
         self.base_section = base if isinstance(base, Section) else None
 
     def _shift(self, y):
@@ -436,7 +442,11 @@ class _Frames:
         on_brick = name_feature(self.section.outer, self.section.guide_faces,
                                 self._mean(site["_positions"], (self.pos, self.rot)), corner_mm)
         on_brick = {"part": self.part, **on_brick, "label": f"{self.part}: {on_brick['label']}"}
-        if site["other"].startswith("brick") and self.below is not None:
+        if site["other"] in self.placed:
+            part, sec, frame = self.placed[site["other"]]
+            f = name_feature(sec.outer, sec.guide_faces, self._mean(site["_positions"], frame), corner_mm)
+            below = {"part": part, "brick": site["other"], **f, "label": f"{part} ({site['other']}): {f['label']}"}
+        elif site["other"].startswith("brick") and self.below is not None:
             f = name_feature(self.below_section.outer, self.below_section.guide_faces,
                              self._mean(site["_positions"], self.below), corner_mm)
             below = {"part": self.below_part, **f, "label": f"{self.below_part}: {f['label']}"}

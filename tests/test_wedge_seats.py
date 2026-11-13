@@ -18,10 +18,11 @@ def test_the_wedge_seats_when_dropped_at_the_aim(course):
     assert row["outcome"] == "seated", row
 
 
-def test_the_wedge_base_has_a_valley_under_each_seat():
+def test_the_wedge_base_has_a_valley_under_each_ridge():
+    """The W's ridges sit at voxel centres, half a voxel either side of its seat (#82)."""
     p = WEDGE.defaults
     base = WEDGE.base(p, 4, 1)
     top = sorted((x, z) for x, z in base.outer.exterior.coords if z >= 0)
     valleys = sorted({round(x, 6) for x, z in top if abs(z) < 1e-9})
     seat_x = WEDGE.seat_pose(p, __import__("brixzle.families.interface", fromlist=["Placement"]).Placement(0, 1))[0][0]
-    assert round(seat_x, 6) in valleys
+    assert {round(seat_x - p.U / 2, 6), round(seat_x + p.U / 2, 6)} <= set(valleys)

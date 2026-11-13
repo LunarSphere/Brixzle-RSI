@@ -160,7 +160,7 @@ The check is not the score. A design that seats every drop in the box always pas
 
 ### Full sim map
 
-`engine/sim_map.py` maps a design that passed the quick check. It drops the brick over three slices through the aim point, on both courses, and records seated, jammed, wrong valley and fell for every cell.
+`engine/sim_map.py` maps a design that passed the quick check. It drops the brick over three slices through the aim point, on both courses, and records seated, jammed, wrong valley and fell for every cell. Course 0 lands on the base. Course 1 lands across the joint between two seated course-0 bricks, a running bond, as in a wall, a bridge or an overhang (issue #82). A brick that can only stack straight on one brick fails there, and a jam at the joint shows up. A one-voxel brick keeps the stack drop.
 
 | Slice | Axes | Held at the aim |
 |---|---|---|

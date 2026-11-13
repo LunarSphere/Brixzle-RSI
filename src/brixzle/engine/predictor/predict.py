@@ -268,8 +268,10 @@ def _placed(poly, pos, quat):
 def scene(family, p, course, i0=1):
     """(body, env, target placement) for course 0 (onto the base) or 1 (onto a seated course-0 brick).
 
-    ``i0`` is the first voxel of both bricks; the default 1 matches trials.DropRig (Placement(0, 1),
-    Placement(1, 1)) and the family contract (issue #70), so every family's base must seat a brick
+    ``i0`` is the first voxel of both bricks; the default 1 matches the course-0 drop of
+    trials.DropRig (Placement(0, 1)) and the family contract (issue #70). Course 1 here is still a
+    stack (Placement(1, 1) on one brick), while the sim's course 1 has been a running bond since #82;
+    the predictor is not part of the score. Every family's base must seat a brick
     there."""
     key = (id(family), p, course, i0)
     if key in _SCENES:
