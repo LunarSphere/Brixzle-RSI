@@ -53,12 +53,14 @@ def counts(z, n=100):
 
 
 class FakeEngine:
-    """Canned engine results. ``zs`` is Z on every box per scored design, in order; ``checks``
-    whether each quick check passes (default: all pass); ``held`` held-out Z per scored design."""
+    """Canned engine results. ``zs`` is, per scored design in order, Z on every box (a number) or
+    Z per box ({statistic: Z}); ``checks`` whether each quick check passes (default: all pass);
+    ``held`` held-out Z per held-out call."""
 
     def __init__(self, tmp, zs, checks=None, held=None):
         self.tmp, self.zs, self.checks, self.held = Path(tmp), list(zs), list(checks or []), list(held or [])
         self.calls, self.n = [], 0
+        self.held_targets, self.tune_targets = [], []
 
     def _dir(self, name):
         self.n += 1
@@ -78,11 +80,12 @@ class FakeEngine:
     def score(self, family, p, check, allow_failed_check=False):
         self.calls.append(("score", family.name, allow_failed_check))
         z = self.zs.pop(0)
+        z = z if isinstance(z, dict) else {s: z for s in ("mean", "p95", "max")}
         d = self._dir("map")
         m = {"family": family.name, "box": BOXES["mean"].to_dict(), "cover_boxes": [b.to_dict() for b in BOXES.values()],
              "grids": [GRID], "overrides": []}
         (d / "map.json").write_text(json.dumps(m), encoding="utf-8")
-        return {"z": {s: counts(z) for s in ("mean", "p95", "max")}, "statistics": ["mean", "p95", "max"]}, d
+        return {"z": {s: counts(z[s]) for s in ("mean", "p95", "max")}, "statistics": ["mean", "p95", "max"]}, d
 
     def read_map(self, d):
         return json.loads((Path(d) / "map.json").read_text(encoding="utf-8"))
@@ -96,8 +99,9 @@ class FakeEngine:
     def masses(self, family, p):
         return {part: 10.0 for part in family.parts}
 
-    def held_out(self, family, p):
+    def held_out(self, family, p, target=None):
         self.calls.append("held_out")
+        self.held_targets.append((family.name, target))
         z = self.held.pop(0) if self.held else 0.0
         return {"seed 1, friction 0.2": counts(z), "seed 1, friction 0.5": counts(z)}
 
@@ -110,8 +114,9 @@ class FakeEngine:
                           "outcome": "seated", "video": f"drop-{k}.mp4", "rerun_outcome": "seated"})
         return picks
 
-    def tune(self, family, p, fixed=()):
+    def tune(self, family, p, fixed=(), target=None):
         self.calls.append(("tune", tuple(fixed)))
+        self.tune_targets.append(target)
         return {"accepted": False, "improved": False, "baseline": {"score": 0.1}, "tuned": {"score": 0.1},
                 "params": p.to_dict()}, self._dir("tune")
 
@@ -144,9 +149,10 @@ def intake(tmp_path):
 
 
 def _cfg(tmp_path, **kw):
-    """The existing cases run from scratch (``--parent none``); the baseline tests pass parent='ab'."""
+    """The existing cases run from scratch (``--parent none``) on a fixed target (``ladder=False``);
+    the baseline tests pass parent='ab' and the ladder tests ladder=True."""
     return LoopConfig(runs=str(tmp_path / "runs"), results=str(tmp_path / "RSI_RESULTS"),
-                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, **kw})
+                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, "ladder": False, **kw})
 
 
 def _loop(tmp_path, intake, script, engine, **kw):
@@ -175,7 +181,7 @@ def test_a_redesign_is_kept_only_if_z_improves_and_held_out_is_not_worse():
 
 
 def test_the_loop_stops_at_z_one_or_on_the_budgets():
-    cfg = LoopConfig(max_iterations=5, patience=2)
+    cfg = LoopConfig(max_iterations=5, patience=2, ladder=False)
     state = {"best": None, "iterations": []}
     assert OR.stop_reason(state, cfg, 5.0, 0.0) is None
     assert "Z reached 1" in OR.stop_reason({"best": {"z_target": 1.0}, "iterations": [{}]}, cfg, 5.0, 0.0)
@@ -385,6 +391,8 @@ def test_parent_none_runs_from_scratch_and_the_cli_takes_the_parent():
     assert OR.config_from_args(OR.parser().parse_args(["--intake", "x"])).parent == "ab"
     assert OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--parent", "none"])).parent is None
     assert OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--baseline-only"])).baseline_only
+    assert LoopConfig().ladder and OR.config_from_args(OR.parser().parse_args(["--intake", "x"])).ladder
+    assert not OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--no-ladder"])).ladder
     with pytest.raises(ValueError, match="parent"):
         LoopConfig(parent="no_such_family").validate()
 
@@ -395,3 +403,108 @@ def test_parent_none_starts_at_iteration_1(tmp_path, intake):
     state = loop.run()
     assert [i["iteration"] for i in state["iterations"]] == [1] and state["best"]["iteration"] == 1
     assert [c.name for c in runner.calls] == ["design"]
+
+
+# --- the target ladder: mean, then p95, then max (issue #84) ---
+
+
+def z3(mean, p95, mx):
+    return {"mean": mean, "p95": p95, "max": mx}
+
+
+def _best(mean, p95, mx, target="mean"):
+    z = {"mean": counts(mean), "p95": counts(p95), "max": counts(mx)}
+    return {"z_target": z[target]["Z"], "z": z, "target": target, "held_out": {}, "held_out_by": {}}
+
+
+def test_the_current_target_is_the_first_rung_below_one():
+    cfg = LoopConfig()
+    assert OR.current_target({"best": None, "iterations": []}, cfg) == "mean"
+    assert OR.current_target({"best": _best(0.8, 0.3, 0.1), "iterations": []}, cfg) == "mean"
+    assert OR.current_target({"best": _best(1.0, 0.3, 0.1), "iterations": []}, cfg) == "p95"
+    assert OR.current_target({"best": _best(1.0, 1.0, 0.1), "iterations": []}, cfg) == "max"
+    assert OR.current_target({"best": _best(1.0, 0.3, 0.1), "iterations": []}, LoopConfig(target="p95")) == "p95"
+    assert OR.current_target({"best": _best(1.0, 0.3, 0.1), "iterations": []}, LoopConfig(ladder=False)) == "mean"
+
+
+def test_z_reached_one_stops_the_ladder_only_on_the_last_rung():
+    cfg = LoopConfig(max_iterations=5)
+    assert OR.stop_reason({"best": _best(1.0, 0.6, 0.2), "iterations": [{"iteration": 1, "decision": "kept"}]},
+                          cfg, 5.0, 0.0) is None
+    assert OR.stop_reason({"best": _best(1.0, 1.0, 0.9), "iterations": [{"iteration": 1, "decision": "kept"}]},
+                          cfg, 5.0, 0.0) is None
+    assert "Z reached 1" in OR.stop_reason({"best": _best(1.0, 1.0, 1.0),
+                                            "iterations": [{"iteration": 1, "decision": "kept"}]}, cfg, 5.0, 0.0)
+    flat = LoopConfig(max_iterations=5, ladder=False)
+    assert "Z reached 1" in OR.stop_reason({"best": _best(1.0, 0.6, 0.2),
+                                            "iterations": [{"iteration": 1, "decision": "kept"}]}, flat, 5.0, 0.0)
+
+
+def test_a_design_that_lowers_a_lower_rung_is_rejected_with_the_reason():
+    best = {"z_target": 0.5, "held_out": {"a": counts(0.4)}}
+    kept, why = OR.accept(0.8, {"a": counts(0.5)}, best, lower=[("mean", 0.9, 1.0)])
+    assert not kept and "lower rung" in why and "mean +0.900 < +1.000" in why
+    assert OR.accept(0.8, {"a": counts(0.5)}, best, lower=[("mean", 1.0, 1.0)])[0]
+
+
+def test_z_one_on_mean_climbs_to_p95_and_the_critic_is_told(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(1.0, 0.5, 0.2), z3(1.0, 0.7, 0.3)], held=[0.5, 0.5, 0.5])
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2")], engine,
+                         ladder=True, max_iterations=2)
+    state = loop.run()
+    its = state["iterations"]
+    assert [(i["iteration"], i["decision"], i["target"]) for i in its] == [(1, "kept", "mean"), (2, "kept", "p95")]
+    assert state["stop"] == "2 iterations run"
+    critic = [c for c in runner.calls if c.name == "critic"]
+    assert len(critic) == 1 and "Target box: p95" in critic[0].prompt
+    # held-out on mean for design 1; on p95 for design 2 and, once, for the best it was compared with
+    assert [t for _, t in engine.held_targets] == ["mean", "p95", "p95"]
+    assert engine.tune_targets == ["p95"]  # the end tune works on the first box still below 1
+    assert state["best"]["iteration"] == 2 and set(state["best"]["held_out_by"]) == {"p95"}
+    text = (tmp_path / "RSI_RESULTS" / "t" / "iter-02" / "summary.md").read_text(encoding="utf-8")
+    assert "judged on the **p95** box" in text
+    assert (tmp_path / "RSI_RESULTS" / "t" / "progress.png").exists()
+
+
+def test_raising_p95_but_lowering_mean_is_rejected(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(1.0, 0.5, 0.2), z3(0.9, 0.8, 0.3)])
+    loop, _ = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2")], engine,
+                    ladder=True, max_iterations=2)
+    state = loop.run()
+    second = state["iterations"][1]
+    assert second["decision"] == "rejected" and second["target"] == "p95"
+    assert "lower rung" in second["reason"] and "mean" in second["reason"]
+    assert state["best"]["iteration"] == 1
+
+
+def test_the_same_run_without_the_ladder_stops_at_z_one_on_mean(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(1.0, 0.5, 0.2)])
+    loop, runner = _loop(tmp_path, intake, [design_step()], engine, ladder=False, max_iterations=3)
+    state = loop.run()
+    assert state["stop"] == "Z reached 1 on the target box" and [c.name for c in runner.calls] == ["design"]
+    assert engine.tune_targets == ["mean"]
+
+
+def test_the_ladder_stops_at_z_one_on_max_without_a_critic(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[1.0])
+    loop, runner = _loop(tmp_path, intake, [design_step()], engine, ladder=True, max_iterations=3)
+    state = loop.run()
+    assert "Z reached 1" in state["stop"] and "max" in state["stop"]
+    assert [c.name for c in runner.calls] == ["design"]
+
+
+def test_a_state_from_before_the_ladder_resumes_without_it(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(1.0, 0.5, 0.2), z3(1.0, 0.6, 0.2)])
+    loop, _ = _loop(tmp_path, intake, [design_step(), critic_step()], engine, ladder=False)
+    loop.state["iterations"].append(loop.iterate(1))
+    old = {k: v for k, v in loop.state["config"].items() if k not in ("ladder", "parent", "baseline_only")}
+    loop.state["config"] = old
+    for k in ("target", "held_out_by"):
+        loop.state["best"].pop(k, None)
+    OR._save(loop.run_dir, loop.state)
+    runner = RN.ScriptedRunner([design_step("again")], ledger=loop.ledger)
+    again = OR.Loop(None, _cfg(tmp_path, ladder=True, max_iterations=3), runner=runner, engine=engine, name="t",
+                    resume=True)
+    assert again.cfg.ladder is False
+    state = again.run()
+    assert state["stop"] == "Z reached 1 on the target box" and [i["iteration"] for i in state["iterations"]] == [1]

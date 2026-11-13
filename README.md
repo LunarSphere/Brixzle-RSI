@@ -24,7 +24,9 @@ Each iteration of the loop redesigns the brick's shape and tests it in simulatio
 4. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
 5. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
 
-The loop does not tune numbers inside an iteration. When Z reaches 1 or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
+The loop does not tune numbers inside an iteration. When Z reaches 1 on the last box or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
+
+The target climbs a ladder (issue #84): a run starts on `--target`, and once the best design reaches Z = 1 there it is judged on the next box (mean, then p95, then max). A design is kept only if it raises Z on the current box without lowering it on a box below. `--no-ladder` stays on `--target`.
 
 A design's objective is **Z** (issue #61). For a target error box in X, release height and θ, take every drop of the full sim map inside the box: Z = (seated − jammed) / drops, so it runs from −1 to 1, and Z = 1 (every drop seated) passes. Each design is scored on three target boxes, sized to the drone's mean, 95th-percentile and worst measured error. Z is counted over the box, not the green zone, so a design cannot raise it by narrowing where it seats.
 
