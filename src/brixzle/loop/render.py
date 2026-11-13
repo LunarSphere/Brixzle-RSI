@@ -72,7 +72,19 @@ def _fmt_fixed(fixed):
     return ", ".join(f"{k} {v:.1f} {units.get(k, '')}".strip() for k, v in fixed.items())
 
 
-def jam_map(sim_map, z, out, target=None, jam=None, title=None):
+def pick_marks(sim_map, picks):
+    """Where each picked drop (loop/videos.py) sits on the map: (slice, course, x, y, k), the
+    coordinates in the slice's own two axes."""
+    axes = {(g["slice"], g["course"]): g["axes"] for g in sim_map["grids"]}
+    out = []
+    for q in picks or ():
+        a, b = axes.get((q["slice"], q["course"]), (None, None))
+        if a is not None:
+            out.append((q["slice"], q["course"], q["pose"][a], q["pose"][b], q["k"]))
+    return out
+
+
+def jam_map(sim_map, z, out, target=None, jam=None, title=None, picks=None):
     """Draw the map's grids to ``out`` (PNG). ``z`` is {statistic: counts}; ``jam`` the jam analysis."""
     grids = sorted(sim_map["grids"], key=lambda g: (["xz", "xt", "zt"].index(g["slice"]), g["course"]))
     slices = sorted({g["slice"] for g in grids}, key=["xz", "xt", "zt"].index)
@@ -103,6 +115,10 @@ def jam_map(sim_map, z, out, target=None, jam=None, title=None):
                 (b0, b1), (c0, c1) = band["extent"][a], band["extent"][b]
                 ax.add_patch(Rectangle((b0 - sa / 2, c0 - sb / 2), b1 - b0 + sa, c1 - c0 + sb, fill=False,
                                        lw=1.4, ec="black"))
+        for sl, co, x, y, k in pick_marks(sim_map, picks):
+            if (sl, co) == (g["slice"], g["course"]):
+                ax.plot(x, y, marker="o", ms=11, mfc="white", mec="black", mew=1.2, zorder=5)
+                ax.text(x, y, str(k), ha="center", va="center", fontsize=7, fontweight="bold", zorder=6)
         names = legend_counts(g)
         ax.legend(handles=[Patch(color=COLOURS[c], label=f"{NAMES[c]} ({names[NAMES[c]]})") for c in ORDER
                            if NAMES[c] in names]
@@ -290,6 +306,18 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     lines += ["", "## The critic's brief for the next iteration", ""]
     lines += _brief_lines(rec.get("brief")) if rec.get("brief") else [
         f"- none ({rec.get('critic_error') or 'the critic was not run this iteration'})"]
+    if rec.get("videos"):
+        lines += ["", "## Drop videos", "",
+                  "Picked at random from the full sim map (seeded) and marked with their numbers on `jam_map.png`.", "",
+                  "| # | Video | Slice, course | Pose | Outcome in the map |", "|---|---|---|---|---|"]
+        for q in rec["videos"]:
+            v = q.get("video") or f"not rendered: {q.get('error', '?')}"
+            pose = f"x {q['pose']['x']:+.1f} mm, z {q['pose']['z']:.1f} mm, pitch {q['pose']['t']:+.1f} deg"
+            again = q.get("rerun_outcome")
+            note = f" (re-run: {again})" if again and again != q["outcome"] else ""
+            lines.append(f"| {q['k']} | `{v}` | {q['slice']}, course {q['course']} | {pose} | {q['outcome']}{note} |")
+    if rec.get("stl"):
+        lines += ["", "## STL", "", "The printed solid of each part, in mm:", ""] + [f"- `{n}`" for n in rec["stl"]]
     lines += ["", "## Runs behind these numbers", ""]
     for a in rec.get("attempts", []):
         lines.append(f"- design package, attempt {a['attempt']}: `{a['root']}/{a['module']}`")

@@ -50,6 +50,7 @@ from brixzle.engine import tune as TU
 from brixzle.engine import zscore as ZS
 from brixzle.intake.intake import load_intake
 from brixzle.loop import render as RD
+from brixzle.loop import videos as VD
 from brixzle.loop.config import LoopConfig
 from brixzle.loop.design_log import DesignLog
 
@@ -88,6 +89,10 @@ class SimEngine:
     def held_out(self, family, p):
         fns = ZS.held_out_scores(family, self.boxes[self.cfg.target], self.cfg.seed + 1, workers=self.cfg.workers)
         return {name: fn(p)["counts"] for name, fn in fns.items()}
+
+    def drop_videos(self, family, p, sim_map, map_dir, out_dir, n, seed):
+        """``n`` drops of the map, picked at random with ``seed``, recorded to ``out_dir`` (#77)."""
+        return VD.drop_videos(family, p, sim_map, SM.read_drops(map_dir), out_dir, n=n, seed=seed)
 
     def tune(self, family, p, fixed=()):
         s = TU.TuneSettings(statistic=self.cfg.target, fixed=tuple(fixed), seed=self.cfg.seed,
@@ -328,9 +333,20 @@ class Loop:
                          "z": report["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
                          "brief_followed": (brief or {}).get("reason"), "runs": dict(rec["runs"])})
         t = time.time()
+        picks = []
+        if cfg.videos:
+            # The pick is repeatable: its seed is the run's seed and the iteration (issue #77).
+            picks = self.engine.drop_videos(fam, p, sim_map, map_dir, res_dir, cfg.videos, seed=cfg.seed * 1000 + i)
+            rec["videos"] = picks
+            rec["seconds"]["videos"] = time.time() - t
+        t = time.time()
         RD.jam_map(sim_map, report["z"], res_dir / "jam_map.png", target=cfg.target, jam=jam,
-                   title=f"{self.name} iteration {i}: {rec['family']} ({rec['decision']})")
+                   title=f"{self.name} iteration {i}: {rec['family']} ({rec['decision']})", picks=picks)
         self._module_png(outcome, res_dir)
+        try:
+            rec["stl"] = [path.name for path in VD.export_stl(fam, p, res_dir)]
+        except Exception as e:  # noqa: BLE001 - an export must not stop the loop
+            rec["stl_error"] = f"{type(e).__name__}: {e}"[:300]
         rec["seconds"]["render"] = time.time() - t
         z_best = (self.state["best"] or {}).get("z_target", -2.0)
         if z_best < 1.0 and i < cfg.max_iterations:
@@ -399,6 +415,7 @@ def parser():
     ap.add_argument("--seed", type=int, default=d.seed)
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--no-tune", action="store_true", help="skip the end tune")
+    ap.add_argument("--videos", type=int, default=d.videos, help="drop videos per iteration (0: none)")
     ap.add_argument("--runs", default=d.runs)
     ap.add_argument("--results", default=d.results)
     return ap
@@ -423,7 +440,7 @@ def main(argv=None):
     cfg = LoopConfig(target=args.target, max_iterations=args.max_iterations, patience=args.patience,
                      budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
                      design_attempts=args.design_attempts, seed=args.seed, workers=args.workers,
-                     tune=not args.no_tune, runs=args.runs, results=args.results)
+                     tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results)
     loop = Loop(args.intake, cfg, name=args.resume or args.name, resume=bool(args.resume))
     state = loop.run()
     for it in state["iterations"]:

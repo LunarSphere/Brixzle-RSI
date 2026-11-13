@@ -74,6 +74,15 @@ class FakeEngine:
         z = self.held.pop(0) if self.held else 0.0
         return {"seed 1, friction 0.2": counts(z), "seed 1, friction 0.5": counts(z)}
 
+    def drop_videos(self, family, p, sim_map, map_dir, out_dir, n, seed):
+        self.calls.append(("videos", n, seed))
+        picks = []
+        for k in range(1, n + 1):
+            (Path(out_dir) / f"drop-{k}.mp4").write_bytes(b"\x00")
+            picks.append({"k": k, "slice": "xz", "course": 0, "cell": [k, 0], "pose": {"x": float(k), "z": 1.0, "t": 0.0},
+                          "outcome": "seated", "video": f"drop-{k}.mp4", "rerun_outcome": "seated"})
+        return picks
+
     def tune(self, family, p, fixed=()):
         self.calls.append(("tune", tuple(fixed)))
         return {"accepted": False, "improved": False, "baseline": {"score": 0.1}, "tuned": {"score": 0.1},
@@ -170,6 +179,9 @@ def test_an_end_to_end_run_with_stubbed_agents(tmp_path, intake):
         assert (d / "jam_map.png").stat().st_size > 0 and (d / "module.png").stat().st_size > 0
         text = (d / "summary.md").read_text(encoding="utf-8")
         assert "Z per target box" in text and "simulated, uncalibrated contact" in text and "Decision: kept" in text
+        assert sorted(f.name for f in d.glob("drop-*.mp4")) == [f"drop-{j}.mp4" for j in range(1, 6)]
+        assert (d / "loopwedge-A.stl").exists() or list(d.glob("*.stl"))
+        assert "## Drop videos" in text
     assert (tmp_path / "RSI_RESULTS" / "t" / "progress.png").exists()
     assert (tmp_path / "RSI_RESULTS" / "t" / "summary.md").exists()
     log = [json.loads(line) for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
