@@ -73,8 +73,12 @@ def interface_for_agent(text):
     return "\n".join(out)
 
 
-def system_prompt():
+def system_prompt(lessons_text=""):
+    """The system prompt; ``lessons_text`` (loop/lessons.py, #88) is added at the end if given."""
+    from brixzle import rules as RL
+
     interface = interface_for_agent((REPO / "docs" / "family-interface.md").read_text(encoding="utf-8"))
+    lessons = f"\n\n{lessons_text}\n" if lessons_text else ""
     return f"""You are the design agent of Brixzle-RSI, a loop that designs brick families a drone can place imprecisely.
 You write one brick family as Python code that follows the family interface below, then check it with the
 check_family tool and fix it until the check passes (ok: true). The check also drops your brick once at the
@@ -111,7 +115,10 @@ Base requirements (R1-R13):
 
 Family interface (docs/family-interface.md):
 {interface}
-"""
+
+Design rules (rules/design_rules.md; the critic cites them by id):
+{RL.rules_text()}
+{lessons}"""
 
 
 def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None):
@@ -163,11 +170,11 @@ class DesignOutcome:
 
 
 def design(runner, intake, attempt_dir, module, brief=None, parent=None, failures=None, log_text="",
-           budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS):
+           budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text=""):
     """Run the design agent once; returns a DesignOutcome. The loop checks the package itself
     afterwards, whatever the agent said."""
     ws = Workspace.make(attempt_dir, module)
-    call = AgentCall(name="design", system=system_prompt(),
+    call = AgentCall(name="design", system=system_prompt(lessons_text),
                      prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed")),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
                      write_root=ws.pkg, read_roots=(*READ_ROOTS, Path(attempt_dir).parent.parent,

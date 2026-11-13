@@ -58,6 +58,7 @@ from brixzle.engine import sim_map as SM
 from brixzle.engine import tune as TU
 from brixzle.engine import zscore as ZS
 from brixzle.intake.intake import load_intake
+from brixzle.loop import lessons as LS
 from brixzle.loop import render as RD
 from brixzle.loop import videos as VD
 from brixzle.loop.config import LoopConfig
@@ -301,6 +302,7 @@ class Loop:
                 stop = f"API budget spent: {e}"
                 break
             self.state["iterations"].append(rec)
+            self.record_lessons()
             self.state["elapsed_s"] = time.time() - t0
             _save(self.run_dir, self.state)
             self.render_progress()
@@ -313,6 +315,20 @@ class Loop:
         _save(self.run_dir, self.state)
         self.write_run_summary()
         return self.state
+
+    def lessons_text(self):
+        """The lessons for the agents' system prompts (#88); '' with ``--no-lessons``."""
+        return LS.lessons_text(self.cfg.lessons_file) if self.cfg.lessons else ""
+
+    def record_lessons(self):
+        """Once an iteration has a scored design, write the lessons of the last brief with its outcome (#88)."""
+        its = self.state["iterations"]
+        if not self.cfg.lessons or len(its) < 2:
+            return
+        try:
+            its[-1]["lessons_written"] = [x["id"] for x in LS.record(self.cfg.lessons_file, self.name, its[-2], its[-1])]
+        except (ValueError, OSError) as e:  # a lesson must not stop the loop
+            its[-1]["lessons_error"] = f"{type(e).__name__}: {e}"[:300]
 
     def render_progress(self):
         its = self.state["iterations"]
@@ -373,7 +389,8 @@ class Loop:
             try:
                 outcome = DA.design(self.runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
                                     parent=parent, failures=failures, log_text=self.log.text(),
-                                    budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns)
+                                    budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
+                                    lessons_text=self.lessons_text())
             except BudgetExceeded:
                 raise
             except Exception as e:  # noqa: BLE001 - an SDK or API error: log it and try again
@@ -508,7 +525,8 @@ class Loop:
             try:
                 rec["critic_target"] = current_target(self.state, cfg)  # the rung the next design is judged on
                 brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
-                                            rec["critic_target"], budget_usd=cfg.critic_budget_usd)
+                                            rec["critic_target"], budget_usd=cfg.critic_budget_usd,
+                                            lessons_text=self.lessons_text())
                 rec["brief"], rec["critic_cost_usd"] = brief, result.cost_usd
             except BudgetExceeded:
                 raise
@@ -584,6 +602,8 @@ def parser():
     ap.add_argument("--target", choices=BX.STATISTICS, default=d.target,
                     help="the box the run starts on; it climbs mean -> p95 -> max as Z reaches 1")
     ap.add_argument("--no-ladder", action="store_true", help="stay on --target (no climbing)")
+    ap.add_argument("--no-lessons", action="store_true",
+                    help="neither read nor write the lessons file (for repeatable benchmarks, #22)")
     ap.add_argument("--no-y-error", action="store_true",
                     help="score X offsets only, as before issue #86 (for comparisons with earlier runs)")
     ap.add_argument("--parent", default=d.parent,
@@ -618,7 +638,8 @@ def _interrupt_on_sigterm():
 
 def config_from_args(args):
     parent = None if str(args.parent).lower() == "none" else args.parent
-    return LoopConfig(target=args.target, ladder=not args.no_ladder, y_error=not args.no_y_error, parent=parent,
+    return LoopConfig(target=args.target, ladder=not args.no_ladder, y_error=not args.no_y_error,
+                      lessons=not args.no_lessons, parent=parent,
                       baseline_only=args.baseline_only,
                       max_iterations=args.max_iterations, patience=args.patience,
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
