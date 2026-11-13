@@ -22,3 +22,13 @@ def stack_v():
     from brixzle.agents import check_family as CF
 
     return CF.load_family(Path(__file__).parent / "fixtures", "stackv")
+
+
+@pytest.fixture(scope="session")
+def ab_gate(tmp_path_factory):
+    """A/B's structure gate (issue #83) with 3 repeats per structure, run once per session; its
+    'repeats' hold every build, which tests/test_structures.py reuses. Simulated, uncalibrated contact."""
+    from brixzle.engine import structure_gate as G
+    from brixzle.families.ab.family import FAMILY
+
+    return G.run_gate(FAMILY, FAMILY.defaults, G.GateSettings(repeats=3), runs=tmp_path_factory.mktemp("gate"))

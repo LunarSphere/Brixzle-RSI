@@ -10,10 +10,10 @@ Each requirement is checked one of three ways:
 
 | ID | Requirement | Checked by |
 |---|---|---|
-| R1 | **Generality.** Bricks must generalize to any structure (bridge, tower, arch). | Sim: tower, wall, bridge and ring builds |
+| R1 | **Generality.** Bricks must generalize to any structure (bridge, tower, arch). | Sim: the structure gate (#83) builds a tower, a running-bond wall and a bridge on seeded repeats, and a design that cannot is rejected; the ring joins in #89 |
 | R2 | **Voxelizable.** Bricks must sit on a voxel lattice so that structures can later be planned algorithmically. | Design: lattice placements; cell size is tuned unless fixed at intake |
-| R3 | **Rigidity.** Assemblies must be rigid and physically stable. | Sim: sag and lateral push tests |
-| R4 | **Overhang.** An overhang must accept n bricks without falling over. One way to achieve this is angled pegs in a stepped design. | Rules: hook depth, seated play · Sim: overhang builds |
+| R3 | **Rigidity.** Assemblies must be rigid and physically stable. | Sim: sag and collapse in the structure gate's builds (#83); lateral push test (`push_test`, not in the loop yet) |
+| R4 | **Overhang.** An overhang must accept n bricks without falling over. One way to achieve this is angled pegs in a stepped design. | Rules: hook depth, seated play · Sim: the structure gate's overhang build (#83): at least 3 bricks to pass, and its length is the loop's second objective |
 | R5 | **Biased error.** The drone will make placement errors. Instead of correcting all of them, we bias the error onto one side (e.g. always onto the right slope) and use that slope's angle as the guide. | Sim: aim bias sized from the error model · Rule: capture width |
 | R6 | **Steep guides.** A guide ramp must be steeper than its friction coefficient requires (tan θ > μ, with margin). | Rule: friction-cone check on every guide face |
 | R7 | **Alternating angles.** Alternating the lean between courses may improve stability. | Design: alternating parts by course |

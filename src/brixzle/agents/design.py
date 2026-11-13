@@ -98,9 +98,15 @@ Rules:
   Use papers for mechanics and principles only:
   never copy a brick, joint or structure from a paper or from another group's system.
 - Units: mm, degrees, grams; quaternions [w, x, y, z]. Give every tunable parameter a bounds entry.
-- The goal is placement (R11): a brick dropped anywhere inside the drone's error box (X up to +-38.5 mm,
-  release height and pitch small) slides on its guide faces into its seat with no jam. The loop scores it
-  with Z = (seated - jammed) / drops inside the target box. Pickup (R12) is deferred; only be grippable (R10).
+- The goal has two parts, and a brick must meet both:
+  (a) it seats from a coarse drop (R11): a brick dropped anywhere inside the drone's error box (X up to
+  +-38.5 mm, release height and pitch small) slides on its guide faces into its seat with no jam. The loop
+  scores it with Z = (seated - jammed) / drops inside the target box;
+  (b) it builds a running-bond wall, a bridge, a ring and an overhang, each brick held by its interlock (R4: a
+  hook that a straight lift cannot free). The loop builds a tower, the wall, a bridge and an overhang in
+  simulation after the quick check (the structure gate; the ring joins later). A design that cannot build them
+  is rejected before it is scored, and a longer overhang is better: it is the loop's second objective.
+  Pickup (R12) is deferred; only be grippable (R10).
 - R10: give the brick at least two large through-Y openings (each fits a 5 mm circle), above and either side
   of its centre of mass, so it hangs level from two points.
 - The drone's error is a disc in X-Y, not a line along X; a Y guide can only centre a brick whose centre of mass is still over the course below, so Y capture is at most about half the depth D, and depth costs mass.
@@ -140,7 +146,12 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
         parts.append(f"Parent design (the current best), to reshape or replace: {parent}")
     if brief is not None:
         parts.append("Redesign brief from the critic:\n" + json.dumps(brief, indent=2))
-    if failures:
+    if failures and "structure_gate" in failures:
+        parts.append("The last attempt passed the quick check but failed the structure gate: it must build a tower, "
+                     "a running-bond wall and a bridge, and an overhang of at least "
+                     f"{failures['structure_gate']['overhang_floor']} bricks (each built on seeded repeats; "
+                     "simulated, uncalibrated contact). Its builds:\n" + json.dumps(failures["structure_gate"], indent=2))
+    elif failures:
         parts.append("The last attempt failed the quick check (32 of 40 drops must seat; simulated, uncalibrated "
                      "contact). Its failing drops:\n" + json.dumps(failures, indent=2))
     if log_text:

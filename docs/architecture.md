@@ -8,11 +8,12 @@ Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
 
 1. **Design.** The design agent makes a new CAD model as a brick family (issue #18).
 2. **Quick random check.** 40 evenly spread sim drops inside the target box. Fewer than 32 seated sends the design straight back to step 1 (issue #47, built).
-3. **Full sim map** on a grid fitted to the brick (issue #48, built).
-4. **Jam analysis** inside the green zone (issue #49, built).
-5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
+3. **Structure gate.** A tower, a running-bond wall, a bridge and an overhang, each built on seeded repeats; a design that cannot build them goes back to step 1 (issue #83).
+4. **Full sim map** on a grid fitted to the brick (issue #48, built).
+5. **Jam analysis** inside the green zone (issue #49, built).
+6. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
 
-The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). A redesign replaces the best only if Z on the current target improves, Z on no lower rung of the target ladder falls, and a held-out check is not worse. When Z reaches 1 on the last rung (the worst box), or stops improving, a short tune finishes the design (issue #14). The [orchestrator](#orchestrator) runs it all.
+The loop's objectives are **Z** (issue #61; see [Objective Z](#objective-z)) and, since issue #83, the overhang's length `overhang_n`. A redesign replaces the best only if neither Z on the current target nor `overhang_n` is lower than the best's and one is higher, Z on no lower rung of the target ladder falls, and a held-out check is not worse. When Z reaches 1 on the last rung (the worst box), or stops improving, a short tune finishes the design (issue #14). The [orchestrator](#orchestrator) runs it all.
 
 ## Orchestrator
 
@@ -28,15 +29,16 @@ Each iteration:
 
 1. **Design.** The design agent writes a package. The loop checks it (contract and rules); a package that fails goes back to the agent with the check's output.
 2. **Quick check.** Below 32 of 40 seated, the design goes back to the agent with its failing drops. An iteration gets up to `design_attempts` tries (3). The check stays on the starting box, since on the worst box it would turn back nearly every design. It samples along X only (issue #97): with Y offsets inside the disc it turned back A/B itself, and Y error is scored in the full map instead.
-3. **Full sim map** covering the mean, p95 and worst boxes, and **Z** per target.
-4. **Jam analysis.**
-5. **Acceptance.** The design replaces the current best only if all three hold:
-   1. Z on the current target improves;
+3. **Structure gate** (issue #83). The design must build a tower (3 courses), a running-bond wall (3 × 4) and a bridge (3 courses a side), and an overhang asked for 12 bricks must hold at least 3. Each structure is built on 5 seeded repeats with ideal placement and a release jitter of up to 0.05 mm, and passes when most complete (see Structure builds); `overhang_n` is the count most repeats reach. A design that fails goes back to the agent with where each build stopped, uses up one of the iteration's attempts, and is logged `failed_structure_gate`; it is never scored. The parent's gate is recorded, and sets the overhang to beat. `runs/gate-<UTC>-<family>/` holds `gate.json` and every build.
+4. **Full sim map** covering the mean, p95 and worst boxes, and **Z** per target.
+5. **Jam analysis.**
+6. **Acceptance.** The design replaces the current best only if all three hold:
+   1. on the pair (Z on the current target, `overhang_n`), neither is lower than the best's and at least one is higher (a best from before #83 has no overhang, and then Z alone must improve);
    2. Z on every lower rung of the ladder is not below the best's;
    3. held-out Z on the current target is not worse at either friction.
 
    Held-out Z uses the current target box's poses shifted by seed + 1, at μ 0.2 and 0.5. When the rung moves up, the best design's held-out Z on the new box is computed once and stored. Without a parent, the first scored design becomes the best. The critic never sees the held-out results.
-6. **Critic.** It writes a redesign brief for the current target, and the loop returns to step 1. It is not called when Z is 1 on the last rung, or on the last iteration.
+7. **Critic.** It writes a redesign brief for the current target, with the gate's results and `overhang_n` in its prompt, and the loop returns to step 1. It is not called when Z is 1 on the last rung, or on the last iteration.
 
 Every attempt goes in the design log. Every iteration writes `RSI_RESULTS/<run>/iter-NN/` and updates `progress.png`.
 

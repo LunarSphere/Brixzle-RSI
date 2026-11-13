@@ -76,15 +76,11 @@ REPEATS = 3  # the tests' repeat count: a majority of 3 (the default is 5), to k
 
 
 @pytest.fixture(scope="module")
-def ab_repeats():
-    """A/B's ideal builds, each repeated with seeded release jitter, once per test session (they are
-    the slow part; the repeats run in parallel)."""
-    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
-    p = AB.defaults
-    names = ("wall", "bridge", "overhang+")
-    structures = [S.structure_for(AB, p, name) for name in names]
-    res = A.repeat_structures(AB, p, structures, cfg, n=REPEATS)  # keyed by the structure's own name
-    return {name: res[s.name] for name, s in zip(names, structures)}
+def ab_repeats(ab_gate):
+    """A/B's ideal builds, each repeated with seeded release jitter: the structure gate's (#83), run
+    once per session in conftest.py (the builds are the slow part)."""
+    return {"bridge": ab_gate["repeat_results"]["bridge"], "wall": ab_gate["repeat_results"]["wall"],
+            "overhang+": ab_gate["repeat_results"]["overhang"]}
 
 
 def test_a_b_builds_a_bridge_and_a_wall_on_most_repeats(ab_repeats):

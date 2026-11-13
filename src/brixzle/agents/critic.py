@@ -60,6 +60,11 @@ You read one design's simulation results and write a redesign brief for the desi
 How to work:
 - The objective is Z = (seated - jammed) / drops inside the target box; Z = 1 passes. Seated +1, jammed -1,
   fell and wrong valley 0. Raise Z on the target box without lowering it on the other boxes.
+- A design must also build: a tower, a running-bond wall, a bridge and an overhang (the structure gate, each
+  built on seeded repeats); one that cannot is rejected before it is scored.
+  Every change you propose must keep the structure gate passing.
+  The overhang's length (overhang_n, in bricks) is a second objective: raise the overhang where you can
+  without lowering Z. A design is kept only if neither Z nor overhang_n is lower than the best's and one is higher.
 - The drone's error is a disc in X-Y, not a line along X; a Y guide can only centre a brick whose centre of mass is still over the course below, so Y capture is at most about half the depth D, and depth costs mass.
 - Group the failures into clusters (a jam band, a capture limit on one side, a wrong valley, falls). For each,
   explain the mechanism and cite the design rules it rests on by id (DR1, DR2, ...). Cite only rules listed
@@ -97,11 +102,21 @@ def _y_lines(report):
     return ("\n" + "\n".join(out)) if out else ""
 
 
-def task_prompt(report, sim_map, jam, family_source, log_text, target):
+def _gate_lines(gate):
+    if not gate:
+        return "Structure gate: not run."
+    from brixzle.engine import structure_gate as SG
+
+    return (f"Structure gate ({'passed' if gate['passed'] else 'FAILED'}; overhang_n {gate['overhang_n']}, floor "
+            f"{gate['overhang_floor']}; simulated, uncalibrated contact):\n" + SG.failures_text(gate))
+
+
+def task_prompt(report, sim_map, jam, family_source, log_text, target, gate=None):
     grids = "\n\n".join(SM.ascii_grid(g) for g in sim_map["grids"])
     return "\n\n".join([
         f"Target box: {target}. Z per target box (simulated, uncalibrated contact):\n{_z_lines(report)}"
         + _y_lines(report),
+        _gate_lines(gate),
         "Fitted sim map (S seated, J jammed, W wrong valley, F fell, ? other; the target box is "
         f"{json.dumps(sim_map['box']['half_widths'])} about the aim):\n{grids}",
         "Jam analysis (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D):\n"
@@ -151,11 +166,12 @@ def validate_brief(brief):
 
 
 def critique(runner, report, sim_map, jam, family_source, log_text, target, budget_usd=CRITIC_BUDGET_USD,
-             lessons_text=""):
+             lessons_text="", gate=None):
     """Run the critic once; returns (brief, AgentResult). Raises ValueError on a malformed brief.
-    ``lessons_text`` (loop/lessons.py, #88) goes into its system prompt."""
+    ``lessons_text`` (loop/lessons.py, #88) goes into its system prompt; ``gate`` is the design's
+    structure gate (#83)."""
     call = AgentCall(name="critic", system=system_prompt(lessons_text),
-                     prompt=task_prompt(report, sim_map, jam, family_source, log_text, target),
+                     prompt=task_prompt(report, sim_map, jam, family_source, log_text, target, gate),
                      max_budget_usd=budget_usd, output_schema=BRIEF_SCHEMA, max_turns=MAX_TURNS)
     result = runner.run(call)
     brief = result.structured if result.structured is not None else json.loads(result.text)

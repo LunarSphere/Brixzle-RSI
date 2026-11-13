@@ -62,6 +62,7 @@ class FakeEngine:
         self.calls, self.n = [], 0
         self.held_targets, self.tune_targets = [], []
         self.zs_x_only = []  # Z without Y offsets per scored design (issue #86); default: the same as zs
+        self.gates = []  # (passed, overhang_n) per structure gate (issue #83); default: (True, 5)
 
     def _dir(self, name):
         self.n += 1
@@ -118,6 +119,22 @@ class FakeEngine:
             picks.append({"k": k, "slice": "xz", "course": 0, "cell": [k, 0], "pose": {"x": float(k), "z": 1.0, "t": 0.0},
                           "outcome": "seated", "video": f"drop-{k}.mp4", "rerun_outcome": "seated"})
         return picks
+
+    def gate(self, family, p):
+        """The structure gate (#83): ``gates`` is (passed, overhang_n) per call; default (True, 5)."""
+        self.calls.append("gate")
+        ok, n = self.gates.pop(0) if self.gates else (True, 5)
+        d = self._dir("gate")
+        build = lambda passed: {"passed": passed, "status": "complete" if passed else "placement_jammed",  # noqa: E731
+                                "complete": 3 if passed else 0, "n": 3, "statuses": ["complete"] * 3 if passed else
+                                ["placement_jammed"] * 3, "stable_bricks": [10] * 3 if passed else [4] * 3, "total": 10,
+                                "max_sag_mm": [0.1] * 3, "failed_brick": [None] * 3 if passed else ["b2_0"] * 3,
+                                "seconds": [1.0] * 3, "error": None}
+        over = {**build(n >= 3), "total": 12, "stable_bricks": [n] * 3, "overhang_n": n}
+        g = {"passed": ok, "overhang_n": n, "overhang_floor": 3, "seconds": 2.0, "run": str(d), "repeats": 3,
+             "builds": {"tower": build(True), "wall": build(ok), "bridge": build(True), "overhang": over},
+             "label": "simulated, uncalibrated contact"}
+        return g, d
 
     def tune(self, family, p, fixed=(), target=None):
         self.calls.append(("tune", tuple(fixed)))
@@ -247,7 +264,7 @@ def test_a_design_that_fails_the_quick_check_goes_back_with_its_failing_drops(tm
                          max_iterations=1)
     state = loop.run()
     it = state["iterations"][0]
-    assert [a["decision"] for a in it["attempts"]] == ["failed_quick_check", "passed_quick_check"]
+    assert [a["decision"] for a in it["attempts"]] == ["failed_quick_check", "passed_structure_gate"]
     assert "failing_drops" in runner.calls[1].prompt and "jammed" in runner.calls[1].prompt
     log = [json.loads(line)["decision"] for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
     assert log == ["failed_quick_check", "kept"]
@@ -301,7 +318,7 @@ def test_an_agent_error_is_logged_and_the_loop_carries_on(tmp_path, intake):
                          design_attempts=2)
     loop.cfg = loop.cfg  # unchanged
     rec = loop.iterate(1)
-    assert [a["decision"] for a in rec["attempts"]] == ["error", "passed_quick_check"]
+    assert [a["decision"] for a in rec["attempts"]] == ["error", "passed_structure_gate"]
     assert rec["decision"] == "kept" and rec["brief"] is None and "maximum number of turns" in rec["critic_error"]
     log = [json.loads(line)["decision"] for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
     assert log == ["error", "kept"]
@@ -613,3 +630,72 @@ def test_no_lessons_neither_reads_nor_writes_them(tmp_path, intake):
     loop.run()
     assert path.read_text() == before and not any(LESSON["lesson"] in c.system for c in runner.calls)
     assert not OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--no-lessons"])).lessons
+
+
+
+# --- the structure gate and overhang length (issue #83) ---
+
+
+def test_the_overhang_is_a_second_objective():
+    best = {"z_target": 0.5, "overhang_n": 5, "held_out": {}}
+    kept, why = OR.accept(0.5, {}, best, overhang=6)
+    assert kept and "overhang" in why
+    kept, why = OR.accept(0.6, {}, best, overhang=4)
+    assert not kept and "overhang got shorter" in why
+    kept, why = OR.accept(0.5, {}, best, overhang=5)
+    assert not kept and "did not improve" in why and "did not grow" in why
+    assert OR.accept(0.6, {}, best, overhang=5)[0]
+    assert not OR.accept(0.4, {}, best, overhang=9)[0]
+    # A best from before #83 has no overhang: Z alone decides.
+    assert OR.accept(0.6, {}, {"z_target": 0.5, "held_out": {}}, overhang=2)[0]
+
+
+def test_a_design_that_fails_the_gate_is_sent_back_and_not_scored(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4])
+    engine.gates = [(False, 2), (True, 6)]
+    loop, runner = _loop(tmp_path, intake, [design_step("a"), design_step("b"), critic_step()], engine,
+                         max_iterations=1)
+    state = loop.run()
+    it = state["iterations"][0]
+    assert [a["decision"] for a in it["attempts"]] == ["failed_structure_gate", "passed_structure_gate"]
+    assert [c for c in engine.calls if isinstance(c, tuple) and c[0] == "score"] == [("score", "b", False)]
+    prompt = runner.calls[1].prompt
+    assert "structure gate" in prompt and '"wall"' in prompt and "b2_0" in prompt
+    assert it["overhang_n"] == 6 and it["gate"]["passed"] is True and it["seconds"]["gate"] >= 0
+    assert state["best"]["overhang_n"] == 6
+    log = [json.loads(line) for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
+    assert [x["decision"] for x in log] == ["failed_structure_gate", "kept"]
+    assert log[0]["runs"]["gate"] == it["attempts"][0]["gate"]["run"] and log[1]["overhang_n"] == 6
+    text = (tmp_path / "RSI_RESULTS" / "t" / "iter-01" / "summary.md").read_text(encoding="utf-8")
+    assert "Structure gate" in text and "overhang" in text
+
+
+def test_three_gate_failures_end_the_iteration_with_no_design(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[])
+    engine.gates = [(False, 0)] * 3
+    loop, _ = _loop(tmp_path, intake, [design_step("a"), design_step("b"), design_step("c")], engine,
+                    max_iterations=1)
+    rec = loop.iterate(1)
+    assert rec["decision"] == "no_design" and "structure gate" in rec["reason"]
+    assert [a["decision"] for a in rec["attempts"]] == ["failed_structure_gate"] * 3
+    assert not any(isinstance(c, tuple) and c[0] == "score" for c in engine.calls)
+
+
+def test_equal_z_and_a_longer_overhang_is_kept_in_the_loop(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.5, 0.6], held=[0.2] * 6)
+    engine.gates = [(True, 5), (True, 7), (True, 6)]
+    loop, _ = _loop(tmp_path, intake, [design_step(), critic_step(), design_step(), critic_step(), design_step(),
+                                       critic_step()], engine, max_iterations=3)
+    state = loop.run()
+    its = state["iterations"]
+    assert [i["decision"] for i in its] == ["kept", "kept", "rejected"]
+    assert "overhang got shorter" in its[2]["reason"] and state["best"]["overhang_n"] == 7
+
+
+def test_the_baseline_runs_the_gate_and_sets_the_overhang_to_beat(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4])
+    engine.gates = [(True, 5)]
+    loop, _ = _loop(tmp_path, intake, [critic_step()], engine, parent="ab", max_iterations=1)
+    rec = loop.iterate(0)
+    assert rec["gate"]["passed"] is True and rec["overhang_n"] == 5 and loop.state["best"]["overhang_n"] == 5
+    assert engine.calls.index("gate") < next(i for i, c in enumerate(engine.calls) if isinstance(c, tuple))

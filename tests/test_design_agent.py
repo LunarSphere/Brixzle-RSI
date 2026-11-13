@@ -166,3 +166,12 @@ def test_the_design_prompt_says_the_error_is_a_disc():
     """Issue #86: a Y guide can only centre a brick whose centre of mass is still over the course below."""
     text = DA.system_prompt()
     assert "disc in X-Y" in text and "half the depth" in text and "depth costs mass" in text
+
+
+def test_the_design_prompt_says_a_brick_must_build_the_structures():
+    """Issue #83: seat from a coarse drop and build a wall, a bridge, a ring and an overhang, held by an interlock."""
+    text = DA.system_prompt()
+    assert "The goal is placement (R11)" not in text
+    for want in ("running-bond wall", "a bridge", "a ring", "an overhang", "straight lift cannot free",
+                 "is rejected", "longer overhang is better"):
+        assert want in text, want
