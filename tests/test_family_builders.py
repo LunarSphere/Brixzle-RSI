@@ -57,7 +57,8 @@ def test_wedge_mass_properties_match_hand_values(wedge):
 def test_wedge_collision_is_exact_convex_pieces(wedge):
     _, bodies = wedge
     assert bodies.collision_source == "exact"
-    assert len(bodies.collision) == 5  # the W splits into five convex pieces, one band (#82)
+    # The W, one band (#82): four convex pieces, the fewest any ring start gives (#98; five before).
+    assert len(bodies.collision) == 4
     assert all(B.is_convex_vertex_set(v) for v in bodies.collision)
 
 
@@ -123,3 +124,57 @@ def test_pyramid_base_returns_exact_convex_pieces():
     p = PYRAMID.defaults
     pieces = B.base_pieces(PYRAMID, p, 4, 1)
     assert len(pieces) == 1 + 4  # slab plus one peg per voxel
+
+
+# --- canonical convex cut (issue #98) ---
+
+
+def _ab_outline(part):
+    from brixzle.families.ab.family import FAMILY as AB
+
+    return AB.geometry.section(AB.defaults, part).outer, AB.geometry.extrusion(AB.defaults)
+
+
+def _variants(poly):
+    """The same outline with its ring started at every vertex, reversed, and with collinear points added."""
+    from shapely.geometry import Polygon
+
+    ring = list(poly.exterior.coords)[:-1]
+    n = len(ring)
+    out = [Polygon(ring[k:] + ring[:k]) for k in range(n)]
+    out.append(Polygon(ring[::-1]))
+    extra = []
+    for i, (a, b) in enumerate(zip(ring, ring[1:] + ring[:1])):
+        extra.append(a)
+        if i % 3 == 0:  # a point on the edge, as the Linux outline of part B has
+            extra.append((a[0] + 0.37 * (b[0] - a[0]), a[1] + 0.37 * (b[1] - a[1])))
+    out.append(Polygon(extra[5:] + extra[:5]))
+    return out
+
+
+@pytest.mark.parametrize("part", ["A", "B"])
+def test_the_cut_does_not_depend_on_the_ring_start_direction_or_collinear_points(part):
+    """Issue #98: part B's outline differs between platforms only in where its ring starts and in two
+    points on straight edges, and that changed 6 of its 36 convex pieces."""
+    poly, ext = _ab_outline(part)
+    want = B._pieces(poly, ext)
+    for v in _variants(poly):
+        got = B._pieces(v, ext)
+        assert len(got) == len(want)
+        for g, w in zip(got, want):
+            assert g.shape == w.shape and np.allclose(g, w, atol=1e-9)
+
+
+@pytest.mark.parametrize("part", ["A", "B"])
+def test_a_b_pieces_match_the_pinned_cut_on_every_platform(part):
+    """Issue #98: A/B's collision pieces, pinned from macOS arm64 (2026-11-13), checked on Linux by CI.
+    Written by tests/fixtures/make_ab_pieces_reference.py."""
+    import json
+    from pathlib import Path
+
+    ref = json.loads((Path(__file__).parent / "fixtures" / "ab_pieces_reference.json").read_text())["parts"][part]
+    poly, ext = _ab_outline(part)
+    got = B._pieces(poly, ext)
+    assert len(got) == len(ref)
+    for g, w in zip(got, ref):
+        assert np.allclose(g, np.asarray(w), atol=1e-6)

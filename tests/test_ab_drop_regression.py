@@ -5,7 +5,9 @@ aerial-assembly dropped onto one. Both reference cases are course-1 drops, so th
 settled poses now come from tests/fixtures/ab_drop_running_bond.json (written by
 make_ab_running_bond_reference.py from this repo's rig); the params, configs, mass properties and
 sampled errors are still checked against aerial-assembly's reference. Old -> new outcomes: gauss-seed0
-4 seated -> 4 seated; exp3-mean-seed0 4 jammed -> 3 jammed and 1 wrong valley (drop 0).
+4 seated -> 4 seated; exp3-mean-seed0 4 jammed -> 3 jammed and 1 wrong valley (drop 0) on macOS arm64.
+Issue #98 (canonical convex cut, multiccd off): exp3-mean-seed0 on macOS arm64 -> 2 wrong valleys, then 2
+jams, which Linux x86_64 already gave; gauss-seed0 unchanged.
 
 The reference (tests/fixtures/ab_drop_reference.json) was recorded by
 tests/fixtures/make_ab_drop_reference.py from aerial-assembly @ a649663 with the same params,
@@ -15,10 +17,10 @@ Two tiers:
 
 - On every platform, sampled errors, outcomes and floor contact must match exactly, and mass
   properties to 1e-3 relative (CadQuery's tessellation is platform dependent too). This is the issue's "same outcome for the same seed and config".
-- On the reference platform (macOS arm64) geometry, mass properties and settled poses must
-  match bit for bit (1e-6 or tighter). Elsewhere they are skipped: the convex decomposition of the profile depends on the
-  platform's floating point (Linux x86_64 gives part B 67 collision pieces, macOS arm64 69),
-  which moves contact points and so the settled pose. The upstream code does the same.
+- On the reference platform (macOS arm64) mass properties and settled poses must match bit for bit
+  (1e-6 or tighter). Elsewhere they are skipped: CadQuery's mass properties differ by platform at 1e-3,
+  which moves the settled pose a little. Until issue #98 the convex cut also differed by platform;
+  it is now canonical, and its pieces are checked on every platform.
 """
 
 import json
@@ -39,11 +41,12 @@ COURSE = {"A": 0, "B": 1}  # the reference's part B drops onto a seated A, i.e. 
 SAMPLE_KEYS = ("dx", "dy", "aim", "yaw", "roll", "pitch", "clear", "vel")
 CASES = REFERENCE["cases"]
 _BOND = json.loads((Path(__file__).parent / "fixtures" / "ab_drop_running_bond.json").read_text(encoding="utf-8"))
-# Since #82 the course-1 outcomes are pinned per platform: a jam near the capture edge is a near-miss rest
-# that follows the platform's convex pieces (exp3-mean-seed0 drop 1 jams 0.4 mm short of a one-voxel-over
-# seat on macOS arm64 and seats there on Linux x86_64).
+# One set of course-1 outcomes for every platform since issue #98. From #82 to #98 they were pinned per
+# platform, because the convex cut differed: macOS arm64 exp3-mean-seed0 was wrong valley, then three
+# jams; Linux x86_64 was two wrong valleys, then two jams, which is now the outcome everywhere.
 PLATFORM = f"{platform.system()} {platform.machine()}".replace("Darwin", "macOS")
-RUNNING_BOND = {plat: {c["name"]: c["rows"] for c in v["cases"]} for plat, v in _BOND["platforms"].items()}
+RUNNING_BOND = {c["name"]: c["rows"] for c in _BOND.get("cases", [])}  # a missing case fails its test (KeyError)
+PIECES = json.loads((Path(__file__).parent / "fixtures" / "ab_pieces_reference.json").read_text(encoding="utf-8"))
 REFERENCE_PLATFORM = REFERENCE["source"]["platform"]
 ON_REFERENCE_PLATFORM = (
     platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -116,22 +119,21 @@ def test_drop_samples_reproduce_aerial_assembly_and_outcomes_the_running_bond(dr
     for i, (row, ref) in enumerate(zip(rows, case["rows"])):
         assert {k: row[k] for k in SAMPLE_KEYS} == {k: ref[k] for k in SAMPLE_KEYS}, i
     got = [{"outcome": r["outcome"], "floor": bool(r["floor"])} for r in rows]
-    assert PLATFORM in RUNNING_BOND, f"no running-bond outcomes pinned for {PLATFORM}; {case['name']} gives {got}"
-    pinned = [{"outcome": b["outcome"], "floor": b["floor"]} for b in RUNNING_BOND[PLATFORM][case["name"]]]
+    pinned = [{"outcome": b["outcome"], "floor": b["floor"]} for b in RUNNING_BOND[case["name"]]]
     assert got == pinned, f"{PLATFORM} {case['name']}: got {got}"
 
 
-@exact_platform_only
 @pytest.mark.parametrize("part", ["A", "B"])
-def test_collision_pieces_match_reference_exactly(ab_bodies, part):
-    # n_collision_bored (pieces with the tine bores open) is recorded too, but nothing builds
-    # bored collision until the pickup trial (#9).
-    assert len(ab_bodies[part].collision) == REFERENCE["geometry"][part]["n_collision"]
+def test_collision_pieces_are_the_canonical_cut(ab_bodies, part):
+    # Since issue #98 the cut is canonical and the same on every platform: A 30 pieces, B 36. aerial-assembly's
+    # reference has 36 and 36 (REFERENCE n_collision), from where its ring happened to start.
+    assert len(ab_bodies[part].collision) == len(PIECES["parts"][part])
+    assert REFERENCE["geometry"][part]["n_collision"] == 36
 
 
 @exact_platform_only
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
 def test_settled_poses_match_reference_exactly(drops, case):
-    for i, (row, ref) in enumerate(zip(drops[case["name"]], RUNNING_BOND["macOS arm64"][case["name"]])):
+    for i, (row, ref) in enumerate(zip(drops[case["name"]], RUNNING_BOND[case["name"]])):
         assert row["err_mm"] == pytest.approx(ref["err_mm"], abs=1e-6), i
         assert row["angle_deg"] == pytest.approx(ref["angle_deg"], abs=1e-6), i

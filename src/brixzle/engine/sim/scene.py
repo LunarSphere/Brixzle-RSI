@@ -53,7 +53,9 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
     option = ET.SubElement(root, 'option', timestep=str(physics.timestep), gravity='0 0 -9.81',
                            integrator='implicitfast', solver='Newton', cone='elliptic',
                            iterations=str(physics.iterations), tolerance='1e-10')
-    ET.SubElement(option, 'flag', nativeccd='enable', multiccd='enable',
+    # multiccd off (issue #98): with it, a brick resting on touching faces could get a spurious
+    # 6-9.5 mm penetration in one step and be thrown (runs/seam98-20261113T194517Z).
+    ET.SubElement(option, 'flag', nativeccd='enable', multiccd='disable',
                   sleep='enable' if sleep else 'disable')
     default = ET.SubElement(root, 'default')
     ET.SubElement(default, 'geom', condim='3', friction=f'{physics.friction} 0.005 0.0001', margin='0',

@@ -117,3 +117,34 @@ def test_a_one_voxel_brick_keeps_the_stack_drop():
 
     rig = T.DropRig(PYRAMID, PYRAMID.defaults, T.TrialConfig(error=T.ErrorModel(ideal=True)), course=1)
     assert rig.placed == [Placement(0, 1)] and rig.target == Placement(1, 1)
+
+
+# --- collision robust to the convex cut (issue #98) ---
+
+
+def test_the_scene_disables_multiccd():
+    """Issue #98: multiccd gave spurious 6-9.5 mm penetrations on touching faces and threw resting bricks."""
+    import mujoco
+
+    rig = T.DropRig(AB, AB.defaults, T.TrialConfig(error=T.ErrorModel(ideal=True)), course=0)
+    assert rig.model.opt.disableflags & int(mujoco.mjtDisableBit.mjDSBL_MULTICCD)
+    assert not rig.model.opt.disableflags & int(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
+
+
+@pytest.mark.parametrize("start", [None, 0, 20])
+@pytest.mark.parametrize("course", [0, 1])
+def test_a_b_ideal_drops_seat_whatever_the_cut(monkeypatch, start, course):
+    """Issue #98: with multiccd on, the ideal course-1 drop jammed under the fewest-pieces cut (None)
+    and the course-0 drop under the cut started at vertex 20 (runs/seam98-20261113T194517Z).
+    Simulated, uncalibrated contact."""
+    from brixzle.families import builders as B
+    from brixzle.families.convex import convex_parts
+
+    if start is not None:
+        def cut(poly):
+            ring = B.canonical_ring(poly)
+            return convex_parts(np.roll(ring, -(start % len(ring)), axis=0))
+        monkeypatch.setattr(B, "convex_cut", cut)
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    row = T.DropRig(AB, AB.defaults, cfg, course=course).drop(cfg.error.sample(None), trace=False)
+    assert row["outcome"] == "seated", (start, course, row["outcome"], row["err_mm"])
