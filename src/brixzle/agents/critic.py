@@ -53,6 +53,7 @@ You read one design's simulation results and write a redesign brief for the desi
 How to work:
 - The objective is Z = (seated - jammed) / drops inside the target box; Z = 1 passes. Seated +1, jammed -1,
   fell and wrong valley 0. Raise Z on the target box without lowering it on the other boxes.
+- The drone's error is a disc in X-Y, not a line along X; a Y guide can only centre a brick whose centre of mass is still over the course below, so Y capture is at most about half the depth D, and depth costs mass.
 - Group the failures into clusters (a jam band, a capture limit on one side, a wrong valley, falls). For each,
   explain the mechanism and cite the design rules it rests on by id (DR1, DR2, ...). Cite only rules listed
   below. Propose one concrete geometric change, say whether it reshapes this family or needs a new family, and
@@ -75,10 +76,23 @@ def _z_lines(report):
     return "\n".join(out)
 
 
+def _y_lines(report):
+    """Z without Y offsets and the measured Y capture (issue #86), when the report has them."""
+    out = []
+    if report.get("z_x_only"):
+        out.append("Z with X offsets only (y = 0): " + ", ".join(f"{s} {report['z_x_only'][s]['Z']:+.3f}"
+                                                                for s in report["statistics"]))
+    for course, side in (report.get("y_capture_mm") or {}).items():
+        out.append(f"Y capture, course {course} (largest |y| still seated in the column through the aim): "
+                   f"-y {side['-y']:.1f} mm, +y {side['+y']:.1f} mm")
+    return ("\n" + "\n".join(out)) if out else ""
+
+
 def task_prompt(report, sim_map, jam, family_source, log_text, target):
     grids = "\n\n".join(SM.ascii_grid(g) for g in sim_map["grids"])
     return "\n\n".join([
-        f"Target box: {target}. Z per target box (simulated, uncalibrated contact):\n{_z_lines(report)}",
+        f"Target box: {target}. Z per target box (simulated, uncalibrated contact):\n{_z_lines(report)}"
+        + _y_lines(report),
         "Fitted sim map (S seated, J jammed, W wrong valley, F fell, ? other; the target box is "
         f"{json.dumps(sim_map['box']['half_widths'])} about the aim):\n{grids}",
         "Jam analysis (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D):\n"

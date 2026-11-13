@@ -61,6 +61,7 @@ class FakeEngine:
         self.tmp, self.zs, self.checks, self.held = Path(tmp), list(zs), list(checks or []), list(held or [])
         self.calls, self.n = [], 0
         self.held_targets, self.tune_targets = [], []
+        self.zs_x_only = []  # Z without Y offsets per scored design (issue #86); default: the same as zs
 
     def _dir(self, name):
         self.n += 1
@@ -85,7 +86,11 @@ class FakeEngine:
         m = {"family": family.name, "box": BOXES["mean"].to_dict(), "cover_boxes": [b.to_dict() for b in BOXES.values()],
              "grids": [GRID], "overrides": []}
         (d / "map.json").write_text(json.dumps(m), encoding="utf-8")
-        return {"z": {s: counts(z[s]) for s in ("mean", "p95", "max")}, "statistics": ["mean", "p95", "max"]}, d
+        zx = self.zs_x_only.pop(0) if self.zs_x_only else z
+        zx = zx if isinstance(zx, dict) else {s: zx for s in ("mean", "p95", "max")}
+        return {"z": {s: counts(z[s]) for s in ("mean", "p95", "max")},
+                "z_x_only": {s: counts(zx[s]) for s in ("mean", "p95", "max")},
+                "statistics": ["mean", "p95", "max"]}, d
 
     def read_map(self, d):
         return json.loads((Path(d) / "map.json").read_text(encoding="utf-8"))
@@ -508,3 +513,21 @@ def test_a_state_from_before_the_ladder_resumes_without_it(tmp_path, intake):
     assert again.cfg.ladder is False
     state = again.run()
     assert state["stop"] == "Z reached 1 on the target box" and [i["iteration"] for i in state["iterations"]] == [1]
+
+
+
+# --- the X-Y disc (issue #86) ---
+
+
+def test_no_y_error_judges_designs_on_z_without_y_offsets(tmp_path, intake):
+    """``--no-y-error`` scores as before #86: the second design is better on X alone but worse with Y."""
+    def run(y_error, name):
+        engine = FakeEngine(tmp_path / f"eng-{name}", zs=[0.5, 0.3], held=[0.2, 0.2, 0.2])
+        engine.zs_x_only = [0.5, 0.7]
+        loop, _ = _loop(tmp_path / name, intake, [design_step(), critic_step(), design_step()], engine,
+                        y_error=y_error)
+        return [i["decision"] for i in loop.run()["iterations"]]
+
+    assert run(True, "y") == ["kept", "rejected"]
+    assert run(False, "x") == ["kept", "kept"]
+    assert LoopConfig().y_error and not OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--no-y-error"])).y_error

@@ -78,6 +78,7 @@ class TuneSettings:
     # 14-core Mac, 2026-11-11: drops are fastest on 4 to 6 processes and slow from 8.
     parallel: int = 6
     held_out: bool = True        # run the held-out check on a tuned design that scores higher
+    y_error: bool = True         # score the X-Y disc (issue #86); False: X offsets only
 
     def to_dict(self):
         return asdict(self)
@@ -163,16 +164,16 @@ class RuleCheck:
         return rule_violations(self.family, p)
 
 
-def z_score(family, box, workers=None):
+def z_score(family, box, workers=None, y_error=True):
     """The default score function: Z on ``box``, and on every target box for the guard
     (zscore.ZScore over the map's cells inside them)."""
-    return ZS.ZScore(family, box, dict(BX.default_boxes()["placement"]), workers=workers)
+    return ZS.ZScore(family, box, dict(BX.default_boxes()["placement"]), workers=workers, y_error=y_error)
 
 
 def held_out_scores(family, box, s: "TuneSettings"):
     """The held-out score functions: the target box's poses shifted by the next seed, at each end
     of the friction range. The search itself runs on the map's own cells at the default friction."""
-    return ZS.held_out_scores(family, box, s.seed + 1, workers=s.workers)
+    return ZS.held_out_scores(family, box, s.seed + 1, workers=s.workers, y_error=s.y_error)
 
 
 # --- the search ---
@@ -252,7 +253,7 @@ def tune(family, p, settings: TuneSettings = TuneSettings(), score_fn=None, chec
     box = BX.default_boxes()["placement"][s.statistic]
     if score_fn is None:
         # With several candidates side by side, each runs its drops serially in its own process.
-        score_fn = z_score(family, box, workers=s.workers)
+        score_fn = z_score(family, box, workers=s.workers, y_error=s.y_error)
         if held_out_fns is None and s.held_out:
             held_out_fns = held_out_scores(family, box, s)
     check_fn = check_fn or RuleCheck(family)

@@ -400,6 +400,11 @@ def _rot(quat):
     return Rotation.from_quat([quat[1], quat[2], quat[3], quat[0]])
 
 
+# The jitter seed of each slice, fixed so that adding the X-Y slice (#86) leaves the others' seeds
+# as they were (they used sorted(SM.SLICES): xt, xz, zt).
+SLICE_SEED_ORDER = ("xt", "xz", "zt", "xy")
+
+
 class _Frames:
     """Maps world contact points into the section frames of the falling brick and of what it
     rests on, so each contact can be named on both."""
@@ -505,7 +510,8 @@ def capture_limits(sim_map):
     names = sim_map.get("codes", {})
     for g in sim_map["grids"]:
         a, b = g["axes"]
-        if a != "x" or "rows" not in g:
+        # The X-Y slice's row through the aim repeats the xz slice's at coarser cells: no capture limit there.
+        if a != "x" or "rows" not in g or g["slice"] == "xy":
             continue
         (i0, i1), (j0, j1) = g["index_extent"][a], g["index_extent"][b]
         j = min(range(j0, j1 + 1), key=lambda k: (abs(k * g["step"][b] - sim_map["aim"][b]), k))
@@ -564,7 +570,7 @@ def analyse(family, p, sim_map, cfg: JamConfig = JamConfig(), sim_cfg=None, work
             cells.append(cell)
             for mu in cfg.mus:
                 for seed in range(cfg.seeds):
-                    at = _jittered(f["cell"], seed, (g["course"], sorted(SM.SLICES).index(g["slice"])), cfg, z_axis)
+                    at = _jittered(f["cell"], seed, (g["course"], SLICE_SEED_ORDER.index(g["slice"])), cfg, z_axis)
                     jobs.append((len(cells) - 1, mu, seed,
                                  (g["course"], SM.cell_sample(sim_cfg, g["slice"], at, steps, aim),
                                   {"friction": float(mu), "trace": False})))

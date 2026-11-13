@@ -156,3 +156,9 @@ def test_the_prompts_let_the_agent_build_on_a_b_but_not_copy_papers(tmp_path):
         assert "not a design to copy" not in text and "do not copy its shape" not in text
     assert "maintainer's own design" in system and "brixzle.families.ab" in system
     assert "never copy a brick, joint or structure from a paper or from another group's system" in system
+
+
+def test_the_design_prompt_says_the_error_is_a_disc():
+    """Issue #86: a Y guide can only centre a brick whose centre of mass is still over the course below."""
+    text = DA.system_prompt()
+    assert "disc in X-Y" in text and "half the depth" in text and "depth costs mass" in text

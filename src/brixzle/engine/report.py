@@ -31,7 +31,8 @@ from brixzle.engine import sim_map as SM
 from brixzle.engine import zscore as ZS
 
 # 4: Z per target from the full sim map replaces the box scale and the predictor terms (#61).
-SCHEMA_VERSION = 4
+# 5: Z counts the X-Y disc; z_x_only keeps the X-only Z, and y_capture_mm the measured Y capture (#86).
+SCHEMA_VERSION = 5
 LABEL = ZS.LABEL
 BUDGET_S = 30 * 60  # a family should take no more than 30 min (CLAUDE.md, Speed)
 FILE = "report.json"
@@ -59,13 +60,15 @@ def build_report(sim_map, drops, boxes, timing, map_dir=None):
     stats = [s for s in BX.STATISTICS if s in boxes]
     clearance0 = float(sim_map["config"]["error"]["clearance"][0])
     z = ZS.z_from_drops(drops, {s: boxes[s] for s in stats}, clearance0)
+    z_x = ZS.z_from_drops(drops, {s: boxes[s] for s in stats}, clearance0, x_only=True)
     timing = {**timing, "over_budget": bool(timing["total"] > BUDGET_S)}
     return {
         "schema_version": SCHEMA_VERSION, "label": LABEL, "objective": ZS.DEFINITION,
         "family": sim_map["family"], "family_version": sim_map["family_version"], "params": sim_map["params"],
         "statistic": sim_map["box"]["statistic"], "statistics": stats,
         "boxes": {s: boxes[s].to_dict() for s in stats},
-        "z": z, "covers_all_targets": all(z[s]["passed"] for s in stats),
+        "z": z, "z_x_only": z_x, "y_capture_mm": SM.y_capture(sim_map),
+        "covers_all_targets": all(z[s]["passed"] for s in stats),
         "check": sim_map.get("check"),
         "map": {"dir": map_dir, "drops": sim_map["drops"], "seconds": sim_map["seconds"],
                 "cover": list(sim_map["cover"]), "inside_failures": sim_map.get("inside_failures")},
@@ -89,7 +92,8 @@ def _finite(v, where="report"):
 
 
 _REQUIRED = ("schema_version", "label", "objective", "family", "family_version", "params", "statistic",
-             "statistics", "boxes", "z", "covers_all_targets", "check", "map", "timing", "flags")
+             "statistics", "boxes", "z", "z_x_only", "y_capture_mm", "covers_all_targets", "check", "map", "timing",
+             "flags")
 
 
 def validate_report(d):
@@ -101,9 +105,9 @@ def validate_report(d):
     _need(d["label"] == LABEL, f"label must be {LABEL!r}")
     stats = d["statistics"]
     _need(stats and set(stats) <= set(BX.STATISTICS), "bad statistics")
-    _need(set(d["z"]) == set(stats) and set(d["boxes"]) == set(stats), "z and boxes need exactly the statistics")
-    for s in stats:
-        c = d["z"][s]
+    _need(set(d["z"]) == set(stats) and set(d["boxes"]) == set(stats) and set(d["z_x_only"]) == set(stats),
+          "z, z_x_only and boxes need exactly the statistics")
+    for s, c in [(s, d[key][s]) for key in ("z", "z_x_only") for s in stats]:
         _need(set(c) == set(COUNT_KEYS), f"z[{s}] needs {COUNT_KEYS}")
         n = c["N"]
         _need(isinstance(n, int) and n > 0, f"z[{s}].N must be a positive integer")
@@ -127,21 +131,23 @@ def write_report(rep, map_dir):
 
 
 def score_family(family, p, statistic="mean", seed=0, runs="runs", workers=None, check=None, config=None,
-                 config_reason=None, allow_failed_check=False, boxes=None):
+                 config_reason=None, allow_failed_check=False, boxes=None, y_error=True):
     """Quick check (unless ``check`` is given), full map covering every target box, Z per target.
 
     Writes map.json, drops.json.gz and report.json to a new runs/map-<UTC>-<family>-<target>
     directory; returns (report, directory). ``allow_failed_check`` maps a design that failed the
-    quick check (the loop never does; a baseline may)."""
+    quick check (the loop never does; a baseline may). ``y_error=False`` leaves out the X-Y slice and
+    samples the quick check along X only, as before #86."""
     boxes = boxes or BX.default_boxes()["placement"]
     t0 = time.time()
     timing = {}
     if check is None:
-        check = QC.quick_check(family, p, boxes[statistic], seed=seed)
+        check = QC.quick_check(family, p, boxes[statistic], seed=seed, disc=y_error)
         timing["check"] = time.time() - t0
     t = time.time()
     m, drops = SM.sim_map(family, p, boxes[statistic], check=check, config=config, config_reason=config_reason,
-                          workers=workers, allow_failed_check=allow_failed_check, cover=tuple(boxes.values()))
+                          workers=workers, allow_failed_check=allow_failed_check, cover=tuple(boxes.values()),
+                          slices=ZS.slices_for(y_error))
     timing["map"] = time.time() - t
     out = SM.write_map(m, drops, runs)
     timing["total"] = time.time() - t0

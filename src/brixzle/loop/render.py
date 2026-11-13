@@ -24,7 +24,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import ListedColormap  # noqa: E402
-from matplotlib.patches import Patch, Rectangle  # noqa: E402
+from matplotlib.patches import Circle, Patch, Rectangle  # noqa: E402
 import numpy as np  # noqa: E402
 
 LABEL = "simulated, uncalibrated contact"
@@ -32,8 +32,9 @@ BG = "#fcfbf8"
 COLOURS = {"S": "#13a10e", "J": "#f6b21b", "F": "#d23c3c", "W": "#7b52ab", "?": "#9a9a9a"}
 NAMES = {"S": "seated", "J": "jammed", "F": "fell", "W": "wrong valley", "?": "other"}
 ORDER = ("S", "J", "F", "W", "?")
-AXIS_LABELS = {"x": "X offset about the aim (mm)", "z": "release height above the minimum (mm)",
-               "t": "pitch (deg)"}
+AXIS_LABELS = {"x": "X offset about the aim (mm)", "y": "Y offset about the aim (mm)",
+               "z": "release height above the minimum (mm)", "t": "pitch (deg)"}
+SLICE_ORDER = ["xz", "xt", "zt", "xy"]
 DPI = 110
 
 
@@ -45,7 +46,9 @@ def _grid_array(g):
 def _box_rect(g, box):
     a, b = g["axes"]
     hw = box["half_widths"]
-    ranges = {"x": (-hw["x_mm"], hw["x_mm"]), "z": (0.0, 2 * hw["z_mm"]), "t": (-hw["theta_deg"], hw["theta_deg"])}
+    y = hw.get("y_mm", 0.0)
+    ranges = {"x": (-hw["x_mm"], hw["x_mm"]), "y": (-y, y), "z": (0.0, 2 * hw["z_mm"]),
+              "t": (-hw["theta_deg"], hw["theta_deg"])}
     (x0, x1), (y0, y1) = ranges[a], ranges[b]
     return x0, y0, x1 - x0, y1 - y0
 
@@ -68,7 +71,7 @@ def jam_map_text(sim_map, z, target=None, title=None):
 
 
 def _fmt_fixed(fixed):
-    units = {"x": "mm", "z": "mm", "t": "deg"}
+    units = {"x": "mm", "y": "mm", "z": "mm", "t": "deg"}
     return ", ".join(f"{k} {v:.1f} {units.get(k, '')}".strip() for k, v in fixed.items())
 
 
@@ -86,8 +89,8 @@ def pick_marks(sim_map, picks):
 
 def jam_map(sim_map, z, out, target=None, jam=None, title=None, picks=None):
     """Draw the map's grids to ``out`` (PNG). ``z`` is {statistic: counts}; ``jam`` the jam analysis."""
-    grids = sorted(sim_map["grids"], key=lambda g: (["xz", "xt", "zt"].index(g["slice"]), g["course"]))
-    slices = sorted({g["slice"] for g in grids}, key=["xz", "xt", "zt"].index)
+    grids = sorted(sim_map["grids"], key=lambda g: (SLICE_ORDER.index(g["slice"]), g["course"]))
+    slices = sorted({g["slice"] for g in grids}, key=SLICE_ORDER.index)
     courses = sorted({g["course"] for g in grids})
     fig, axes = plt.subplots(len(slices), len(courses), figsize=(6.4 * len(courses), 3.3 * len(slices)),
                              squeeze=False, facecolor=BG)
@@ -106,10 +109,15 @@ def jam_map(sim_map, z, out, target=None, jam=None, title=None, picks=None):
                   ib0 * sb - sb / 2, (ib0 + arr.shape[0]) * sb - sb / 2)
         ax.imshow(idx, origin="lower", extent=extent, cmap=cmap, vmin=-0.5, vmax=len(ORDER) - 0.5,
                   aspect="auto", interpolation="nearest")
-        x, y, w, h = _box_rect(g, box)
-        if h < sb:  # a box thinner than one cell (pitch): draw it one cell tall so it shows
-            y, h = y + h / 2 - sb / 2, sb
-        ax.add_patch(Rectangle((x, y), w, h, fill=False, lw=1.6, ls="--", ec="black"))
+        if (a, b) == ("x", "y") and box.get("xy_shape") == "disc":
+            # The X-Y target is a disc (issue #86): x^2 + y^2 <= r^2.
+            ax.add_patch(Circle((0.0, 0.0), box["half_widths"]["x_mm"], fill=False, lw=1.6, ls="--", ec="black"))
+            ax.set_aspect("equal", adjustable="datalim")
+        else:
+            x, y, w, h = _box_rect(g, box)
+            if h < sb:  # a box thinner than one cell (pitch): draw it one cell tall so it shows
+                y, h = y + h / 2 - sb / 2, sb
+            ax.add_patch(Rectangle((x, y), w, h, fill=False, lw=1.6, ls="--", ec="black"))
         for band in (jam or {}).get("bands", []):
             if band["slice"] == g["slice"] and band["course"] == g["course"]:
                 (b0, b1), (c0, c1) = band["extent"][a], band["extent"][b]

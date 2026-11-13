@@ -57,15 +57,36 @@ def max_failures(n=N_DROPS, need=NEED_SEATED):
     return n - need + 1
 
 
-def check_poses(n=N_DROPS, seed=0):
+def check_poses(n=N_DROPS, seed=0, disc=False):
     """``n`` seeded poses as (course, unit point): the unit point is (x, z, theta) in [-1, 1], as
     box_search.pose_sample takes it at scale 1.
 
     One Latin hypercube in four dimensions: X, Z, theta, and a fourth that picks the course, so
-    every axis is evenly covered and the courses split the poses evenly (exactly, for even n)."""
+    every axis is evenly covered and the courses split the poses evenly (exactly, for even n).
+
+    ``disc`` (issue #86): a fifth dimension, and (X, Y) inside the unit disc from two of them
+    (radius sqrt(u), angle 2 pi v, so the poses are even over the disc's area); the unit point
+    is then (x, z, theta, y), as ``disc_sample`` takes it."""
     max_failures(n, 0)
-    u = qmc.LatinHypercube(d=4, seed=seed).random(n)
-    return [(int(row[3] >= 0.5), 2.0 * row[:3] - 1.0) for row in u]
+    if not disc:
+        u = qmc.LatinHypercube(d=4, seed=seed).random(n)
+        return [(int(row[3] >= 0.5), 2.0 * row[:3] - 1.0) for row in u]
+    u = qmc.LatinHypercube(d=5, seed=seed).random(n)
+    out = []
+    for row in u:
+        rho, phi = math.sqrt(row[0]), 2.0 * math.pi * row[1]
+        out.append((int(row[4] >= 0.5), np.array([rho * math.cos(phi), 2.0 * row[2] - 1.0, 2.0 * row[3] - 1.0,
+                                                  rho * math.sin(phi)])))
+    return out
+
+
+def disc_sample(box, unit, cfg):
+    """The trial sample of a disc pose (x, z, theta, y), each in [-1, 1], with (x, y) in the unit
+    disc: X and Y scaled by the box's radius (issue #86)."""
+    x, z, t, y = (float(v) for v in unit)
+    s = BS.pose_sample(box, 1.0, (x, z, t), cfg)
+    s["dy"] = y * box.half_widths["y_mm"] + 0.0
+    return s
 
 
 def tally(rows, n=N_DROPS, need=NEED_SEATED):
@@ -104,7 +125,8 @@ def drop_row(index, course, unit, sample, row):
     numbers = [*row["err_mm"], row["angle_deg"]]
     stable = all(math.isfinite(float(v)) for v in numbers)
     out = {"index": index, "course": course, "unit": [float(v) for v in unit],
-           "dx_mm": float(sample["dx"] - sample["aim"]), "clear_mm": float(sample["clear"]),
+           "dx_mm": float(sample["dx"] - sample["aim"]), "dy_mm": float(sample.get("dy", 0.0)),
+           "clear_mm": float(sample["clear"]),
            "pitch_deg": float(sample["pitch"]), "outcome": row["outcome"] if stable else UNSTABLE,
            "err_mm": [_num(v) for v in row["err_mm"]], "angle_deg": _num(row["angle_deg"])}
     if out["outcome"] != SUCCESS:
@@ -114,20 +136,23 @@ def drop_row(index, course, unit, sample, row):
     return out
 
 
-def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, workers=DEFAULT_WORKERS):
+def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, workers=DEFAULT_WORKERS, disc=None):
     """Drop ``n`` evenly spread poses inside a placement box; passes if at least ``need`` seat.
 
     Returns a JSON-safe dict: the verdict and counts, every drop that was judged ('drops', in pose
     order) and the failing ones with their contact traces ('failures'). ``cfg`` is a
     trials.TrialConfig (default: the ideal error model, as the box search). ``workers``: drop
     processes; the default, 1, runs in this process and is the fastest for this few drops (see
-    DEFAULT_WORKERS). The verdict and the drops are the same for any worker count."""
+    DEFAULT_WORKERS). The verdict and the drops are the same for any worker count.
+
+    ``disc``: sample X and Y inside the box's X-Y disc (issue #86); default: when the box is a disc."""
     if box.task != "placement":
         raise ValueError(f"the quick check covers placement boxes (issue #46), got {box.task!r}")
     limit = max_failures(n, need)
     cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
-    poses = check_poses(n, seed)
-    samples = [BS.pose_sample(box, 1.0, unit, cfg) for _, unit in poses]
+    disc = box.xy_shape == "disc" if disc is None else bool(disc)
+    poses = check_poses(n, seed, disc=disc)
+    samples = [disc_sample(box, unit, cfg) if disc else BS.pose_sample(box, 1.0, unit, cfg) for _, unit in poses]
     t0 = time.time()
     with BS.DropPool(family, p, cfg, workers=min(workers or DEFAULT_WORKERS, n)) as pool:
         t_ready = time.time()
@@ -142,6 +167,7 @@ def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, w
     return {
         "label": LABEL, "task": "placement", "family": family.name, "family_version": family.version,
         "params": p.to_dict(), "box": box.to_dict(), "seed": seed, "n": n, "need": need, "max_failures": limit,
+        "disc": disc,
         "config": json.loads(json.dumps(T.as_dict(cfg))), "workers": used,
         **result, "outcomes": dict(sorted(outcomes.items())),
         "drops": drops, "failures": [d for d in drops if d["outcome"] != SUCCESS],

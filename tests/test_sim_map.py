@@ -180,9 +180,9 @@ def test_the_start_covers_the_checks_drops_plus_a_margin():
 
 def test_cells_and_limits_scale_with_the_voxel_pitch():
     cfg = SM.MapConfig()
-    assert cfg.steps(25.0) == {"x": 1.0, "z": 5.0, "t": 2.0}
+    assert cfg.steps(25.0) == {"x": 1.0, "y": 2.0, "z": 5.0, "t": 2.0}
     assert cfg.steps(50.0)["x"] == 2.0
-    assert cfg.limits(25.0) == cfg.limits(50.0) == {"x": (-50, 50), "z": (0, 5), "t": (-5, 5)}
+    assert cfg.limits(25.0) == cfg.limits(50.0) == {"x": (-50, 50), "y": (-25, 25), "z": (0, 5), "t": (-5, 5)}
 
 
 def test_a_cell_maps_to_a_pose_about_the_aim():
@@ -205,7 +205,8 @@ def test_bad_grid_settings_are_rejected(kw):
 
 # --- A/B V0 in the sim: one coarse map (5 mm, 12.5 mm and 5 deg cells, so it stays short) ---
 
-COARSE = SM.MapConfig(x_step_U=0.2, z_step_U=0.5, theta_step_deg=5.0, z_limit_U=0.5, theta_limit_deg=5.0)
+COARSE = SM.MapConfig(x_step_U=0.2, z_step_U=0.5, theta_step_deg=5.0, z_limit_U=0.5, theta_limit_deg=5.0,
+                      y_step_U=0.2)
 WHY = "coarse cells to keep the test short"
 
 
@@ -219,7 +220,7 @@ def ab_map():
 def test_the_map_has_every_slice_on_both_courses_with_traces(ab_map):
     m, drops = ab_map
     assert m["label"] == "simulated, uncalibrated contact"
-    assert [(g["slice"], g["course"]) for g in m["grids"]] == [(s, c) for s in ("xz", "xt", "zt") for c in (0, 1)]
+    assert [(g["slice"], g["course"]) for g in m["grids"]] == [(s, c) for s in ("xz", "xt", "zt", "xy") for c in (0, 1)]
     assert m["drops"] == sum(g["simulated"] for g in m["grids"]) == len([d for d in drops if "zoom" not in d])
     assert all("contacts" in d and d["outcome"] in ("seated", "jammed", "wrong_valley", "fell") for d in drops)
     assert any(d["contacts"] for d in drops)
@@ -242,7 +243,10 @@ def test_the_ab_map_covers_the_target_box_and_ends_on_red_or_a_limit(ab_map):
     x_edges = [e[ax][side] for g in m["grids"] if "x" in g["edges"] for ax in ("x",) for e in (g["edges"],)
                for side in ("lo", "hi")]
     assert x_edges and set(x_edges) == {"closed"}  # every X edge ends on red: the capture limit is found
-    assert m["drops"] < m["fixed_grid_drops"]  # fewer than a fixed +-30 mm grid at these cell sizes
+    # The X slices take fewer drops than a fixed +-30 mm grid at their cell sizes. (The xy slice of #86
+    # always spans the target disc, so it is left out of this comparison.)
+    xs = [g for g in m["grids"] if g["slice"] != "xy"]
+    assert sum(g["simulated"] for g in xs) < SM.fixed_grid_drops(xs)
 
 
 def test_a_zoom_is_logged_with_its_reason_and_leaves_the_fitted_grids_alone(ab_map):
@@ -250,13 +254,13 @@ def test_a_zoom_is_logged_with_its_reason_and_leaves_the_fitted_grids_alone(ab_m
     kinds = [o["kind"] for o in m["overrides"]]
     assert kinds == ["config", "zoom"]
     assert m["overrides"][0]["reason"] == WHY and set(m["overrides"][0]["changed"]) == {
-        "x_step_U", "z_step_U", "theta_step_deg", "z_limit_U", "theta_limit_deg"}
+        "x_step_U", "z_step_U", "theta_step_deg", "z_limit_U", "theta_limit_deg", "y_step_U"}
     z = m["overrides"][1]
     assert z["reason"] == "look at the +X capture edge" and z["slice"] == "xz" and z["course"] == 1
     (g,) = m["zooms"]
     assert g["extent"]["x"] == [8.0, 12.0] and g["cells"] == 3 * 2 == z["cells"]
     assert len([d for d in drops if d.get("zoom")]) == 6
-    assert len(m["grids"]) == 6  # the fitted slices are all still there, at their own extent
+    assert len(m["grids"]) == 8  # the fitted slices (four since #86, xy added) are all still there, at their own extent
 
 
 def test_overrides_need_a_reason():
@@ -285,3 +289,36 @@ def test_map_and_drops_go_to_a_new_run_directory(ab_map, tmp_path):
     assert [(d["slice"], d["cell"], d["outcome"]) for d in back] == [(d["slice"], d["cell"], d["outcome"]) for d in drops]
     assert (a / "drops.json.gz").stat().st_size < 1_000_000  # compressed: the traces are large
     assert "course 0" in SM.summary(m) and "S" in SM.ascii_grid(m["grids"][0])
+
+
+
+# --- the X-Y slice (issue #86) ---
+
+
+def test_the_xy_slice_has_coarser_x_and_two_millimetre_y_cells():
+    cfg = SM.MapConfig()
+    steps = cfg.slice_steps(25.0, "xy")
+    assert steps["x"] == pytest.approx(4.0) and steps["y"] == pytest.approx(2.0)
+    assert cfg.slice_steps(25.0, "xz")["x"] == pytest.approx(1.0)
+    assert SM.SLICES["xy"] == ("x", "y")
+
+
+def test_the_xy_slice_covers_the_target_disc_and_its_drops_carry_y(ab_map):
+    m, drops = ab_map
+    w = BOX.half_widths
+    xy = [g for g in m["grids"] if g["slice"] == "xy"]
+    assert [g["course"] for g in xy] == [0, 1]
+    for g in xy:
+        assert g["extent"]["x"][0] <= -w["x_mm"] and w["x_mm"] <= g["extent"]["x"][1]
+        assert g["extent"]["y"][0] <= -w["y_mm"] and w["y_mm"] <= g["extent"]["y"][1]
+        assert g["fixed"] == {"z": w["z_mm"], "t": 0.0}
+    ys = {round(d["dy_mm"], 6) for d in drops if d["slice"] == "xy"}
+    assert len(ys) > 3 and min(ys) < 0 < max(ys)
+    assert all(d["dy_mm"] == 0.0 for d in drops if d["slice"] != "xy")
+
+
+def test_y_capture_is_read_from_the_column_through_the_aim():
+    g = {"slice": "xy", "course": 0, "axes": ["x", "y"], "step": {"x": 4.0, "y": 2.0},
+         "index_extent": {"x": [-1, 1], "y": [-3, 3]},
+         "rows": ["FWF", "SJS", "SSS", "SSS", "SSS", "JSS", "FFF"]}  # y = -6 ... +6 mm; the aim column is the middle
+    assert SM.y_capture({"grids": [g]}) == {"0": {"-y": 2.0, "+y": 4.0}}  # -4 mm jams, +6 mm falls

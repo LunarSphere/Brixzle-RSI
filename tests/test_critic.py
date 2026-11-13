@@ -78,3 +78,15 @@ def test_a_brief_given_as_text_is_parsed():
     runner = RN.ScriptedRunner([RN.AgentResult(text=json.dumps(GOOD), structured=None)])
     brief, _ = CR.critique(runner, REPORT, MAP, None, "", "", "mean")
     assert brief["clusters"][0]["rules"] == ["DR2", "DR10"]
+
+
+def test_the_critic_reads_y_capture_and_the_x_y_disc():
+    """Issue #86: the error is a disc in X-Y; the critic gets the measured Y capture and Z without Y."""
+    report = {**REPORT, "z_x_only": REPORT["z"], "y_capture_mm": {"0": {"-y": 6.0, "+y": 4.0},
+                                                                   "1": {"-y": 2.0, "+y": 2.0}}}
+    runner = RN.ScriptedRunner([RN.AgentResult(structured=GOOD, cost_usd=0.03)])
+    CR.critique(runner, report, MAP, JAM, "FAMILY = Family(...)", "none", "mean")
+    call = runner.calls[0]
+    assert "Y capture, course 0" in call.prompt and "-y 6.0 mm, +y 4.0 mm" in call.prompt
+    assert "Z with X offsets only" in call.prompt
+    assert "disc in X-Y" in call.system and "half the depth" in call.system

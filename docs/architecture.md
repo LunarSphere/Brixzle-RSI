@@ -134,7 +134,7 @@ It scores each target box: the drone's mean, 95th-percentile and worst error. Fo
 
 ### Objective Z
 
-Issue #61. For each target box (mean, p95, worst), every drop of the full sim map whose pose lies inside the box counts, across all slices and both courses:
+Issue #61. For each target box (mean, p95, worst), every drop of the full sim map whose pose lies inside the box counts, across all slices and both courses. Since issue #86 X and Y form a disc: a drop at (x, y) is inside when x² + y² ≤ r² (r the box's X half-width) and its release height and pitch are inside the box. Only the `xy` slice moves Y, so the other slices count as before. The report also gives `z_x_only`, Z over the X slices' drops alone (the `xy` slice left out), so earlier runs stay comparable, and `y_capture_mm`, the largest |y| on each side that still seats in the `xy` slice's column through the aim, per course. `--no-y-error` scores as before #86 (no `xy` slice, X-only quick check and held-out shift).
 
 - S = seated, J = jammed, N = every drop in the box;
 - **Z = (S − J) / N**: a seated drop counts +1, a jammed one −1, and a fall, a wrong valley or any other outcome 0;
@@ -167,9 +167,10 @@ The check is not the score. A design that seats every drop in the box always pas
 | `xz` | X offset against release height | zero pitch |
 | `xt` | X offset against pitch | the target box's centre height |
 | `zt` | release height against pitch | zero X offset |
+| `xy` | X offset against Y offset (issue #86) | zero pitch, the target box's centre height |
 
 - **Coordinates:** X is the offset about the aim. Z is the release height above the minimum release clearance, so it never goes below 0. θ is pitch.
-- **Cells:** U/25 in X (1 mm for a 25 mm voxel), U/5 in Z and 2° in θ. Sizes in X and Z follow the voxel pitch U, so bricks of different sizes get maps with about the same number of cells. Extents are reported in U as well as in mm.
+- **Cells:** U/25 in X (1 mm for a 25 mm voxel), U/5 in Z and 2° in θ. The `xy` slice has X cells four times larger (4 mm) and Y cells of 2U/25 (2 mm), both signs of Y, out to ±2 U; it never crops inside the target discs. The quick check samples X and Y inside the disc, and held-out Z shifts Y too. Sizes in X and Z follow the voxel pitch U, so bricks of different sizes get maps with about the same number of cells. Extents are reported in U as well as in mm.
 - **Fitting,** in code (`GridFit`):
   1. start from the quick check's drops, widened to the target box, plus a one-cell margin;
   2. grow any edge that still has a seated cell on it, until it has none or reaches the axis limit;

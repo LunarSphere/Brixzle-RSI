@@ -53,16 +53,18 @@ The measured error so far covers X–Y position only (Exp 3 in aerial-assembly).
 
 Half-widths around the aim point, from `brixzle.engine.boxes.default_boxes()`.
 
-| Task | Statistic | X (mm) | Z (mm) | θ or ψ (deg) |
-|---|---|---|---|---|
-| Placement | mean | 14.8 | 3.1 | 0.2 |
-| Placement | p95 | 27.8 | 6.3 | 0.3 |
-| Placement | worst | 38.5 | 7.2 | 0.4 |
-| Pickup | mean | 14.8 | 3.1 | 0.9 |
-| Pickup | p95 | 27.8 | 6.3 | 1.4 |
-| Pickup | worst | 38.5 | 7.2 | 1.7 |
+| Task | Statistic | X (mm) | Y (mm) | Z (mm) | θ or ψ (deg) |
+|---|---|---|---|---|---|
+| Placement | mean | 14.8 | 14.8 | 3.1 | 0.2 |
+| Placement | p95 | 27.8 | 27.8 | 6.3 | 0.3 |
+| Placement | worst | 38.5 | 38.5 | 7.2 | 0.4 |
+| Pickup | mean | 14.8 | – | 3.1 | 0.9 |
+| Pickup | p95 | 27.8 | – | 6.3 | 1.4 |
+| Pickup | worst | 38.5 | – | 7.2 | 1.7 |
 
 The angle column is θ (pitch) for placement and ψ (yaw) for pickup.
+
+**Placement's X and Y form a disc** (issue #86). The measured error is a radius in a random X–Y direction, so a drop at (x, y) is inside a placement box when x² + y² ≤ r², with r the X half-width. A square box would ask for corners at 1.4 r, which the drone never reached.
 
 - **X is measured.** It is the Exp 3 positioning error (session exp3-r4, 24 approaches, `src/brixzle/data/error-exp3-r4.json`), taken as a radius that may lie wholly along X.
 - **Z, θ and ψ are estimates.** They are the RMS deviation from the command during the settled hovers of Exp 3 session exp3-r2 (25 approaches, `src/brixzle/data/hover-exp3-r2.json`, made by `scripts/make_hover_estimates.py`).
