@@ -264,7 +264,7 @@ def test_resting_contacts_balance_the_bricks_weight():
     total = np.sum([c["force_N"] for c in rest["contacts"]], axis=0)
     assert total == pytest.approx([0.0, 0.0, rest["weight_N"]], abs=0.05 * rest["weight_N"])
     assert {"pos_mm", "normal", "force_N", "normal_N", "dist_mm", "other"} <= set(rest["contacts"][0])
-    assert all(c["other"] in ("brick0", "base") for c in rest["contacts"])  # never the floor
+    assert all(c["other"] in ("brick0", "brick1", "base") for c in rest["contacts"])  # never the floor (#82: two below)
     assert "rest" not in rig.drop(_sample(0.0, 5.0), trace=False)  # only on request
 
 
@@ -299,25 +299,23 @@ def test_the_ab_analysis_lists_its_bands_with_repeat_rate_type_and_contacts(ab_a
     json.dumps(a, allow_nan=False)
 
 
-def test_an_ab_jam_at_the_capture_edge_is_reduced_and_its_faces_named():
-    """Just past A/B's +X capture edge on course 1 (the map's 'J' column at +14 mm) the brick jams
-    about 22 mm off its seat. On macOS arm64 it rests in plane and reduces to a holding set of two
-    contacts, both sticking; on the Linux CI runner the same pose ends as a 3D effect (2026-11-11).
-    A jam is sensitive to the platform's arithmetic, so the test accepts either and checks that
-    each is reported properly."""
-    out = JA.analyse_pose(AB, V0, course=1, sample=_sample(14.0, 0.0), sim_cfg=SIM_CFG)
-    assert out["outcome"] == "jammed" and out["mu"] == pytest.approx(0.35)
-    assert out["sites"], "the contacts at rest are reported either way"
+def test_a_running_bond_failure_is_reduced_and_named_on_the_brick_below_it(stack_v):
+    """Issue #82: course 1 lands across two seated bricks. Before #82 this test reduced an A/B jam
+    at +14 mm on course 1 (stack drop). Under the running bond that pose is a wrong valley, and a
+    sweep of A/B's course-1 row (+-24 mm, release +0 to +15 mm, pitch -6 to +6 deg) found only two
+    jams, both one-offs that a 0.5 mm nudge seats (2026-11-12, simulated, uncalibrated contact).
+    The stack-only V is a repeatable case: at the aim its ridge meets the crest over the joint, it
+    slides off and stacks one voxel over, on the second brick, where two contacts hold it without
+    friction. Each contact must be named on the brick it touches."""
+    p = stack_v.defaults
+    out = JA.analyse_pose(stack_v, p, course=1, sample=_sample(0.0, 0.0), sim_cfg=SIM_CFG)
+    assert out["outcome"] == "wrong_valley" and out["mu"] == pytest.approx(0.35)
+    assert out["err_mm"][0] == pytest.approx(p.U, abs=1.0) and not out["three_d"]
+    assert len(out["sites"]) == 2
     for s in out["sites"]:
-        assert s["on_brick"]["part"] == "B" and s["on_support"]["part"] in ("A", "base")
-        assert s["on_brick"]["label"].startswith("B: ") and s["normal_N"] > 0.05 * out["weight_N"]
-    h = out["holding"]
-    if out["three_d"]:
-        assert h is None and out["mechanism"].startswith("3D effect")
-    else:
-        assert h is not None and 1 <= h["size"] <= len(out["sites"])
-        assert isinstance(h["stick_margin"], float) and isinstance(h["wedged"], bool)
-        assert out["all_sites"]["weakly_stable"] is True  # every site together holds if a subset does
+        assert s["on_brick"]["part"] == "A" and s["on_support"]["brick"] == "brick1"
+        assert s["on_support"]["label"].startswith("A (brick1): ") and "guide face" in s["on_support"]["label"]
+    assert out["holding"] is not None and "without friction" in out["mechanism"]
     json.dumps(out, allow_nan=False)
 
 

@@ -1,7 +1,8 @@
 """Shared family builders checked against hand-worked numbers for the two dummy families.
 
-wedge (Prismatic): a chevron of constant vertical thickness H0 over two voxels, so its
-section is a sheared rectangle with area 2 U H0 and centroid height U tan(theta)/2 + H0/2.
+wedge (Prismatic): a W of constant vertical thickness H0 over two voxels (one V per voxel, #82),
+so its section has area 2 U H0 and centroid height U tan(theta)/4 + H0/2 (the underside's mean
+height is half the V's rise, U tan(theta)/2).
 
 pyramid (Solid3D): a U x U x H0 block with a square-frustum peg on top and the same frustum as a
 pocket underneath, so its volume is the block's and the peg moves the centroid up by
@@ -33,11 +34,11 @@ def wedge():
     return p, B.sim_bodies(WEDGE, p, "A")
 
 
-def test_wedge_section_is_a_sheared_rectangle():
+def test_wedge_section_is_a_w_of_constant_thickness():
     p = WEDGE.defaults
     s = B.section(WEDGE, p, "A")
     assert s.outer.area == pytest.approx(2 * p.U * p.H0)
-    assert [g.angle_deg for g in s.guide_faces] == pytest.approx([p.groove_deg, p.groove_deg])
+    assert [g.angle_deg for g in s.guide_faces] == pytest.approx([p.groove_deg] * 4)
 
 
 def test_wedge_mass_properties_match_hand_values(wedge):
@@ -45,9 +46,9 @@ def test_wedge_mass_properties_match_hand_values(wedge):
     t = math.tan(math.radians(p.groove_deg))
     a, a_bore = 2 * p.U * p.H0, _bore_area(p)
     x_bore = p.bore_x_frac * p.U
-    z_bore = x_bore * t + p.bore_z_frac * p.H0
+    z_bore = abs(x_bore - p.U / 2) * t + p.bore_z_frac * p.H0
     volume = (a - a_bore) * p.D
-    z_com = (a * (p.U * t / 2 + p.H0 / 2) - a_bore * z_bore) / (a - a_bore)
+    z_com = (a * (p.U * t / 4 + p.H0 / 2) - a_bore * z_bore) / (a - a_bore)
     assert bodies.volume_mm3 == pytest.approx(volume, rel=REL)
     assert bodies.mass_g == pytest.approx(volume * B.PLA_DENSITY, rel=REL)
     assert bodies.com_mm == pytest.approx([0.0, 0.0, z_com], rel=REL, abs=1e-3)
@@ -56,7 +57,8 @@ def test_wedge_mass_properties_match_hand_values(wedge):
 def test_wedge_collision_is_exact_convex_pieces(wedge):
     _, bodies = wedge
     assert bodies.collision_source == "exact"
-    assert len(bodies.collision) == 2  # the chevron splits into two convex quads, one band
+    assert len(bodies.collision) == 5  # the W splits into five convex pieces, one band (#82)
+    assert all(B.is_convex_vertex_set(v) for v in bodies.collision)
 
 
 def test_wedge_inertia_is_symmetric_positive_definite(wedge):

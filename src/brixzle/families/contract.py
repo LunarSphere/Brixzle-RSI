@@ -27,7 +27,6 @@ VOLUME_REL = 0.01      # Prismatic straight extrusion: solid volume vs section a
 CHECKS = ("params", "section", "solid", "sim_bodies", "lattice", "rules", "pickup")
 
 SEAT_I0 = 1      # the start voxel of the course-0 brick in the drop trial (trials.DropRig)
-BASE_VOXELS = 4  # the drop trial's base covers voxels 0 to 4 (trials.DropRig, build_scene bases [(0, 4)])
 
 
 @dataclass(frozen=True)
@@ -236,20 +235,35 @@ def _check_lattice(family, p, part=None):
             axis = np.asarray(family.insertion_axis(p, pl), dtype=float)
             _require(axis.shape == (2,) and abs(np.linalg.norm(axis) - 1) < 1e-9,
                      f"insertion_axis({pl}) must be a unit (x, z) vector, got {axis.tolist()}")
-    # The drop trial's placements (trials.DropRig): course 0 at voxel 1 on a 4-voxel base, course 1
-    # on top of it. A base whose pattern repeats every 2 voxels can only fit one parity (issue #70).
-    lower = _placed(family, p, Placement(0, SEAT_I0))
-    pairs = {"the brick above": Placement(1, SEAT_I0),
-             "its neighbour in the course": Placement(0, SEAT_I0 + lat.span_voxels)}
-    for label, pl in pairs.items():
-        upper = _placed(family, p, pl)
-        n = _overlap(lower, upper) + _overlap(upper, lower)
-        _require(n == 0, f"a seated brick overlaps {label} ({n} key points inside it)")
-    base = B.base_pieces(family, p, BASE_VOXELS, 1)
+    # The drop trial's placements (trials.rig_layout, issues #70 and #82): course 0 at voxel 1 beside a
+    # neighbour, course 1 across the joint between them (running bond). A base whose pattern repeats
+    # every 2 voxels can only fit one parity.
+    from brixzle.engine.sim.trials import rig_layout
+
+    (neighbour,), seat0, _ = rig_layout(lat, 0, neighbour=True)
+    below, above, (v0, v1) = rig_layout(lat, 1)
+    lower = _placed(family, p, seat0)
+    upper = _placed(family, p, neighbour)
+    n = _overlap(lower, upper) + _overlap(upper, lower)
+    _require(n == 0, f"a seated brick overlaps its neighbour in the course ({n} key points inside it)")
+    top = _placed(family, p, above)
+    bond = "running bond" if len(below) > 1 else "stack"
+    for pl in below:
+        under = _placed(family, p, pl)
+        n = _overlap(under, top) + _overlap(top, under)
+        if bond == "running bond":
+            _require(n == 0, f"a course-1 brick seated half a brick over, at {above}, overlaps the course-0 brick "
+                             f"at {pl} ({n} key points inside it): the brick cannot lay a running bond, so it cannot "
+                             "build a wall, a bridge or an overhang")
+        else:
+            _require(n == 0, f"a seated brick overlaps the brick above ({n} key points inside it)")
+    base = B.base_pieces(family, p, v1 - v0, 1)
     for i, piece in enumerate(base):
         _require(B.math_finite(piece) and ConvexHull(piece).volume > 0, f"base piece {i} is degenerate")
-    n = _overlap(lower, base) + _overlap(base, lower)
-    _require(n == 0, f"a course-0 brick overlaps the base ({n} key points inside it)")
+    for pl in dict.fromkeys((seat0, *below)):
+        here = _placed(family, p, pl)
+        n = _overlap(here, base) + _overlap(base, here)
+        _require(n == 0, f"a course-0 brick at {pl} overlaps the base ({n} key points inside it)")
 
 
 _RULE_KEY = re.compile(r"^(R\d+)\.[a-z0-9_]+$")

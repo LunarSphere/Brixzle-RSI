@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
-# Changed: classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once), which can also return the contacts at rest (rest_contacts, issue #49); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial; DropRig's recording rate is settable (record_fps, issue #77).
+# Changed: the drop rig lays course 1 across two seated bricks (running bond) (issue #82; rig_layout); classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once), which can also return the contacts at rest (rest_contacts, issue #49); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial; DropRig's recording rate is settable (record_fps, issue #77).
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -275,9 +275,35 @@ def rest_contacts(model, data, info, owner, names, j):
     return rows
 
 
+COURSE0_BASE = (0, 4)  # the course-0 drop's base: voxels 0 to 3, as before #82
+
+
+def rig_layout(lat: Lattice, course, neighbour=False):
+    """(placed, target, base) of the drop rig (issue #82), shared with the family contract.
+
+    - Course 0: the target is Placement(0, 1) on the base, alone, as before #82. ``neighbour`` adds
+      a seated brick at Placement(0, 1 + span) (the issue's proposal; not used by the loop, see
+      docs/family-interface.md).
+    - Course 1: two seated course-0 bricks, Placement(0, 1) and Placement(0, 1 + span), and the
+      target Placement(1, 1 + span // 2) across their joint (running bond), on a base covering both
+      plus one voxel each side. A one-voxel brick keeps the stack drop: one supporter,
+      Placement(0, 1), and the target Placement(1, 1).
+
+    The seat of a course-1 brick is judged against the first placed brick."""
+    span = lat.span_voxels
+    if course not in (0, 1):
+        raise ValueError('course must be 0 or 1')
+    if course == 0:
+        placed = [Placement(0, 1 + span)] if neighbour else []
+        return placed, Placement(0, 1), (0, max(COURSE0_BASE[1], 2 + 2*span) if neighbour else COURSE0_BASE[1])
+    if span == 1:
+        return [Placement(0, 1)], Placement(1, 1), COURSE0_BASE
+    return [Placement(0, 1), Placement(0, 1 + span)], Placement(1, 1 + span//2), (0, 2 + 2*span)
+
+
 class DropRig:
-    """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 onto
-    an ideally seated course-0 brick), so many poses don't rebuild the model."""
+    """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 across
+    two ideally seated course-0 bricks; ``rig_layout``), so many poses don't rebuild the model."""
 
     def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False, bodies=None, record_fps=60):
         """``bodies`` ({part: SimBodies}) skips rebuilding the bricks, e.g. in a worker process.
@@ -287,15 +313,15 @@ class DropRig:
             raise ValueError('course must be 0 or 1')
         self.family, self.p, self.cfg, self.course, self.record = family, p, cfg, course, record
         bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}
-        if course == 1:
-            self.support, self.target = Placement(0, 1), Placement(1, 1)
-            body_parts, self.j = [family.part_for(0, 1), family.part_for(1, 1)], 1
-        else:
-            self.support, self.target = None, Placement(0, 1)
-            body_parts, self.j = [family.part_for(0, 1)], 0
-        self.model, self.xml, self.info = build_scene(family, p, bodies, [(0, 4)], len(body_parts), cfg.physics,
+        self.placed, self.target, self.base = rig_layout(family.lattice(p), course)
+        # The seat of a course-1 brick is judged against the first brick below it.
+        self.support = self.placed[0] if course == 1 else None
+        body_parts = [family.part_for(b.course, b.direction) for b in (*self.placed, self.target)]
+        self.j = len(self.placed)
+        self.model, self.xml, self.info = build_scene(family, p, bodies, [self.base], len(body_parts), cfg.physics,
                                                       visual=record, body_parts=body_parts)
         self.data = mujoco.MjData(self.model)
+        self._settled = None  # the state after the bricks below have settled (first drop)
         self.owner = _brick_geoms(self.model, self.info)
         self.names = [self.model.geom(g).name for g in range(self.model.ngeom)]
 
@@ -305,12 +331,20 @@ class DropRig:
         ``rest`` adds the settled state under 'rest': the brick's contacts (rest_contacts), its
         pose and weight, and the pose of the brick it landed on (None on the base)."""
         model, data, info, family, p = self.model, self.data, self.info, self.family, self.p
-        mujoco.mj_resetData(model, data)
-        if self.support is not None:
-            spos, squat = family.seat_pose(p, self.support)
-            activate(model, data, info, 0, spos, squat)
-            ideal = Tolerance(max_time=0.3)
-            run_until_settled(model, data, info, 0, ideal, self.owner)
+        if self._settled is None:
+            mujoco.mj_resetData(model, data)
+            for k, b in enumerate(self.placed):
+                spos, squat = family.seat_pose(p, b)
+                activate(model, data, info, k, spos, squat)
+            if self.placed:
+                ideal = Tolerance(max_time=0.3)
+                run_until_settled(model, data, info, 0, ideal, self.owner, watch=range(1, self.j))
+            # Settling the bricks below is deterministic, so it is done once and its whole state
+            # kept; each drop starts from an exact copy of it (issue #82: two bricks below).
+            self._settled = mujoco.MjData(model)
+            mujoco.mj_copyData(self._settled, model, data)
+        else:
+            mujoco.mj_copyData(data, model, self._settled)
         pos, quat = release_pose(family, p, self.target, sample)
         activate(model, data, info, self.j, pos, quat, linvel=sample['vel'])
         frames = [] if self.record else None
@@ -329,8 +363,13 @@ class DropRig:
             if self.support is not None:
                 spos, squat = body_pose(data, info, 0)
                 support = {'pos_mm': spos.tolist(), 'quat': squat.tolist()}
+            placed = []
+            for k, b in enumerate(self.placed):
+                bpos, bquat = body_pose(data, info, k)
+                placed.append({'brick': f'brick{k}', 'part': family.part_for(b.course, b.direction),
+                               'pos_mm': bpos.tolist(), 'quat': bquat.tolist()})
             row['rest'] = {'contacts': rest_contacts(model, data, info, self.owner, self.names, self.j),
-                           'pos_mm': pos.tolist(), 'quat': quat.tolist(), 'support': support,
+                           'pos_mm': pos.tolist(), 'quat': quat.tolist(), 'support': support, 'placed': placed,
                            'weight_N': float(model.body_mass[info['bodies'][self.j]]*9.81)}
         if self.record:
             row['frames'] = frames
@@ -341,8 +380,9 @@ def drop_trials(family: Family, p, cfg: TrialConfig, samples=32, seed=0, offsets
                 course=0, trace=False):
     """Drop one brick and judge its seat; Monte Carlo over the error model.
 
-    course 0: a brick onto an anchored base at voxel 1. course 1: a brick onto an ideally
-    seated course-0 brick (for A/B, a B onto an A; it never lands on the base).
+    course 0: a brick onto an anchored base at voxel 1. course 1: a brick
+    across two ideally seated course-0 bricks (running bond; for A/B, a B onto two As), or onto one
+    for a one-voxel brick (``rig_layout``, issue #82).
     ``offsets`` instead runs a deterministic capture sweep over X offsets (mm).
     ``trace`` adds each drop's contact sequence (``DropRig.drop``).
     """

@@ -1,5 +1,12 @@
 """Regression: the ported sim core reproduces aerial-assembly's A/B drops (issue #4).
 
+Since issue #82 a course-1 drop lands across two seated course-0 bricks (running bond), where
+aerial-assembly dropped onto one. Both reference cases are course-1 drops, so their outcomes and
+settled poses now come from tests/fixtures/ab_drop_running_bond.json (written by
+make_ab_running_bond_reference.py from this repo's rig); the params, configs, mass properties and
+sampled errors are still checked against aerial-assembly's reference. Old -> new outcomes: gauss-seed0
+4 seated -> 4 seated; exp3-mean-seed0 4 jammed -> 3 jammed and 1 wrong valley (drop 0).
+
 The reference (tests/fixtures/ab_drop_reference.json) was recorded by
 tests/fixtures/make_ab_drop_reference.py from aerial-assembly @ a649663 with the same params,
 seed and config. All values are simulated, uncalibrated contact, not hardware rates.
@@ -31,6 +38,8 @@ REFERENCE = json.loads(
 COURSE = {"A": 0, "B": 1}  # the reference's part B drops onto a seated A, i.e. course 1
 SAMPLE_KEYS = ("dx", "dy", "aim", "yaw", "roll", "pitch", "clear", "vel")
 CASES = REFERENCE["cases"]
+RUNNING_BOND = {c["name"]: c["rows"] for c in json.loads(
+    (Path(__file__).parent / "fixtures" / "ab_drop_running_bond.json").read_text(encoding="utf-8"))["cases"]}
 REFERENCE_PLATFORM = REFERENCE["source"]["platform"]
 ON_REFERENCE_PLATFORM = (
     platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -97,13 +106,13 @@ def test_mass_properties_match_reference_exactly(ab_bodies, part):
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
-def test_drop_outcomes_reproduce_aerial_assembly(drops, case):
+def test_drop_samples_reproduce_aerial_assembly_and_outcomes_the_running_bond(drops, case):
     rows = drops[case["name"]]
-    assert len(rows) == len(case["rows"])
-    for i, (row, ref) in enumerate(zip(rows, case["rows"])):
+    assert len(rows) == len(case["rows"]) == len(RUNNING_BOND[case["name"]])
+    for i, (row, ref, bond) in enumerate(zip(rows, case["rows"], RUNNING_BOND[case["name"]])):
         assert {k: row[k] for k in SAMPLE_KEYS} == {k: ref[k] for k in SAMPLE_KEYS}, i
-        assert row["outcome"] == ref["outcome"], i
-        assert row["floor"] == ref["floor"], i
+        assert row["outcome"] == bond["outcome"], i
+        assert row["floor"] == bond["floor"], i
 
 
 @exact_platform_only
@@ -117,6 +126,6 @@ def test_collision_pieces_match_reference_exactly(ab_bodies, part):
 @exact_platform_only
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
 def test_settled_poses_match_reference_exactly(drops, case):
-    for i, (row, ref) in enumerate(zip(drops[case["name"]], case["rows"])):
+    for i, (row, ref) in enumerate(zip(drops[case["name"]], RUNNING_BOND[case["name"]])):
         assert row["err_mm"] == pytest.approx(ref["err_mm"], abs=1e-6), i
         assert row["angle_deg"] == pytest.approx(ref["angle_deg"], abs=1e-6), i

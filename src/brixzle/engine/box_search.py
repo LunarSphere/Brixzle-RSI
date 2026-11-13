@@ -6,7 +6,7 @@ the verifier drops the brick at s times a fixed set of unit points: the centre, 
 the 6 face centres and a few seeded interior points. A scale passes only if every drop seats
 (no jam, fall or wrong valley). Bisection on s finds the largest passing scale; s >= 1 means
 the design covers the target box. Both placements are searched, course 0 (onto the anchored
-base) and course 1 (onto a seated course-0 brick), and the placement scale is the smaller.
+base) and course 1 (across two seated course-0 bricks since #82), and the placement scale is the smaller.
 Every drop logs its contact sequence (trials.DropRig).
 
 Pickup (R12) uses the same search over the pickup box with the pickup trial (sim/pickup.py): a

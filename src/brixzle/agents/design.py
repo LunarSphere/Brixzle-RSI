@@ -80,7 +80,10 @@ You write one brick family as Python code that follows the family interface belo
 check_family tool and fix it until the check passes (ok: true). The check also drops your brick once at the
 aim on each course (aim_drops): if either is not "seated", the brick does not sit in its own seat, so fix the
 seat pose, the base or the profile before anything else. The drop trial seats a course-0 brick at
-Placement(0, 1) and a course-1 brick on top of it; err_mm is where the brick came to rest against that seat.
+Placement(0, 1) on the base. A course-1 brick lands across the joint between two seated course-0 bricks,
+Placement(0, 1) and Placement(0, 1 + span), at Placement(1, 1 + span // 2): a running bond, as in a wall, a bridge
+or an overhang. A brick that only stacks straight on one brick fails this. err_mm is where the brick came to rest
+against its seat on the first brick below.
 
 Rules:
 - Write only inside your package directory. Its family.py must export FAMILY = Family(...).

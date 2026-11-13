@@ -2,7 +2,7 @@
 
 The full map (#48) takes minutes, and most new designs should be turned back in seconds. So a new
 design is first dropped at 40 poses inside the target box (X, Z and theta around the aim), in the
-MuJoCo sim (trials.DropRig), half onto the base (course 0) and half onto a seated brick (course 1):
+MuJoCo sim (trials.DropRig), half onto the base (course 0) and half across two seated bricks (course 1, running bond, #82):
 
 - **Poses:** one seeded Latin hypercube over X, Z, theta and the course. Each of the three axes
   has exactly one pose in each of its 40 equal slices, and each course gets exactly half the

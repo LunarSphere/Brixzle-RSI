@@ -9,6 +9,7 @@ import pytest
 from brixzle.engine.sim import trials as T
 from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.ab.params import V0
+from brixzle.families.interface import Placement
 
 
 @pytest.mark.parametrize("course", [0, 1])  # part A onto the base; part B onto a seated A
@@ -78,3 +79,41 @@ def test_tolerance_defaults():
 ])
 def test_classify(err, angle, on_floor, expect):
     assert T.classify(AB.lattice(V0), np.array(err), angle, T.Tolerance(), on_floor) == expect
+
+
+# --- course 1 lands across two bricks (running bond, issue #82) ---
+
+
+def _ideal(family, course, p=None):
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    rig = T.DropRig(family, p or family.defaults, cfg, course=course)
+    return rig, rig.drop(cfg.error.sample(None), trace=False)
+
+
+def test_a_b_course_1_seats_across_two_bricks():
+    rig, row = _ideal(AB, 1, V0)
+    assert rig.placed == [Placement(0, 1), Placement(0, 3)] and rig.target == Placement(1, 2)
+    assert rig.base == (0, 6)
+    assert row["outcome"] == "seated", row
+
+
+def test_course_0_still_drops_onto_the_base_alone():
+    """A seated neighbour at Placement(0, 1 + span) was tried and left out (#82): it sits on A/B's
+    approach side, which a real build keeps open (assembly order), and A/B then jams at its own aim."""
+    rig, row = _ideal(AB, 0, V0)
+    assert rig.placed == [] and rig.target == Placement(0, 1) and rig.base == (0, 4)
+    assert row["outcome"] == "seated", row
+    placed, target, base = T.rig_layout(AB.lattice(V0), 0, neighbour=True)
+    assert placed == [Placement(0, 3)] and target == Placement(0, 1) and base == (0, 6)
+
+
+def test_a_stack_only_v_does_not_seat_across_two_bricks(stack_v):
+    _, row = _ideal(stack_v, 1)
+    assert row["outcome"] != "seated", row
+
+
+def test_a_one_voxel_brick_keeps_the_stack_drop():
+    from brixzle.families.pyramid.family import FAMILY as PYRAMID
+
+    rig = T.DropRig(PYRAMID, PYRAMID.defaults, T.TrialConfig(error=T.ErrorModel(ideal=True)), course=1)
+    assert rig.placed == [Placement(0, 1)] and rig.target == Placement(1, 1)

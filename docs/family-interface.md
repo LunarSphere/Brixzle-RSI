@@ -36,10 +36,13 @@ To mark a design as infeasible, for example a profile that can't be built, a fam
 
 ## Where a brick seats in the checks and the sim
 
-The contract and the drop trial (`engine/sim/trials.py`) use the same placements (issue #70):
+The contract and the drop trial (`engine/sim/trials.py`, `rig_layout`) use the same placements (issues #70 and #82):
 
-- **Course 0** is `Placement(0, 1)`: start voxel 1, so a two-voxel brick is centred at x = 2U. It sits on a base covering voxels 0 to 4 (`base(p, 4, 1)`, x = 0 at voxel 0's left edge).
-- **Course 1** is `Placement(1, 1)`, on top of that brick. The contract also places a neighbour at `Placement(0, 1 + span_voxels)`.
+- **Course 0** is `Placement(0, 1)`: start voxel 1, so a two-voxel brick is centred at x = 2U. It sits on a base covering voxels 0 to 3 (`base(p, 4, 1)`, x = 0 at voxel 0's left edge).
+- **Course 1 is a running bond.** Two course-0 bricks are seated at `Placement(0, 1)` and `Placement(0, 1 + span)`, and the brick is dropped at `Placement(1, 1 + span // 2)`, across the joint between them, as in a wall, a bridge or an overhang. Its seat is judged against the first brick below. The base covers both bricks plus one voxel each side (`base(p, 2 + 2 span, 1)`). A one-voxel brick (`span_voxels = 1`) keeps the stack drop: one brick at `Placement(0, 1)` and the drop at `Placement(1, 1)`.
+- **The contract** also checks that a course-0 brick does not overlap its neighbour at `Placement(0, 1 + span)`. A course-1 brick that overlaps either brick below is a violation: the brick cannot lay a running bond.
+
+The course-0 drop has no neighbour. Issue #82 proposed one at `Placement(0, 1 + span)`, but on A/B that brick sits on the side the stroke comes from, which a real build keeps open (the assembly order fills each course from the other side), and A/B then jammed at its own aim.
 
 So the base must receive a brick centred at x = 2U. A base whose pattern repeats every two voxels has to put its seat at 2U, 4U and so on. The dummy `wedge` used to put it one voxel over, and never seated.
 
@@ -105,7 +108,7 @@ These formulas come from the same `rules.py`. aerial-assembly used the first bor
    - MuJoCo compiles the bodies.
 5. **lattice:**
    - quaternions have unit norm and insertion axes are unit vectors;
-   - a seated brick doesn't overlap the brick above it, its neighbour in the course or the base. This is checked at key points, a quarter of the way from each collision corner to its piece's centre; contact closer than 0.5 mm counts as touching;
+   - a seated brick doesn't overlap its neighbour in the course or the base, and a course-1 brick laid across the joint between two course-0 bricks (running bond, issue #82) doesn't overlap either of them. This is checked at key points, a quarter of the way from each collision corner to its piece's centre; contact closer than 0.5 mm counts as touching;
    - `part_for` returns a listed part.
 6. **rules:** every margin is finite and its key names a requirement that exists.
 7. **pickup (R10 grippable):** there's at least one grip feature, and each has a kind, a finite position and a size above zero. None breaks out of the brick:

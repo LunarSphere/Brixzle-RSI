@@ -124,7 +124,7 @@ def jam_map(sim_map, z, out, target=None, jam=None, title=None, picks=None):
                            if NAMES[c] in names]
                   + [Patch(fill=False, ls="--", ec="black", label=f"{target} target box")],
                   loc="upper left", fontsize=7, framealpha=0.85)
-        on = "onto the base" if g["course"] == 0 else "onto a seated brick"
+        on = "onto the base" if g["course"] == 0 else "across two seated bricks"
         fixed = _fmt_fixed(g["fixed"])
         ax.set_title(f"{g['slice']} slice, course {g['course']} ({on}); {fixed}", fontsize=9, loc="left")
         ax.set_xlabel(AXIS_LABELS[a], fontsize=8)
