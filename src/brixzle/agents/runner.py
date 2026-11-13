@@ -36,6 +36,9 @@ ALLOWED_SOURCES = ("ANTHROPIC_API_KEY", "apiKeyHelper")
 OAUTH_BETA = "anthropic-beta: oauth-2025-04-20"  # an OAuth access token needs this header
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 READ_TOOLS = ("Read", "Glob", "Grep", "LS")
+# The Agent SDK reads Claude Code's output line by line with a 1 MB limit by default. A concept photo
+# read by the agent came back as a 1.15 MB message and killed the call (issue #79).
+MAX_BUFFER_BYTES = 16 * 1024 * 1024
 MCP_PREFIX = "mcp__brixzle__"  # the loop's own tools (create_sdk_mcp_server name 'brixzle')
 # Claude Code's own tool for a structured answer (output_format): never blocked.
 SDK_TOOLS = ("StructuredOutput",)
@@ -241,7 +244,8 @@ def option_kwargs(call: AgentCall, model, remaining_usd, env):
     kw = {"model": model, "system_prompt": call.system, "tools": list(call.tools),
           "allowed_tools": [*call.tools, *(f"{MCP_PREFIX}{t.name}" for t in call.mcp_tools)],
           "max_turns": call.max_turns, "max_budget_usd": min(call.max_budget_usd, remaining_usd),
-          "setting_sources": [], "env": dict(env), "cwd": str(call.cwd) if call.cwd else None}
+          "setting_sources": [], "env": dict(env), "cwd": str(call.cwd) if call.cwd else None,
+          "max_buffer_size": MAX_BUFFER_BYTES}
     if call.output_schema is not None:
         kw["output_format"] = {"type": "json_schema", "schema": call.output_schema}
     if call.effort:

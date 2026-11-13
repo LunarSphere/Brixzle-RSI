@@ -339,3 +339,14 @@ The maintainer asked on 2026-11-12 for five random drop videos per iteration, wi
 - **A drop that cannot be rendered keeps its pick with the error,** and the loop carries on. A headless machine without a GL context gets no videos rather than a failed run. Its test is skipped there.
 - **The STL is the printed solid** (with bores) from the builders, one file per part, in mm.
 - **`videos` in the loop's config (default 5; `--videos 0` turns them off).** They add the re-drops and the rendering to each iteration's time; see the PR for measurements.
+
+## #79 Large concept images
+
+Found on 2026-11-13, running the loop from the maintainer's three concept images (`runs/loop/ab-concept-20261113-mean/`). One image is an 18.7 MB phone photo (5712 x 4284).
+
+- **Cause.** The design agent read the photo, Claude Code shrank it, and the `Read` result still came back as a 1,150,367-byte message (line 39 of the call's session transcript). The Agent SDK's default message buffer is 1,048,576 bytes, so both attempts died with `CLIJSONDecodeError`.
+- **The SDK's buffer is now 16 MB** (`runner.MAX_BUFFER_BYTES`), so no single image result can break a call.
+- **Intake keeps a downscaled copy of any image over 1600 px** (`intake.copy_image`, Pillow, longer edge 1600). The copy goes to the run folder and is what the agent reads. `intake.json` records `downscaled`, the original and new sizes, and the **original's** SHA-256. A file Pillow cannot open, or one already small enough, is copied unchanged. Pillow is now a declared dependency (matplotlib already needed it).
+- **A design call that fails twice in a row with the same error is not tried a third time.** The two failures were charged their whole budgets ($3.00) for about $0.09 of real use, and a third identical call would have done the same. The iteration ends with no design and says why. Two different errors still get another attempt.
+- **The ledger was corrected, not rewritten.** The two failed calls were charged $1.50 each (a failed call is charged its whole budget, the conservative rule from #18). Their session transcripts show about $0.058 and $0.034 at Sonnet 5.5 list prices, so two correction rows of −$1.40 re-charge each at $0.10 (rounded up). The original rows stay, so the total goes from $3.887 to $1.087. The charge-in-full rule for a failed call is unchanged.
+- **A Claude Code child can outlive a call the loop records as failed** (the second attempt's transcript ran 14 s past its ledger row). After a stop, check for leftover `claude` processes; the first two smoke-run stops left one each time.

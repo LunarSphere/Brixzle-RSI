@@ -5,6 +5,8 @@ The classifier is a Claude call; here it is scripted, so no test calls the API.
 
 import json
 
+import numpy as np
+
 import pytest
 
 from brixzle.agents import runner as RN
@@ -129,3 +131,38 @@ def test_the_command_line_refuses_unresolved_conflicts_without_a_terminal(image,
     monkeypatch.setattr(IN, "make_runner", lambda args: runner)
     IN.main(["--image", str(image), "--extra", "40 g", "--runs", str(tmp_path), "--no-input",
              "--resolve", "X1=keep_base"])
+
+
+def _big_image(path, w=3000, h=2000):
+    from PIL import Image
+
+    x = np.linspace(0, 255, w, dtype=np.uint8)
+    y = np.linspace(0, 255, h, dtype=np.uint8)
+    arr = np.stack([np.tile(x, (h, 1)), np.tile(y[:, None], (1, w)), np.full((h, w), 90, dtype=np.uint8)], axis=2)
+    Image.fromarray(arr).save(path)
+    return path
+
+
+def test_a_large_concept_image_is_kept_as_a_downscaled_copy(tmp_path):
+    """The agent read an 18.7 MB photo and its call failed (issue #79)."""
+    import hashlib
+
+    from PIL import Image
+
+    big = _big_image(tmp_path / "photo.png")
+    d = IN.build_intake([big], [])
+    out = IN.write_intake(d, runs=tmp_path / "runs")
+    saved = json.loads((out / "intake.json").read_text(encoding="utf-8"))
+    img = saved["concept_images"][0]
+    with Image.open(out / img["path"]) as im:
+        assert max(im.size) == IN.MAX_IMAGE_EDGE and im.size == (1600, 1067)
+    assert img["downscaled"] is True and img["original_size"] == [3000, 2000] and img["size"] == [1600, 1067]
+    assert img["sha256"] == hashlib.sha256(big.read_bytes()).hexdigest()  # the original's, not the copy's
+    assert (out / img["path"]).stat().st_size < big.stat().st_size
+
+
+def test_a_small_image_is_copied_unchanged(tmp_path, image):
+    out = IN.write_intake(IN.build_intake([image], []), runs=tmp_path / "runs")
+    saved = json.loads((out / "intake.json").read_text(encoding="utf-8"))
+    assert saved["concept_images"][0].get("downscaled") in (None, False)
+    assert (out / saved["concept_images"][0]["path"]).read_bytes() == PNG

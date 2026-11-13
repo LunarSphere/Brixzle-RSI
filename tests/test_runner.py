@@ -192,3 +192,10 @@ def test_the_sdks_own_structured_output_tool_is_never_blocked(tmp_path):
     guard = RN.ToolGuard(write_root=None, read_roots=(), tools=())
     assert guard.decide("StructuredOutput", {"decision": "stop"})[0]
     assert RN.hook_decision(guard, {"tool_name": "StructuredOutput", "tool_input": {}}) == {}
+
+
+def test_the_sdk_gets_a_message_buffer_big_enough_for_an_image_result(tmp_path):
+    """A concept photo read by the agent came back as a 1.15 MB message, over the SDK's 1 MB default
+    (issue #79)."""
+    opts = RN.option_kwargs(_call(), model="m", remaining_usd=1.0, env={})
+    assert opts["max_buffer_size"] >= 16 * 1024 * 1024
