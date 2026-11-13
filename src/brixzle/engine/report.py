@@ -136,13 +136,13 @@ def score_family(family, p, statistic="mean", seed=0, runs="runs", workers=None,
 
     Writes map.json, drops.json.gz and report.json to a new runs/map-<UTC>-<family>-<target>
     directory; returns (report, directory). ``allow_failed_check`` maps a design that failed the
-    quick check (the loop never does; a baseline may). ``y_error=False`` leaves out the X-Y slice and
-    samples the quick check along X only, as before #86."""
+    quick check (the loop never does; a baseline may). ``y_error=False`` leaves out the X-Y slice, as
+    before #86. The quick check samples along X either way (issue #97)."""
     boxes = boxes or BX.default_boxes()["placement"]
     t0 = time.time()
     timing = {}
     if check is None:
-        check = QC.quick_check(family, p, boxes[statistic], seed=seed, disc=y_error)
+        check = QC.quick_check(family, p, boxes[statistic], seed=seed)
         timing["check"] = time.time() - t0
     t = time.time()
     m, drops = SM.sim_map(family, p, boxes[statistic], check=check, config=config, config_reason=config_reason,

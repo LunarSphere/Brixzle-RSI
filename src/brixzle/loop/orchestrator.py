@@ -80,7 +80,7 @@ class SimEngine:
         self.boxes = BX.default_boxes()["placement"]
 
     def quick_check(self, family, p):
-        res = QC.quick_check(family, p, self.boxes[self.cfg.target], seed=self.cfg.seed, disc=self.cfg.y_error)
+        res = QC.quick_check(family, p, self.boxes[self.cfg.target], seed=self.cfg.seed)  # along X (#97)
         return res, QC.write_check(res, self.cfg.runs)
 
     def score(self, family, p, check, allow_failed_check=False):
