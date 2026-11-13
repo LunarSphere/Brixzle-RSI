@@ -209,8 +209,10 @@ def progress_png(history, out, target, title=None, baseline=None):
     """Z per iteration on the target box (thick) and the other boxes (thin), kept designs filled,
     rejected ones hollow, iterations with no scored design marked on the axis.
 
-    ``history`` is [{iteration, decision, z: {statistic: counts} | None}]; ``baseline`` is the
-    parent's {family, z} (iteration 0, #85), drawn as one horizontal line per box."""
+    ``history`` is [{iteration, decision, z: {statistic: counts} | None, target}]: ``target`` is
+    the rung each design was judged on (#84; default ``target``); a dashed line marks where it
+    changed, and the marker shows Z on that rung. ``baseline`` is the parent's {family, z}
+    (iteration 0, #85), drawn as one horizontal line per box."""
     fig, ax = plt.subplots(figsize=(7.0, 3.8), facecolor=BG)
     ax.set_facecolor(BG)
     stats = []
@@ -228,15 +230,21 @@ def progress_png(history, out, target, title=None, baseline=None):
             xs, ys = zip(*pts)
             ax.plot(xs, ys, color=styles.get(s, "#555"), lw=2.4 if s == target else 1.0,
                     label=f"Z {s}" + (" (target)" if s == target else ""))
+    rung = None
     for h in history:
+        t = h.get("target") or target
+        if rung is not None and t != rung:
+            ax.axvline(h["iteration"] - 0.5, color="#666", lw=0.9, ls="--")
+            ax.text(h["iteration"] - 0.45, -0.95, f"rung -> {t}", fontsize=7, color="#444", rotation=90, va="bottom")
+        rung = t
         if not h.get("z"):
             ax.plot(h["iteration"], -1.0, marker="x", color=COLOURS["F"], ms=8, ls="none")
             continue
-        zt = h["z"][target]["Z"]
+        zt = h["z"][t]["Z"]
         kept = h.get("decision") == "kept"
-        ax.plot(h["iteration"], zt, marker="o", ms=9, ls="none", mec=styles.get(target, "#1f3b63"),
-                mfc=styles.get(target, "#1f3b63") if kept else "white")
-    ax.plot([], [], marker="o", ls="none", mfc="#1f3b63", mec="#1f3b63", label="kept")
+        ax.plot(h["iteration"], zt, marker="o", ms=9, ls="none", mec=styles.get(t, "#1f3b63"),
+                mfc=styles.get(t, "#1f3b63") if kept else "white")
+    ax.plot([], [], marker="o", ls="none", mfc="#1f3b63", mec="#1f3b63", label="kept (Z on its rung)")
     ax.plot([], [], marker="o", ls="none", mfc="white", mec="#1f3b63", label="rejected")
     ax.plot([], [], marker="x", ls="none", color=COLOURS["F"], label="no design passed the quick check")
     ax.axhline(1.0, color=COLOURS["S"], lw=1, ls="--")
@@ -283,6 +291,9 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
               + f". **Decision: {rec['decision']}.** {rec.get('reason', '')}", "",
               f"Sim results are {LABEL}; mechanisms in the jam analysis are predicted, quasi-static 2D. "
               "Neither is a hardware rate.", ""]
+    if rec.get("z"):
+        lines += [f"The design was judged on the **{target}** box (the target ladder's rung for this iteration, #84).",
+                  ""]
     if rec.get("quick_check") and not rec.get("attempts"):
         qc = rec["quick_check"]
         lines += [f"Quick check: {qc['seated']} of {qc['dropped']} seated ("
@@ -363,7 +374,7 @@ def baseline_table(state):
     if best["iteration"] != 0:
         cols.append((f"best: {best['family']} (iteration {best['iteration']})", best_rec))
     out = ["## Best against the baseline", "",
-           f"Simulated, uncalibrated contact. Z = (S − J) / N over each box's drops (#61).", "",
+           "Simulated, uncalibrated contact. Z = (S − J) / N over each box's drops (#61).", "",
            "| | " + " | ".join(c[0] for c in cols) + " |", "|---|" + "---|" * len(cols)]
     for s in base["z"]:
         out.append(f"| Z {s} | " + " | ".join(_zc(r["z"][s]) if s in (r.get("z") or {}) else "–" for _, r in cols)
@@ -378,26 +389,30 @@ def baseline_table(state):
 
 def run_summary(state, target, ledger_path, spent_usd, cap_usd):
     """summary.md for the whole run."""
-    lines = [f"# {state['run']}", "", f"Target box: **{target}**. Sim results are {LABEL}.", "",
-             "| Iteration | Design | Decision | Z target | Z mean | Z p95 | Z max |", "|---|---|---|---|---|---|---|"]
+    lines = [f"# {state['run']}", "", f"Starting box: **{target}**. Sim results are {LABEL}.", "",
+             "| Iteration | Design | Decision | Z on its rung | Z mean | Z p95 | Z max | Rung (#84) |",
+             "|---|---|---|---|---|---|---|---|"]
     for it in state["iterations"]:
         z = it.get("z") or {}
 
         def zz(s):
             return f"{z[s]['Z']:+.3f}" if s in z else "–"
 
-        lines.append(f"| {it['iteration']} | {it.get('family', '–')} | {it['decision']} | {zz(target)} | "
-                     f"{zz('mean')} | {zz('p95')} | {zz('max')} |")
+        rung = it.get("target") or target
+        lines.append(f"| {it['iteration']} | {it.get('family', '–')} | {it['decision']} | {zz(rung)} | "
+                     f"{zz('mean')} | {zz('p95')} | {zz('max')} | {rung if z else '–'} |")
     best = state.get("best")
     lines += ["", f"**Stopped:** {state.get('stop')}", "",
-              f"**Best:** {best['family']} from iteration {best['iteration']}, Z {target} {best['z_target']:+.3f} "
+              f"**Best:** {best['family']} from iteration {best['iteration']}, Z {best.get('target', target)} "
+              f"{best['z_target']:+.3f} "
               f"(`{best.get('family_py') or best['root'] + '/' + best['module']}`; map `{best['map']}`)" if best
               else "**Best:** none", ""]
     lines += baseline_table(state)
     tune = state.get("tune")
     if tune:
         lines += ["**End tune:** " + (f"error: {tune['error']}" if "error" in tune else
-                                      f"Z {tune['baseline']:+.3f} -> {tune['tuned']:+.3f}, "
+                                      f"Z {tune.get('target', target)} {tune['baseline']:+.3f} -> "
+                                      f"{tune['tuned']:+.3f}, "
                                       f"{'accepted' if tune['accepted'] else 'not accepted'} (`{tune['run']}`)"), ""]
     lines += [f"API spend: ${spent_usd:.4f} of ${cap_usd:.2f} (`{ledger_path}`).",
               f"Wall-clock: {state.get('elapsed_s', 0.0) / 60:.1f} min.", "", "![progress](progress.png)", ""]

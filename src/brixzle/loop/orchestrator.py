@@ -14,10 +14,11 @@ Each outer iteration:
    back to the agent with the failing drops. Up to ``design_attempts`` tries per iteration.
 3. **Full sim map** (#48), covering the mean, p95 and worst boxes, and **Z** per target (#61).
 4. **Jam analysis** (#49, #56).
-5. **Acceptance:** the design replaces the current best only if Z on the target box improves and
-   held-out Z (the target box's poses shifted by another seed, at friction 0.2 and 0.5) is not
-   worse on either. The first design that is scored becomes the best. The critic never sees the
-   held-out results.
+5. **Acceptance:** the design replaces the current best only if Z on the current target improves,
+   Z on no lower rung of the ladder falls below the best's, and held-out Z on the current target
+   (its poses shifted by another seed, at friction 0.2 and 0.5) is not worse on either. Without a
+   parent, the first design that is scored becomes the best. The critic never sees the held-out
+   results.
 6. **Critic** (#19): a redesign brief that cites the design rules; back to 1.
 
 Every attempt goes in the design log (#20). Every iteration writes ``RSI_RESULTS/<run>/iter-NN/``
@@ -25,7 +26,10 @@ Every attempt goes in the design log (#20). Every iteration writes ``RSI_RESULTS
 ``runs/`` as usual; the loop's own files go to ``runs/loop/<run>/`` (state.json, the design
 log, the spend ledger and each attempt's package).
 
-**Stop** when Z reaches 1 on the target box, Z stops improving (``patience`` iterations with no
+**Target ladder** (#84): the target climbs mean -> p95 -> max; the current target is the first
+rung, from ``--target`` up, on which the best's Z is below 1 (``--no-ladder``: ``--target`` only).
+
+**Stop** when Z reaches 1 on the last rung, Z stops improving (``patience`` iterations with no
 kept design), the critic says stop, or the iterations, the API budget or the wall-clock run out.
 Then the end tune (#14) runs on the best design, with U fixed if intake fixed it.
 
@@ -99,16 +103,19 @@ class SimEngine:
         JA.write_analysis(res, map_dir)
         return res
 
-    def held_out(self, family, p):
-        fns = ZS.held_out_scores(family, self.boxes[self.cfg.target], self.cfg.seed + 1, workers=self.cfg.workers)
+    def held_out(self, family, p, target=None):
+        """Held-out Z on ``target``'s box (default: the run's target): its poses shifted by seed + 1,
+        at friction 0.2 and 0.5."""
+        fns = ZS.held_out_scores(family, self.boxes[target or self.cfg.target], self.cfg.seed + 1,
+                                 workers=self.cfg.workers)
         return {name: fn(p)["counts"] for name, fn in fns.items()}
 
     def drop_videos(self, family, p, sim_map, map_dir, out_dir, n, seed):
         """``n`` drops of the map, picked at random with ``seed``, recorded to ``out_dir`` (#77)."""
         return VD.drop_videos(family, p, sim_map, SM.read_drops(map_dir), out_dir, n=n, seed=seed)
 
-    def tune(self, family, p, fixed=()):
-        s = TU.TuneSettings(statistic=self.cfg.target, fixed=tuple(fixed), seed=self.cfg.seed,
+    def tune(self, family, p, fixed=(), target=None):
+        s = TU.TuneSettings(statistic=target or self.cfg.target, fixed=tuple(fixed), seed=self.cfg.seed,
                             workers=self.cfg.workers, max_seconds=self.cfg.tune_seconds)
         return TU.tune_family(family, p, s, runs=self.cfg.runs)
 
@@ -116,13 +123,48 @@ class SimEngine:
 # --- the rules ---
 
 
-def accept(z, held, best):
-    """(kept, reason). ``z`` is the new design's Z on the target, ``held`` its held-out counts;
-    ``best`` the current best ({'z_target', 'held_out'}) or None."""
+def rungs(cfg: LoopConfig):
+    """The target ladder (#84): the boxes from the run's target up (mean, p95, max); without the
+    ladder, the run's target alone."""
+    if not cfg.ladder:
+        return (cfg.target,)
+    return BX.STATISTICS[BX.STATISTICS.index(cfg.target):]
+
+
+def z_on(best, statistic):
+    """The best design's Z on one box (a record from before #84 has only ``z_target``)."""
+    z = (best.get("z") or {}).get(statistic)
+    return z["Z"] if z else best["z_target"]
+
+
+def current_target(state, cfg: LoopConfig):
+    """The box designs are judged on now: from the run's target up, the first on which the best
+    design's Z is below 1 (the last rung if none is). With no best yet, the run's target."""
+    best, ladder = state.get("best"), rungs(cfg)
+    if best is None:
+        return ladder[0]
+    return next((s for s in ladder if z_on(best, s) < 1.0), ladder[-1])
+
+
+def at_top(best, cfg: LoopConfig):
+    """Z is 1 on the last rung (or on the run's target, without the ladder)."""
+    return best is not None and z_on(best, rungs(cfg)[-1]) >= 1.0
+
+
+def accept(z, held, best, lower=()):
+    """(kept, reason). ``z`` is the new design's Z on the current target, ``held`` its held-out
+    counts on that box; ``best`` the current best on the same box ({'z_target', 'held_out'}) or
+    None; ``lower`` is (box, new Z, best's Z) for every lower rung of the ladder (#84).
+
+    Kept only if Z on the target improves, Z on no lower rung falls below the best's, and held-out
+    Z is not worse at either friction."""
     if best is None:
         return True, "first scored design"
     if not z > best["z_target"]:
         return False, f"Z on the target did not improve ({z:+.3f}, best {best['z_target']:+.3f})"
+    down = [f"{s} {zn:+.3f} < {zb:+.3f}" for s, zn, zb in lower if zn < zb]
+    if down:
+        return False, "Z on a lower rung got worse: " + "; ".join(down)
     worse = [f"{k} {held[k]['Z']:+.3f} < {v['Z']:+.3f}" for k, v in best["held_out"].items()
              if k in held and held[k]["Z"] < v["Z"]]
     if worse:
@@ -137,8 +179,8 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
     its = state["iterations"]
     if cfg.baseline_only:
         return "baseline only" if its else None
-    if best and best["z_target"] >= 1.0:
-        return "Z reached 1 on the target box"
+    if at_top(best, cfg):
+        return f"Z reached 1 on the last rung ({rungs(cfg)[-1]})" if cfg.ladder else "Z reached 1 on the target box"
     if its and (its[-1].get("brief") or {}).get("decision") == "stop":
         return f"the critic said stop: {its[-1]['brief']['reason']}"
     designs = [i for i in its if i["iteration"] >= 1]
@@ -214,6 +256,11 @@ class Loop:
             self.run_dir = root / name
             self.state = json.loads((self.run_dir / STATE).read_text(encoding="utf-8"))
             intake_path = self.state["intake"]
+            # A run started before #84 or #85 carries on as it was: no ladder, no baseline.
+            old = {k: v for k, v in (("ladder", False), ("parent", None))
+                   if k not in self.state.get("config", {})}
+            if old:
+                self.cfg = replace(self.cfg, **old, baseline_only=False).validate()
         else:
             name = name or f"{_now()}-{cfg.target}"
             self.run_dir = _free(root / name)
@@ -262,8 +309,8 @@ class Loop:
 
     def render_progress(self):
         its = self.state["iterations"]
-        history = [{"iteration": i["iteration"], "decision": i["decision"], "z": i.get("z")} for i in its
-                   if i["iteration"] >= 1]
+        history = [{"iteration": i["iteration"], "decision": i["decision"], "z": i.get("z"),
+                    "target": i.get("target")} for i in its if i["iteration"] >= 1]
         base = next((i for i in its if i["iteration"] == 0 and i.get("z")), None)
         RD.progress_png(history, self.results / "progress.png", self.cfg.target,
                         title=f"{self.name}: Z per iteration (target {self.cfg.target}); {LABEL}",
@@ -385,6 +432,7 @@ class Loop:
         that passed the quick check or for the baseline (iteration 0)."""
         cfg, i, best = self.cfg, rec["iteration"], self.state["best"]
         baseline = rec["decision"] == BASELINE
+        target = rec["target"] = current_target(self.state, cfg)  # the rung this design is judged on (#84)
         p = fam.defaults
         t = time.time()
         report, map_dir = self.engine.score(fam, p, check, allow_failed_check=baseline and not check["passed"])
@@ -397,24 +445,32 @@ class Loop:
         held = {}
         if cfg.held_out:
             t = time.time()
-            held = self.engine.held_out(fam, p)
+            held = self.engine.held_out(fam, p, target=target)
             rec["seconds"]["held_out"] = time.time() - t
         rec["held_out"] = held
         try:
             rec["mass_g"] = self.engine.masses(fam, p)
         except Exception as e:  # noqa: BLE001 - a mass for the report must not stop the loop
             rec["mass_error"] = f"{type(e).__name__}: {e}"[:300]
-        z_t = report["z"][cfg.target]["Z"]
+        z_t = report["z"][target]["Z"]
         if baseline:
             kept, why = True, f"the parent family {rec['family']!r}, scored as the baseline the designs must beat"
         else:
-            kept, why = accept(z_t, held, best)
+            ladder = rungs(cfg)
+            lower = [(s, report["z"][s]["Z"], z_on(best, s)) for s in ladder[:ladder.index(target)]] if best else []
+            view = {"z_target": z_on(best, target), "held_out": {}} if best else None
+            kept, why = accept(z_t, held, view, lower)
+            if kept and view is not None and held:
+                # The best's held-out Z on this box, computed once when the rung moves up (#84).
+                view["held_out"] = self._best_held_out(target, rec)
+                kept, why = accept(z_t, held, view, lower)
             rec["decision"] = "kept" if kept else "rejected"
         rec["reason"] = why
         if kept:
             self.state["best"] = {"iteration": i, "module": rec["module"], "root": rec["root"], "family": rec["family"],
                                   "family_py": str(family_py(rec)), "registry": rec.get("registry"),
-                                  "z_target": z_t, "z": report["z"], "held_out": held, "map": str(map_dir),
+                                  "z_target": z_t, "target": target, "z": report["z"], "held_out": held,
+                                  "held_out_by": {target: held} if held else {}, "map": str(map_dir),
                                   "mass_g": rec.get("mass_g")}
         sim_map = self.engine.read_map(map_dir)
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
@@ -437,13 +493,13 @@ class Loop:
         except Exception as e:  # noqa: BLE001 - an export must not stop the loop
             rec["stl_error"] = f"{type(e).__name__}: {e}"[:300]
         rec["seconds"]["render"] = time.time() - t
-        z_best = (self.state["best"] or {}).get("z_target", -2.0)
-        if z_best < 1.0 and i < cfg.max_iterations and not cfg.baseline_only:
+        if not at_top(self.state["best"], cfg) and i < cfg.max_iterations and not cfg.baseline_only:
             family_source = family_py(rec).read_text(encoding="utf-8")
             t = time.time()
             try:
+                rec["critic_target"] = current_target(self.state, cfg)  # the rung the next design is judged on
                 brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
-                                            cfg.target, budget_usd=cfg.critic_budget_usd)
+                                            rec["critic_target"], budget_usd=cfg.critic_budget_usd)
                 rec["brief"], rec["critic_cost_usd"] = brief, result.cost_usd
             except BudgetExceeded:
                 raise
@@ -455,6 +511,20 @@ class Loop:
         rec["seconds"]["total"] = time.time() - t_iter
         self.write_iteration_summary(rec, res_dir)
         return rec
+
+    def _best_held_out(self, target, rec):
+        """The best design's held-out counts on ``target``'s box: stored, or computed once and stored
+        (a best from before #84 has them only on the run's target)."""
+        best = self.state["best"]
+        by = best.setdefault("held_out_by", {})
+        if not by and best.get("held_out"):
+            by[best.get("target", self.cfg.target)] = best["held_out"]
+        if target not in by:
+            t = time.time()
+            fam = load_scored(best)
+            by[target] = self.engine.held_out(fam, fam.defaults, target=target)
+            rec["seconds"]["held_out_best"] = time.time() - t
+        return by[target]
 
     def _module_png(self, outcome, res_dir):
         try:
@@ -476,18 +546,19 @@ class Loop:
         best = self.state["best"]
         fam = load_scored(best)
         fixed = ("U",) if self.intake.get("fixed", {}).get("U_mm") and "U" in fam.bounds else ()
+        target = current_target(self.state, self.cfg)  # the first box still below 1 (#84)
         t = time.time()
         try:
-            result, out = self.engine.tune(fam, fam.defaults, fixed)
+            result, out = self.engine.tune(fam, fam.defaults, fixed, target=target)
         except ValueError as e:  # for example a family with nothing left to tune
-            return {"error": str(e)}
-        return {"run": str(out), "accepted": result["accepted"], "improved": result["improved"],
+            return {"error": str(e), "target": target}
+        return {"run": str(out), "target": target, "accepted": result["accepted"], "improved": result["improved"],
                 "baseline": result["baseline"]["score"], "tuned": result["tuned"]["score"],
                 "params": result["params"], "seconds": time.time() - t}
 
     def write_iteration_summary(self, rec, res_dir):
-        text = RD.iteration_summary(rec, self.name, self.cfg.target, self.ledger.path, self.ledger.spent(),
-                                    self.cfg.budget_usd)
+        text = RD.iteration_summary(rec, self.name, rec.get("target") or self.cfg.target, self.ledger.path,
+                                    self.ledger.spent(), self.cfg.budget_usd)
         (res_dir / "summary.md").write_text(text, encoding="utf-8")
 
     def write_run_summary(self):
@@ -501,7 +572,9 @@ def parser():
     ap.add_argument("--intake", help="intake.json (python -m brixzle.intake writes it)")
     ap.add_argument("--resume", metavar="RUN", help="carry on a run in runs/loop/RUN")
     ap.add_argument("--name", help="the run's name (default: <UTC>-<target>)")
-    ap.add_argument("--target", choices=BX.STATISTICS, default=d.target)
+    ap.add_argument("--target", choices=BX.STATISTICS, default=d.target,
+                    help="the box the run starts on; it climbs mean -> p95 -> max as Z reaches 1")
+    ap.add_argument("--no-ladder", action="store_true", help="stay on --target (no climbing)")
     ap.add_argument("--parent", default=d.parent,
                     help="a registry family scored as iteration 0, the baseline to beat ('none': from scratch)")
     ap.add_argument("--baseline-only", action="store_true",
@@ -534,7 +607,7 @@ def _interrupt_on_sigterm():
 
 def config_from_args(args):
     parent = None if str(args.parent).lower() == "none" else args.parent
-    return LoopConfig(target=args.target, parent=parent, baseline_only=args.baseline_only,
+    return LoopConfig(target=args.target, ladder=not args.no_ladder, parent=parent, baseline_only=args.baseline_only,
                       max_iterations=args.max_iterations, patience=args.patience,
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
                       design_attempts=args.design_attempts, seed=args.seed, workers=args.workers,
@@ -550,9 +623,10 @@ def main(argv=None):
     loop = Loop(args.intake, cfg, name=args.resume or args.name, resume=bool(args.resume))
     state = loop.run()
     for it in state["iterations"]:
-        z = (it.get("z") or {}).get(cfg.target, {}).get("Z")
+        t = it.get("target") or cfg.target
+        z = (it.get("z") or {}).get(t, {}).get("Z")
         print(f"iteration {it['iteration']}: {it.get('family', '-')} {it['decision']}"
-              + (f", Z {cfg.target} {z:+.3f}" if z is not None else "") + f" ({it.get('reason', '')})")
+              + (f", Z {t} {z:+.3f}" if z is not None else "") + f" ({it.get('reason', '')})")
     print(f"stopped: {state['stop']}; spent ${loop.ledger.spent():.4f} of ${cfg.budget_usd:.2f}")
     if state.get("tune"):
         print(f"end tune: {state['tune']}")

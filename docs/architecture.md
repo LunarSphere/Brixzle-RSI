@@ -12,7 +12,7 @@ Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
 4. **Jam analysis** inside the green zone (issue #49, built).
 5. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
 
-The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). A redesign replaces the best only if Z on the target improves and a held-out check is not worse. When Z reaches 1 on the target box, or stops improving, a short tune finishes the design (issue #14). The [orchestrator](#orchestrator) runs it all.
+The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). A redesign replaces the best only if Z on the current target improves, Z on no lower rung of the target ladder falls, and a held-out check is not worse. When Z reaches 1 on the last rung (the worst box), or stops improving, a short tune finishes the design (issue #14). The [orchestrator](#orchestrator) runs it all.
 
 ## Orchestrator
 
@@ -20,27 +20,36 @@ The loop's one objective is **Z** (issue #61; see [Objective Z](#objective-z)). 
 
     uv run --extra agents python -m brixzle.loop --intake runs/intake-<stamp>/intake.json --target mean
 
+**Iteration 0** (issue #85). Before the first design call the loop scores the parent family (`--parent`, A/B by default) from the registry, with the same stages as a design and no Claude call. It is recorded even if it fails the quick check, it becomes the best, and the critic's first brief comes from its results. So every design must beat it. `--parent none` starts from scratch, and `--baseline-only` scores the parent and stops.
+
+**The target ladder** (issue #84). The target climbs: mean, then p95, then max. `--target` is the rung a run starts on. The current target is the first rung, from there up, on which the best design's Z is below 1. `--no-ladder` keeps the run on `--target`.
+
 Each iteration:
 
 1. **Design.** The design agent writes a package. The loop checks it (contract and rules); a package that fails goes back to the agent with the check's output.
-2. **Quick check.** Below 32 of 40 seated, the design goes back to the agent with its failing drops. An iteration gets up to `design_attempts` tries (3).
+2. **Quick check.** Below 32 of 40 seated, the design goes back to the agent with its failing drops. An iteration gets up to `design_attempts` tries (3). The check stays on the starting box, since on the worst box it would turn back nearly every design.
 3. **Full sim map** covering the mean, p95 and worst boxes, and **Z** per target.
 4. **Jam analysis.**
-5. **Acceptance.** The design replaces the current best only if Z on the target box improves and held-out Z is not worse at either friction. Held-out Z uses the target box's poses shifted by seed + 1, at μ 0.2 and 0.5. The first scored design becomes the best. The critic never sees the held-out results.
-6. **Critic.** It writes a redesign brief, and the loop returns to step 1. It is not called when Z is already 1 or on the last iteration.
+5. **Acceptance.** The design replaces the current best only if all three hold:
+   1. Z on the current target improves;
+   2. Z on every lower rung of the ladder is not below the best's;
+   3. held-out Z on the current target is not worse at either friction.
+
+   Held-out Z uses the current target box's poses shifted by seed + 1, at μ 0.2 and 0.5. When the rung moves up, the best design's held-out Z on the new box is computed once and stored. Without a parent, the first scored design becomes the best. The critic never sees the held-out results.
+6. **Critic.** It writes a redesign brief for the current target, and the loop returns to step 1. It is not called when Z is 1 on the last rung, or on the last iteration.
 
 Every attempt goes in the design log. Every iteration writes `RSI_RESULTS/<run>/iter-NN/` and updates `progress.png`.
 
 **Stop** when the first of these holds, checked before each iteration:
 
-- Z reaches 1 on the target box;
+- Z reaches 1 on the last rung (max), or on `--target` with `--no-ladder`. Z = 1 on the worst box may be out of reach, so a run usually ends on one of the other rules;
 - the critic says stop;
 - `max_iterations` have run;
 - `patience` iterations in a row have kept no design;
 - the API budget could not cover one more design and critic call;
 - the wall-clock budget (30 min) is spent.
 
-Then the end tune runs on the best design, with U fixed if intake fixed it.
+Then the end tune runs on the best design, on the current target (the first box still below 1), with U fixed if intake fixed it.
 
 **Files:**
 
@@ -50,7 +59,7 @@ Then the end tune runs on the best design, with U fixed if intake fixed it.
 
 **Config** (`loop/config.py`, `LoopConfig`) holds the runtime model (Claude Sonnet 5.5), the target, the iteration, patience, API and wall-clock budgets, the per-call caps, the seed and the worker count. The model is set there and nowhere else.
 
-**Resume.** `--resume <run>` reads `state.json` and carries on from the next iteration. An iteration interrupted part-way is run again in a new folder (`iter-NN-2`), so nothing is overwritten.
+**Resume.** `--resume <run>` reads `state.json` and carries on from the next iteration. An iteration interrupted part-way is run again in a new folder (`iter-NN-2`), so nothing is overwritten. A run started before the ladder and the baseline existed resumes without them.
 
 **Errors.** An SDK or API error in a design call is logged (`error`) and that attempt is retried. One in the critic leaves the next design without a brief. The spend cap (`BudgetExceeded`) ends the run cleanly, and the end tune still runs.
 
