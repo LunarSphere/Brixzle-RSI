@@ -129,7 +129,11 @@ def test_the_prompts_show_only_a_b_as_an_example_family(tmp_path):
     shown to it (issue #73)."""
     ws = DA.Workspace.make(tmp_path / "a1", "rsi_x_i01_a9")
     task = DA.task_prompt(ws, _intake(tmp_path))
-    for text in (DA.system_prompt(), task):
+    for whole in (DA.system_prompt(), task):
+        # The design rules (in the prompt since #88) use "wedge" for the mechanics (Whitney's wedging),
+        # not for the dummy family, so the name check reads the text outside them; no family path anywhere.
+        assert not re.search(r"families/(wedge|pyramid)", whole)
+        text = whole.split("Design rules (rules/design_rules.md", 1)[0]
         assert not re.search(r"\b(wedge|pyramid)\b", text, re.I), re.search(r".{60}\b(wedge|pyramid)\b.{60}", text, re.I)
     assert "families/ab/family.py" in task
 

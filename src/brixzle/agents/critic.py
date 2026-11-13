@@ -42,11 +42,18 @@ BRIEF_SCHEMA = {
                            "rules": {"type": "array", "items": {"type": "string"}},
                            "change": {"type": "string"}, "scope": {"type": "string", "enum": list(SCOPES)},
                            "expected_effect": {"type": "string"}}}},
+        # Lessons a later design could use (issue #88); the loop writes them once the next design is scored.
+        "lessons": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["lesson", "rules", "cluster"],
+            "properties": {"lesson": {"type": "string"}, "rules": {"type": "array", "items": {"type": "string"}},
+                           "cluster": {"type": "integer"}}}},
     },
 }
+LESSON_MAX_CHARS = 300
 
 
-def system_prompt():
+def system_prompt(lessons_text=""):
+    lessons = f"\n\n{lessons_text}" if lessons_text else ""
     return f"""You are the critic of Brixzle-RSI, a loop that designs brick families a drone can place imprecisely.
 You read one design's simulation results and write a redesign brief for the design agent.
 
@@ -62,9 +69,11 @@ How to work:
 - Do not propose an idea the design log shows already failed, unless you say what is different now.
 - Do not copy a brick, joint or structure from any paper or system.
 - Decide "stop" only if Z is already 1 on the target, or you see no change that could raise it; say why.
+- Optionally add at most two lessons: a general statement (not a parameter value) that a later design could
+  use, the rule ids it rests on, and the index of the cluster it came from. Only for something worth reusing.
 
 Design rules:
-{RL.rules_text()}"""
+{RL.rules_text()}{lessons}"""
 
 
 def _z_lines(report):
@@ -125,12 +134,27 @@ def validate_brief(brief):
         unknown = [r for r in rules if r not in known]
         if unknown:
             raise ValueError(f"cluster {k} cites rules that do not exist: {unknown}")
+    for k, item in enumerate(brief.get("lessons") or []):
+        text = str(item.get("lesson", "")).strip()
+        if not text:
+            raise ValueError(f"lesson {k} has no lesson text")
+        if len(text) > LESSON_MAX_CHARS:
+            raise ValueError(f"lesson {k} runs past {LESSON_MAX_CHARS} characters")
+        unknown = [r for r in item.get("rules") or [] if r not in known]
+        if not item.get("rules") or unknown:
+            raise ValueError(f"lesson {k} cites rules that do not exist: {unknown}" if unknown
+                             else f"lesson {k} cites no design rule")
+        c = item.get("cluster")
+        if isinstance(c, bool) or not isinstance(c, int) or not 0 <= c < len(clusters):
+            raise ValueError(f"lesson {k}: cluster must index one of the brief's {len(clusters)} clusters")
     return brief
 
 
-def critique(runner, report, sim_map, jam, family_source, log_text, target, budget_usd=CRITIC_BUDGET_USD):
-    """Run the critic once; returns (brief, AgentResult). Raises ValueError on a malformed brief."""
-    call = AgentCall(name="critic", system=system_prompt(),
+def critique(runner, report, sim_map, jam, family_source, log_text, target, budget_usd=CRITIC_BUDGET_USD,
+             lessons_text=""):
+    """Run the critic once; returns (brief, AgentResult). Raises ValueError on a malformed brief.
+    ``lessons_text`` (loop/lessons.py, #88) goes into its system prompt."""
+    call = AgentCall(name="critic", system=system_prompt(lessons_text),
                      prompt=task_prompt(report, sim_map, jam, family_source, log_text, target),
                      max_budget_usd=budget_usd, output_schema=BRIEF_SCHEMA, max_turns=MAX_TURNS)
     result = runner.run(call)

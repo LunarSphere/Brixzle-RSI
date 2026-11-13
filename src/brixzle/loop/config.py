@@ -14,6 +14,8 @@ class LoopConfig:
     target: str = "mean"             # the box the run starts on: the first rung of the ladder (#84)
     ladder: bool = True              # climb mean -> p95 -> max as Z reaches 1 (#84); False: stay on target
     y_error: bool = True             # score the X-Y error disc (#86); False: X offsets only, as before
+    lessons: bool = True             # read and write the lessons file (#88); False for repeatable benchmarks
+    lessons_file: str = "lessons/lessons.jsonl"  # tracked in git, at the repo root (#88)
     parent: str | None = "ab"        # a registry family scored as iteration 0, the baseline (#85); None: from scratch
     baseline_only: bool = False      # score the parent (iteration 0) and stop: no Claude call (#85)
     max_iterations: int = 6

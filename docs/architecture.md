@@ -103,6 +103,18 @@ Every Claude call goes through `agents/runner.py`:
 
 `loop/design_log.py` (issue #20) keeps one JSON line per design attempt in `runs/loop/<run>/design_log.jsonl`. That covers a package that broke the contract, a design the quick check turned back (with its counts by outcome), and a design that was scored and kept or rejected (with Z per target and the reason). Map overrides are logged with their reasons. Each entry names the run directories behind its numbers. Both agents read it as short text, so neither repeats an idea that failed. That text never holds the held-out results.
 
+## Lessons
+
+Issue #88. What one iteration learns reaches the next run through `lessons/lessons.jsonl` at the repo root (`loop/lessons.py`), one JSON object per line. It is tracked in git, so lessons are shared by committing them.
+
+- **Proposed by the critic:** a brief may carry up to two lessons, each a general statement (not a parameter value, at most 300 characters), the rule ids it rests on and the index of its cluster. `validate_brief` refuses one that cites an unknown rule or runs too long.
+- **Tested by the next design:** a lesson is written only once the next iteration has a scored design, with that outcome as evidence: Z on the target before and after, kept or rejected, and both map directories. With no scored design, nothing is written.
+- **Repeated lessons:** the same lesson again (lower case, whitespace collapsed) adds evidence to its line. Its status is `supported` if more of its evidence was kept than rejected, `not_supported` if fewer, and `mixed` if equal. The file is rewritten through a temporary file and a rename.
+- **Read by both agents:** the lessons with the most evidence first, then the newest, up to 30, go into the design agent's and the critic's system prompts as unreviewed observations, simulated with uncalibrated contact, to weigh against the design rules. The design agent's prompt also holds the design rules themselves.
+- **Promotion:** a lesson becomes a design rule only by hand, in a reviewed PR (`docs/` and `rules/` change only that way). Benchmark runs (#22) use `--no-lessons`, which neither reads nor writes the file, so they can be repeated.
+
+Every lesson is labelled "simulated, uncalibrated contact; unreviewed".
+
 ## Agents (Claude Agent SDK)
 
 **Design agent** (`agents/design.py`, issue #18).
@@ -228,6 +240,7 @@ The check is not the score. A design that seats every drop in the box always pas
 | `src/brixzle/data/error-*.json` | copied from aerial-assembly | evaluation engine |
 | `src/brixzle/families/<name>/` | design agent | evaluation engine |
 | `runs/loop/<run>/iter-N/` | orchestrator and engine | critic agent (with the design log) |
+| `lessons/lessons.jsonl` (tracked) | the loop, from the critic's briefs and the next design's outcome (#88) | design agent and critic agent |
 
 ## Open questions
 

@@ -157,7 +157,8 @@ def _cfg(tmp_path, **kw):
     """The existing cases run from scratch (``--parent none``) on a fixed target (``ladder=False``);
     the baseline tests pass parent='ab' and the ladder tests ladder=True."""
     return LoopConfig(runs=str(tmp_path / "runs"), results=str(tmp_path / "RSI_RESULTS"),
-                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, "ladder": False, **kw})
+                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, "ladder": False,
+                         "lessons_file": str(tmp_path / "lessons.jsonl"), **kw})
 
 
 def _loop(tmp_path, intake, script, engine, **kw):
@@ -531,3 +532,58 @@ def test_no_y_error_judges_designs_on_z_without_y_offsets(tmp_path, intake):
     assert run(True, "y") == ["kept", "rejected"]
     assert run(False, "x") == ["kept", "kept"]
     assert LoopConfig().y_error and not OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--no-y-error"])).y_error
+
+
+
+# --- lessons carried between iterations and runs (issue #88) ---
+
+
+LESSON = {"lesson": "A wider pitch lets the capture window cover the box.", "rules": ["DR2"], "cluster": 0}
+
+
+def critic_with_lesson(call):
+    r = critic_step()
+    return RN.AgentResult(structured={**r.structured, "lessons": [LESSON]}, cost_usd=r.cost_usd, turns=1)
+
+
+def test_a_lesson_is_written_once_the_next_design_is_scored(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7], held=[0.2, 0.2])
+    loop, _ = _loop(tmp_path, intake, [design_step("w1"), critic_with_lesson, design_step("w2")], engine)
+    state = loop.run()
+    (line,) = [json.loads(x) for x in (tmp_path / "lessons.jsonl").read_text().splitlines()]
+    assert line["status"] == "supported" and line["lesson"] == LESSON["lesson"]
+    (ev,) = line["evidence"]
+    assert ev["run"] == "t" and ev["iteration"] == 2 and ev["decision"] == "kept"
+    assert ev["map_before"] == state["iterations"][0]["runs"]["map"] and ev["map_after"] == state["iterations"][1]["runs"]["map"]
+    assert ev["z_before"] == pytest.approx(0.5) and ev["z_after"] == pytest.approx(0.7)
+
+
+def test_both_agents_read_the_lessons_file(tmp_path, intake):
+    from brixzle.loop import lessons as LS
+
+    path = tmp_path / "lessons.jsonl"
+    LS.record(path, "earlier", {"iteration": 1, "decision": "kept", "family": "f", "target": "mean",
+                                "z": {"mean": {"Z": 0.5}}, "runs": {"map": "m1"}, "brief": {"lessons": [LESSON]}},
+              {"iteration": 2, "decision": "kept", "family": "f", "target": "mean", "z": {"mean": {"Z": 0.6}},
+               "runs": {"map": "m2"}})
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5])
+    loop, runner = _loop(tmp_path, intake, [design_step(), critic_step()], engine, max_iterations=2)
+    loop.iterate(1)
+    assert all(LESSON["lesson"] in c.system for c in runner.calls) and [c.name for c in runner.calls] == ["design", "critic"]
+
+
+def test_no_lessons_neither_reads_nor_writes_them(tmp_path, intake):
+    from brixzle.loop import lessons as LS
+
+    path = tmp_path / "lessons.jsonl"
+    LS.record(path, "earlier", {"iteration": 1, "decision": "kept", "family": "f", "target": "mean",
+                                "z": {"mean": {"Z": 0.5}}, "runs": {"map": "m1"}, "brief": {"lessons": [LESSON]}},
+              {"iteration": 2, "decision": "kept", "family": "f", "target": "mean", "z": {"mean": {"Z": 0.6}},
+               "runs": {"map": "m2"}})
+    before = path.read_text()
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7], held=[0.2, 0.2])
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_with_lesson, design_step("w2")], engine,
+                         lessons=False)
+    loop.run()
+    assert path.read_text() == before and not any(LESSON["lesson"] in c.system for c in runner.calls)
+    assert not OR.config_from_args(OR.parser().parse_args(["--intake", "x", "--no-lessons"])).lessons
