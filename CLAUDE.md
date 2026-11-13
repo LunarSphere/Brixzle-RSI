@@ -34,7 +34,7 @@ Rapid prototyping beats exhaustive sim verification, because the sim-to-real gap
 
 ## Original designs
 
-Don't copy a brick, joint, gripper or structure design from an existing assembly paper or system (for example the construction papers listed in `src/brixzle/rules/citations.md`). Use papers for mechanics and principles, cite them, and design originally.
+Don't copy a brick, joint, gripper or structure design from an existing assembly paper or system (for example the construction papers listed in `src/brixzle/rules/citations.md`). Use papers for mechanics and principles, cite them, and design originally. The maintainer's own designs in aerial-assembly (A/B, biasbrick, dfbrick) may be reused and changed (maintainer, 2026-11-12).
 
 ## Hardware safety
 

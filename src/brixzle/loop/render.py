@@ -205,11 +205,12 @@ def module_png(family, p, out, title=None):
     return Path(out)
 
 
-def progress_png(history, out, target, title=None):
+def progress_png(history, out, target, title=None, baseline=None):
     """Z per iteration on the target box (thick) and the other boxes (thin), kept designs filled,
     rejected ones hollow, iterations with no scored design marked on the axis.
 
-    ``history`` is [{iteration, decision, z: {statistic: counts} | None}]."""
+    ``history`` is [{iteration, decision, z: {statistic: counts} | None}]; ``baseline`` is the
+    parent's {family, z} (iteration 0, #85), drawn as one horizontal line per box."""
     fig, ax = plt.subplots(figsize=(7.0, 3.8), facecolor=BG)
     ax.set_facecolor(BG)
     stats = []
@@ -218,6 +219,9 @@ def progress_png(history, out, target, title=None):
             if s not in stats:
                 stats.append(s)
     styles = {"mean": "#1f3b63", "p95": "#5b7fb5", "max": "#9fb4d6"}
+    for s, c in ((baseline or {}).get("z") or {}).items():
+        ax.axhline(c["Z"], color=styles.get(s, "#555"), lw=1.0, ls=":",
+                   label=f"{baseline['family']} baseline, Z {s} {c['Z']:+.3f}")
     for s in stats:
         pts = [(h["iteration"], h["z"][s]["Z"]) for h in history if h.get("z")]
         if pts:
@@ -279,6 +283,12 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
               + f". **Decision: {rec['decision']}.** {rec.get('reason', '')}", "",
               f"Sim results are {LABEL}; mechanisms in the jam analysis are predicted, quasi-static 2D. "
               "Neither is a hardware rate.", ""]
+    if rec.get("quick_check") and not rec.get("attempts"):
+        qc = rec["quick_check"]
+        lines += [f"Quick check: {qc['seated']} of {qc['dropped']} seated ("
+                  + ("passed" if qc["passed"] else "failed; the baseline is scored either way") + ").", ""]
+    if rec.get("mass_g"):
+        lines += ["Mass per part: " + ", ".join(f"{k} {v:.2f} g" for k, v in rec["mass_g"].items()) + ".", ""]
     lines += ["## Z per target box", ""]
     if rec.get("z"):
         lines += [_z_table(rec["z"], target), "",
@@ -319,6 +329,8 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     if rec.get("stl"):
         lines += ["", "## STL", "", "The printed solid of each part, in mm:", ""] + [f"- `{n}`" for n in rec["stl"]]
     lines += ["", "## Runs behind these numbers", ""]
+    if rec.get("runs", {}).get("quick_check") and not rec.get("attempts"):
+        lines.append(f"- quick check (seed in `check.json`): `{rec['runs']['quick_check']}`")
     for a in rec.get("attempts", []):
         lines.append(f"- design package, attempt {a['attempt']}: `{a['root']}/{a['module']}`")
         if a.get("quick_check"):
@@ -333,6 +345,35 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
               f"in all (`{ledger_path}`)",
               "- wall-clock (s): " + ", ".join(f"{k} {v:.1f}" for k, v in rec.get("seconds", {}).items())]
     return "\n".join(lines) + "\n"
+
+
+def _zc(c):
+    return f"{c['Z']:+.3f} (S {c['S']}, J {c['J']}, N {c['N']})"
+
+
+def baseline_table(state):
+    """'Best against the baseline' (#85): Z on each box with its counts and the mass of each part,
+    for the parent (iteration 0) and the best design. Empty without a baseline."""
+    base = next((i for i in state["iterations"] if i["iteration"] == 0 and i.get("z")), None)
+    best = state.get("best")
+    if base is None or best is None:
+        return []
+    best_rec = next((i for i in state["iterations"] if i["iteration"] == best["iteration"]), best)
+    cols = [(f"baseline: {base['family']} (iteration 0)", base)]
+    if best["iteration"] != 0:
+        cols.append((f"best: {best['family']} (iteration {best['iteration']})", best_rec))
+    out = ["## Best against the baseline", "",
+           f"Simulated, uncalibrated contact. Z = (S − J) / N over each box's drops (#61).", "",
+           "| | " + " | ".join(c[0] for c in cols) + " |", "|---|" + "---|" * len(cols)]
+    for s in base["z"]:
+        out.append(f"| Z {s} | " + " | ".join(_zc(r["z"][s]) if s in (r.get("z") or {}) else "–" for _, r in cols)
+                   + " |")
+    out.append("| mass per part (g) | " + " | ".join(
+        ", ".join(f"{k} {v:.2f}" for k, v in (r.get("mass_g") or {}).items()) or "–" for _, r in cols) + " |")
+    out.append("| map | " + " | ".join(f"`{r.get('runs', {}).get('map') or r.get('map')}`" for _, r in cols) + " |")
+    if best["iteration"] == 0:
+        out += ["", "No design beat the baseline, so the baseline is still the best."]
+    return out + [""]
 
 
 def run_summary(state, target, ledger_path, spent_usd, cap_usd):
@@ -350,7 +391,9 @@ def run_summary(state, target, ledger_path, spent_usd, cap_usd):
     best = state.get("best")
     lines += ["", f"**Stopped:** {state.get('stop')}", "",
               f"**Best:** {best['family']} from iteration {best['iteration']}, Z {target} {best['z_target']:+.3f} "
-              f"(`{best['root']}/{best['module']}`; map `{best['map']}`)" if best else "**Best:** none", ""]
+              f"(`{best.get('family_py') or best['root'] + '/' + best['module']}`; map `{best['map']}`)" if best
+              else "**Best:** none", ""]
+    lines += baseline_table(state)
     tune = state.get("tune")
     if tune:
         lines += ["**End tune:** " + (f"error: {tune['error']}" if "error" in tune else
