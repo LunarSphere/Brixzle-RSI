@@ -29,8 +29,15 @@ CHECK_TIMEOUT_S = 240
 def load_family(root, module):
     """The FAMILY of ``<root>/<module>/family.py``, imported as package ``module``."""
     root = str(Path(root).resolve())
-    if root not in sys.path:
-        sys.path.insert(0, root)
+    cached = sys.modules.get(module)
+    if cached is not None and not str(Path(getattr(cached, "__file__", "") or "").resolve()).startswith(root + "/"):
+        # The same package name was imported from another root (another run or test): drop it and
+        # its submodules, so this root's package is the one imported.
+        for name in [n for n in sys.modules if n == module or n.startswith(module + ".")]:
+            del sys.modules[name]
+    if root in sys.path:
+        sys.path.remove(root)
+    sys.path.insert(0, root)
     importlib.invalidate_caches()
     mod = importlib.import_module(f"{module}.family")
     from brixzle.families.interface import Family

@@ -378,3 +378,14 @@ Simulated, uncalibrated contact; `runs/screen-compare-20261113.json` (quick chec
 - **The screen does not rank close designs as the map does.** Its best is iteration 3, the map's is iteration 4 (Spearman 0.64 over the six). The five A/B variants lie within 0.1 of each other in Z; the screen's standard error at N = 60 is about 0.08, and the map's own noise band at N = 356 is about 0.03 (#110). It does put the yfunnel fixture far below them.
 - **So it only drops clear losers** (issue #108's "do not screen on it yet"): more than two standard errors of the difference below the best. Of the rest, up to `screen_max_maps` (3) are mapped by rank. With these six it would have mapped iterations 3, 4 and A/B and dropped yfunnel.
 
+## Explore rounds (issue #106)
+
+The maintainer chose three concepts per explore round (2026-11-13).
+
+- **Why.** In `ab4iter2-20261114-mean` every design was a 14–18 line subclass of A/B's parameters. `loop/novelty.py` measures them against A/B's section: they differ by 0 %, 1.4 %, 0 % and 2.7 % of its area (iterations 1–4). An explore design must differ by at least 20 % (`near_copy_share`), or vary along Y.
+- **Principles, not designs.** `rules/capture_principles.md` holds six principles (CP1–CP6), each citing the design rules. The calls take untried ones first. CP5 and the note in CP1 come from #105's findings: Y capture is at most about D / 2 on the course below, and a Y guide must keep the X interlock across it.
+- **Parallel calls.** The design calls of a round run side by side in threads. The spend ledger now holds each call's budget while it is in flight, so calls side by side cannot pass the cap together. The round makes as many concepts as the budget left can pay for, with a critic call left over.
+- **Held-out only for the winner.** Each concept that the screen maps gets the gate, the map and the jam analysis; only the round's best by Z on the target gets the held-out check, the acceptance rule, the ring, the renders and the critic. That saves about 35 s per other concept.
+- **Stall.** `stall_iterations` (2) iterations in a row with |ΔZ| no more than the band of the best's Z (#110), with no explore round among them, make the next iteration an explore round. So does a brief whose cluster has `scope: new_family`. An iteration that scored nothing counts as a stall.
+- **A package name reused under another root is imported from that root** (`check_family.load_family`). The explore tests reuse module names across tests and got the first test's module back.
+

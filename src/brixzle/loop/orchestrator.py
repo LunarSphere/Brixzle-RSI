@@ -5,6 +5,13 @@ stages as a design, with no Claude call; it becomes the best, so every design mu
 critic's first brief comes from its results. ``--parent none`` starts from scratch;
 ``--baseline-only`` scores the parent and stops.
 
+**Explore rounds** (#106): the first design iteration, and the one after a brief that asks for a
+new family or after ``stall_iterations`` iterations whose Z moved by no more than the noise band
+(#110), make ``concepts`` designs side by side, each from its own capture principle
+(rules/capture_principles.md), with A/B as the score to beat, not the starting file; a near copy
+of A/B's section is refused. The cheap screen (#108) picks which to score in full, and the best of
+those by Z on the target goes through the decision below as the iteration's design.
+
 Each outer iteration:
 
 1. **Design:** the design agent (#18) writes a family package, from the concept, the critic's
@@ -43,6 +50,7 @@ next one. Placement only (#46). Sim results are simulated, uncalibrated contact.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
@@ -69,6 +77,7 @@ from brixzle.loop import lessons as LS
 from brixzle.loop import render as RD
 from brixzle.loop import videos as VD
 from brixzle.loop.config import LoopConfig
+from brixzle.loop import novelty as NV
 from brixzle.loop.design_log import DesignLog
 
 STATE = "state.json"
@@ -136,8 +145,13 @@ class SimEngine:
 
     def screen(self, jobs, target):
         """{id: screen} for candidates [(id, root, module)] (#108): the quick check and a 20-drop X-Y
-        check on ``target``'s box, each candidate in its own process, side by side."""
-        return SC.screen_many(jobs, target, seed=self.cfg.seed, workers=max(1, min(3, self.cfg.workers or 3)))
+        check on ``target``'s box, each candidate in its own process, side by side. Each quick check
+        is written to its own run directory ('check_run')."""
+        out = SC.screen_many(jobs, target, seed=self.cfg.seed, workers=max(1, min(3, self.cfg.workers or 3)))
+        for r in out.values():
+            if r.get("check_full"):
+                r["check_run"] = str(QC.write_check(r["check_full"], self.cfg.runs))
+        return out
 
     def probe_poses(self, map_dir, target, seed):
         """The drop probe's poses (#107) on ``target``'s box: the failures, some seats and the aim of
@@ -253,6 +267,33 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
         return f"API budget spent (${remaining_usd:.2f} left of ${cfg.budget_usd:.2f})"
     if elapsed_s > cfg.max_minutes * 60:
         return f"wall-clock budget spent ({elapsed_s / 60:.1f} of {cfg.max_minutes:g} min)"
+    return None
+
+
+def _stalled(it):
+    """An iteration that moved Z on its rung by no more than the noise band (#110), or scored nothing."""
+    ch = it.get("z_change")
+    if not it.get("z"):
+        return True
+    return ch is not None and abs(ch["delta"]) <= ch["band"] + ZS.EPS
+
+
+def explore_reason(state, cfg: LoopConfig):
+    """Why the next iteration is an explore round of ``cfg.concepts`` designs (#106), or None: the
+    first design iteration; a brief whose cluster asks for a new family; or ``stall_iterations``
+    iterations in a row (no explore round among them) that moved Z by no more than the noise band."""
+    if cfg.concepts < 2:
+        return None
+    designs = [it for it in state["iterations"] if it["iteration"] >= 1]
+    if not designs:
+        return "the first design iteration explores several concepts"
+    brief = state["iterations"][-1].get("brief") or {}
+    if any(c.get("scope") == "new_family" for c in brief.get("clusters") or []):
+        return "the critic's brief asks for a new family"
+    recent = designs[-cfg.stall_iterations:]
+    if (len(recent) == cfg.stall_iterations and not any(it.get("mode") == "explore" for it in recent)
+            and all(_stalled(it) for it in recent)):
+        return f"Z moved by no more than the noise band for {cfg.stall_iterations} iterations"
     return None
 
 
@@ -440,6 +481,9 @@ class Loop:
     def iterate(self, i):
         if i == 0:
             return self.baseline()
+        why = explore_reason(self.state, self.cfg)
+        if why:
+            return self.explore(i, why)
         cfg, t_iter = self.cfg, time.time()
         iter_dir = _free(self.run_dir / f"iter-{i:02d}")
         res_dir = self.results / f"iter-{i:02d}"
@@ -543,23 +587,33 @@ class Loop:
             return rec
         return self._score(rec, fam, check, res_dir, brief, spent0, t_iter, outcome)
 
-    def _score(self, rec, fam, check, res_dir, brief, spent0, t_iter, outcome=None):
-        """Map, Z, jam analysis, held-out Z, the decision, renders and the critic, for a design
-        that passed the quick check or for the baseline (iteration 0)."""
-        cfg, i, best = self.cfg, rec["iteration"], self.state["best"]
-        baseline = rec["decision"] == BASELINE
-        target = rec["target"] = current_target(self.state, cfg)  # the rung this design is judged on (#84)
+    def _measure(self, rec, fam, check, allow_failed_check=False):
+        """The full map, Z per target and the jam analysis of ``fam``, into ``rec``; returns
+        (report, map directory, jam analysis)."""
         p = fam.defaults
         t = time.time()
-        report, map_dir = self.engine.score(fam, p, check, allow_failed_check=baseline and not check["passed"])
+        report, map_dir = self.engine.score(fam, p, check, allow_failed_check=allow_failed_check)
         rec["seconds"]["map"] = time.time() - t
-        rec["z"], rec["runs"]["map"] = objective_z(report, cfg), str(map_dir)
+        rec["z"], rec["runs"]["map"] = objective_z(report, self.cfg), str(map_dir)
         rec["z_with_y"], rec["z_x_only"] = report["z"], report.get("z_x_only")
         rec["y_capture_mm"] = report.get("y_capture_mm")
         t = time.time()
         jam = self.engine.jam(fam, p, map_dir)
         rec["seconds"]["jam"] = time.time() - t
         rec["runs"]["jam"] = str(Path(map_dir) / JA.FILE)
+        return report, map_dir, jam
+
+    def _score(self, rec, fam, check, res_dir, brief, spent0, t_iter, outcome=None, measured=None):
+        """Map, Z, jam analysis, held-out Z, the decision, renders and the critic, for a design
+        that passed the quick check or for the baseline (iteration 0). ``measured`` (an explore
+        round's best concept, #106): (report, map directory, jam analysis) already in ``rec``."""
+        cfg, i, best = self.cfg, rec["iteration"], self.state["best"]
+        baseline = rec["decision"] == BASELINE
+        target = rec["target"] = current_target(self.state, cfg)  # the rung this design is judged on (#84)
+        p = fam.defaults
+        if measured is None:
+            measured = self._measure(rec, fam, check, allow_failed_check=baseline and not check["passed"])
+        report, map_dir, jam = measured
         held = {}
         if cfg.held_out:
             t = time.time()
@@ -571,6 +625,10 @@ class Loop:
         except Exception as e:  # noqa: BLE001 - a mass for the report must not stop the loop
             rec["mass_error"] = f"{type(e).__name__}: {e}"[:300]
         z_t = rec["z"][target]["Z"]
+        if best is not None and (best.get("z") or {}).get(target, {}).get("N"):
+            # How far Z moved against the best, and the noise band of the best's Z (#110): a stall (#106).
+            rec["z_change"] = {"best_before": z_on(best, target), "delta": z_t - z_on(best, target),
+                               "band": ZS.z_band(best["z"][target])}
         if baseline:
             kept, why = True, f"the parent family {rec['family']!r}, scored as the baseline the designs must beat"
             self._ring(rec, fam, p)  # recorded, not judged: it is the reference
@@ -605,8 +663,11 @@ class Loop:
                                   "gate": (rec.get("runs") or {}).get("gate")}
         sim_map = self.engine.read_map(map_dir)
         last_att = rec["attempts"][-1] if rec["attempts"] else {}
+        if rec.get("mode") == "explore":
+            last_att = next((c for c in rec.get("concepts", []) if c.get("module") == rec["module"]), last_att)
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
                          "module": rec["module"], "decision": rec["decision"], "reason": why, "note": rec["note"],
+                         **({"concept": last_att.get("concept")} if last_att.get("concept") else {}),
                          "probes": len(last_att.get("probes") or []), "probe_s": round(last_att.get("probe_s", 0.0), 2),
                          "z": rec["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
                          "overhang_n": rec.get("overhang_n"),
@@ -646,6 +707,152 @@ class Loop:
         rec["seconds"]["total"] = time.time() - t_iter
         self.write_iteration_summary(rec, res_dir)
         return rec
+
+    # --- explore rounds (#106) ---
+
+    def _concept_count(self):
+        """Concepts this round can pay for: up to ``concepts``, each holding a design call's budget,
+        with a critic call left over."""
+        cfg = self.cfg
+        n = int((self.ledger.remaining() - cfg.critic_budget_usd) // cfg.design_budget_usd)
+        return max(1, min(cfg.concepts, n))
+
+    def _principles(self, n):
+        """``n`` capture principles not tried yet in this run (round-robin once all are tried)."""
+        pool = DA.principles()
+        tried = self.state.get("principles_tried", [])
+        fresh = [p for p in pool if p["id"] not in tried]
+        chosen = (fresh + [p for p in pool if p not in fresh])[:n]
+        self.state["principles_tried"] = tried + [p["id"] for p in chosen if p["id"] not in tried]
+        return chosen, tried
+
+    def explore(self, i, why):
+        """An explore round (#106): ``concepts`` design calls side by side, each from its own capture
+        principle and none a near copy of A/B; the cheap screen (#108) picks which to score in full;
+        the best of those by Z on the target goes through the decision as one iteration's design."""
+        cfg, t_iter = self.cfg, time.time()
+        iter_dir = _free(self.run_dir / f"iter-{i:02d}")
+        iter_dir.mkdir(parents=True)
+        res_dir = self.results / f"iter-{i:02d}"
+        res_dir.mkdir(parents=True, exist_ok=True)
+        brief = self.state["iterations"][-1].get("brief") if self.state["iterations"] else None
+        best = self.state["best"]
+        target = current_target(self.state, cfg)
+        spent0 = self.ledger.spent()
+        rec = {"iteration": i, "mode": "explore", "explore_reason": why, "dir": str(iter_dir), "results": str(res_dir),
+               "brief_in": brief, "attempts": [], "concepts": [], "decision": "no_design", "z": None, "runs": {},
+               "seconds": {}}
+        chosen, tried = self._principles(self._concept_count())
+        beat = (f"{best['family']}, Z {target} {z_on(best, target):+.3f} (simulated, uncalibrated contact)"
+                if best else "A/B")
+        prober = self._prober(iter_dir, i, None)  # no parent map: a spread over the error disc (#107)
+        ref = self._reference()
+
+        def one(k, principle):
+            module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_c{k}"
+            t = time.time()
+            c = {"id": f"c{k}", "attempt": k, "concept": principle["id"], "principle": principle["title"],
+                 "module": module, "root": str(iter_dir / f"concept-{k}" / "pkg")}
+            try:
+                out = DA.design(self.runner, self.intake, iter_dir / f"concept-{k}", module, brief=brief, parent=None,
+                                log_text=self.log.text(), budget_usd=cfg.design_budget_usd,
+                                max_turns=cfg.design_max_turns, lessons_text=self.lessons_text(), prober=prober,
+                                probe_calls=cfg.probe_calls,
+                                explore={"principle": principle, "tried": tried, "beat": beat})
+            except BudgetExceeded:
+                raise
+            except Exception as e:  # noqa: BLE001 - an SDK or API error: this concept is lost, the round goes on
+                c.update(decision="error", reason=f"{type(e).__name__}: {e}"[:500], design_s=time.time() - t)
+                return c
+            probe_s = sum(float(q.get("seconds") or 0.0) for q in out.probes)
+            c.update(root=str(out.workspace.root), design_cost_usd=out.result.cost_usd, design_s=time.time() - t,
+                     family=out.check.get("family") or module, note=out.note, probes=list(out.probes), probe_s=probe_s)
+            if not out.ok:
+                problems = [*(out.check.get("violations") or []),
+                            *[f"{part}: {', '.join(info['broken'])}" for part, info in out.check.get("parts", {}).items()
+                              if info.get("broken")], *([out.check["error"]] if out.check.get("error") else [])]
+                c.update(decision="failed_contract", reason="; ".join(map(str, problems))[:500] or "the check failed")
+                return c
+            if ref is not None:
+                fam = CF.load_family(out.workspace.root, module)
+                nv = NV.near_copy(fam, fam.defaults, ref, ref.defaults, share=cfg.near_copy_share)
+                c["novelty"] = {"share": nv["share"], "reason": nv["reason"]}
+                if nv["near_copy"]:
+                    c.update(decision="near_copy", reason=nv["reason"])
+            return c
+
+        t = time.time()
+        with ThreadPoolExecutor(len(chosen)) as ex:
+            cands = list(ex.map(lambda kp: one(*kp), enumerate(chosen, start=1)))
+        rec["seconds"]["design"] = time.time() - t
+        probe_s = sum(c.get("probe_s", 0.0) for c in cands)
+        if probe_s:
+            rec["seconds"]["probe"] = probe_s
+        rec["concepts"] = cands
+        rec["attempts"] = [{k: c.get(k) for k in ("attempt", "module", "root", "design_cost_usd", "design_s", "family",
+                                                     "note", "probes", "probe_s", "concept")} for c in cands]
+        for c in cands:
+            if c.get("decision"):
+                self.log.append({"iteration": i, "attempt": c["attempt"], "family": c.get("family") or c["module"],
+                                 "module": c["module"], "concept": c["concept"], "decision": c["decision"],
+                                 "reason": c["reason"], "note": c.get("note"), "probes": len(c.get("probes") or []),
+                                 "probe_s": round(c.get("probe_s", 0.0), 2)})
+        live = [c for c in cands if not c.get("decision")]
+        mapped = self.screen_round(rec, live, target) if live else []
+        scored = []
+        for c in mapped:
+            fam = CF.load_family(c["root"], c["module"])
+            crec = {"iteration": i, "seconds": {}, "runs": {"quick_check": c.get("quick_check", {}).get("run")}}
+            t = time.time()
+            gate, gate_dir = self.engine.gate(fam, fam.defaults)
+            rec["seconds"]["gate"] = rec["seconds"].get("gate", 0.0) + (time.time() - t)
+            c["gate"] = gate_record(gate, gate_dir)
+            if not gate["passed"]:
+                c.update(decision="failed_structure_gate", reason=SG.failures_text(gate)[:500])
+                self.log.append({"iteration": i, "attempt": c["attempt"], "family": c["family"], "module": c["module"],
+                                 "concept": c["concept"], "decision": "failed_structure_gate", "reason": c["reason"],
+                                 "note": c.get("note"), "overhang_n": gate["overhang_n"], "screen": c.get("screen")})
+                continue
+            c["overhang_n"] = gate["overhang_n"]
+            check = c.pop("check_full", None) or c.get("quick_check")
+            measured = self._measure(crec, fam, check)
+            for k in ("map", "jam"):
+                rec["seconds"][k] = rec["seconds"].get(k, 0.0) + crec["seconds"][k]
+            c.update(z=crec["z"], runs={**crec["runs"], "gate": str(gate_dir)})
+            scored.append((c, fam, crec, measured, gate, gate_dir, check))
+        if not scored:
+            rec["reason"] = ("no concept of the round passed the contract, the novelty check, the screen and the "
+                             "structure gate")
+            rec["spent_usd"] = self.ledger.spent() - spent0
+            rec["seconds"]["total"] = time.time() - t_iter
+            self.write_iteration_summary(rec, res_dir)
+            return rec
+        top = max(scored, key=lambda s_: (s_[0]["z"][target]["Z"], s_[0].get("screen", {}).get("Z", 0.0)))
+        for c, *_ in scored:
+            if c is not top[0]:
+                c.update(decision="rejected", reason=(f"another concept of this round scored higher on {target} "
+                                                      f"({c['z'][target]['Z']:+.3f} < {top[0]['z'][target]['Z']:+.3f})"))
+                self.log.append({"iteration": i, "attempt": c["attempt"], "family": c["family"], "module": c["module"],
+                                 "concept": c["concept"], "decision": "rejected", "reason": c["reason"],
+                                 "note": c.get("note"), "z": c["z"], "screen": c.get("screen"), "runs": c["runs"]})
+        c, fam, crec, measured, gate, gate_dir, check = top
+        rec.update(module=c["module"], root=c["root"], family=c["family"], note=c["note"], concept=c["concept"])
+        rec["runs"].update(crec["runs"], gate=str(gate_dir))
+        rec["gate"], rec["overhang_n"] = c["gate"], gate["overhang_n"]
+        for k in ("z", "z_with_y", "z_x_only", "y_capture_mm"):
+            rec[k] = crec.get(k)
+        out = self._score(rec, fam, check, res_dir, brief, spent0, t_iter, measured=measured)
+        c["decision"], c["reason"] = out["decision"], out.get("reason")
+        return out
+
+    def _reference(self):
+        """The family an explore design must not copy (#106): the run's parent, else A/B."""
+        from brixzle.families import registry
+
+        try:
+            return registry.get(self.cfg.parent or "ab")
+        except Exception:  # noqa: BLE001 - no reference: the novelty check is skipped
+            return None
 
     SCORE_S = 240.0  # a full score's wall-clock before any was measured (gate, map, jam, held-out, ring, renders)
     SCORED_STAGES = ("gate", "map", "jam", "held_out", "held_out_best", "ring", "videos", "render")
@@ -810,6 +1017,10 @@ def parser():
     ap.add_argument("--ledger", help="spend ledger to share with other runs (default: the run's own)")
     ap.add_argument("--max-minutes", type=float, default=d.max_minutes)
     ap.add_argument("--design-attempts", type=int, default=d.design_attempts)
+    ap.add_argument("--concepts", type=int, default=d.concepts,
+                    help="designs in an explore round, each from its own capture principle (#106; 1: no explore rounds)")
+    ap.add_argument("--stall-iterations", type=int, default=d.stall_iterations,
+                    help="explore again after this many iterations with Z inside the noise band (#106)")
     ap.add_argument("--screen-max-maps", type=int, default=d.screen_max_maps,
                     help="of a round's candidates, at most this many get a full score (#108)")
     ap.add_argument("--probe-calls", type=int, default=d.probe_calls,
@@ -842,7 +1053,8 @@ def config_from_args(args):
                       max_iterations=args.max_iterations, patience=args.patience,
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
                       design_attempts=args.design_attempts, probe_calls=args.probe_calls,
-                      screen_max_maps=args.screen_max_maps, seed=args.seed, workers=args.workers,
+                      screen_max_maps=args.screen_max_maps, concepts=args.concepts,
+                      stall_iterations=args.stall_iterations, seed=args.seed, workers=args.workers,
                       tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results).validate()
 
 

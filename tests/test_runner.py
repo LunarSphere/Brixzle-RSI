@@ -199,3 +199,16 @@ def test_the_sdk_gets_a_message_buffer_big_enough_for_an_image_result(tmp_path):
     (issue #79)."""
     opts = RN.option_kwargs(_call(), model="m", remaining_usd=1.0, env={})
     assert opts["max_buffer_size"] >= 16 * 1024 * 1024
+
+
+def test_a_reservation_holds_its_budget_until_the_call_is_recorded(tmp_path):
+    """Design calls run side by side in an explore round (#106): a call in flight must count against the cap."""
+    from brixzle.agents.runner import AgentResult, BudgetExceeded, SpendLedger
+
+    led = SpendLedger(tmp_path / "spend.jsonl", 3.0)
+    led.reserve(2.0)
+    with pytest.raises(BudgetExceeded):
+        led.reserve(2.0)
+    led.record("design", "m", AgentResult(cost_usd=0.5), budget_usd=2.0)
+    led.reserve(2.0)  # 0.5 spent, 2.0 held: 2.5 of 3.0
+    assert led.remaining() == pytest.approx(0.5)
