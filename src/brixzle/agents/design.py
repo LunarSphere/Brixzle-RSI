@@ -12,9 +12,10 @@ The agent runs on the Claude Agent SDK (agents/runner.py). Its prompt holds the 
 The output is a package whose ``family.py`` exports ``FAMILY``. It lives in the loop's run
 directory, not in ``src/``, and is imported by path (check_family.load_family).
 
-**Prismatic by default** (maintainer, 2026-11-06, on #18): a ``Solid3D`` family is allowed only
-when a needed feature cannot be prismatic, and the agent must say which feature and why in its
-``design_note.json``, which the design log records. **No copying from papers or other groups**
+**Capture features may vary along Y** (issue #105, maintainer, 2026-11-13; it replaced "Prismatic by
+default" of 2026-11-06): the interlock may stay prismatic, and funnels, crowns, tapered seats and
+other capture features may be ``Solid3D``, most simply ``families.capture.with_capture_features``,
+with no reason to give. **No copying from papers or other groups**
 (CLAUDE.md): papers are for mechanics. The maintainer's own designs (A/B) may be reused (#85).
 """
 
@@ -38,7 +39,7 @@ _SRC = REPO / "src" / "brixzle"
 # shared code, and A/B. Not the dummy families (issue #73).
 READ_ROOTS = (REPO / "docs", _SRC / "engine", _SRC / "rules", _SRC / "requirements.py",
               *(_SRC / "families" / f for f in ("interface.py", "builders.py", "rules.py", "contract.py", "convex.py",
-                                                "registry.py", "ab")))
+                                                "capture.py", "registry.py", "ab")))
 DUMMIES = re.compile(r"\b(wedge|pyramid)\b", re.I)
 CHECK_TOOL = "check_family"
 
@@ -91,8 +92,11 @@ against its seat on the first brick below.
 
 Rules:
 - Write only inside your package directory. Its family.py must export FAMILY = Family(...).
-- Prismatic (2.5D: an XZ section swept through Y) by default. Use Solid3D only if a feature you need cannot be
-  prismatic; then say which feature and why in design_note.json.
+- Geometry: the interlock may stay prismatic (an XZ section swept through Y; Extrusion bands shear it in Z
+  across Y, as A/B's V gutter does). Capture features may vary along Y (funnels, crowns, tapered seats, wings,
+  rails): use Solid3D, most simply families.capture.with_capture_features(section, extrusion, features), a
+  prismatic interlock plus convex features with exact collision; engine.ring_cells.kit_from_cell builds its ring
+  kit from the interlock's cell. No reason is needed for Solid3D.
 - A/B is the maintainer's own design, so reuse or change any part of it; your package may import from
   brixzle.families.ab (for example profile, params). It is also the baseline your design must beat.
   Use papers for mechanics and principles only:
@@ -115,11 +119,17 @@ Rules:
   closer, the last brick of each course). check_family reports whether the kit builds ("ring").
 - R10: give the brick at least two large through-Y openings (each fits a 5 mm circle), above and either side
   of its centre of mass, so it hangs level from two points.
-- The drone's error is a disc in X-Y, not a line along X; a Y guide can only centre a brick whose centre of mass is still over the course below, so Y capture is at most about half the depth D, and depth costs mass.
+- The drone's error is a disc in X-Y, not a line along X (the mean box reaches about +-14.8 mm in Y). A Y guide
+  on the course below can only centre a brick whose centre of mass is still over that course, so Y capture is at
+  most about D / 2 (12.5 mm at A/B's D = 25 mm). To capture more you may trade depth, a wider lower course or mass,
+  within R10's 35 g for brick plus gripper.
+- X and Y guides that engage at once can jam each other. A guide in Y must carry the X interlock across it (a shear of
+  the section does), or engage only after X has seated. Simulated: wings with no X ridges on them left every
+  Y-offset drop 3 mm off in X; skirts that met the brick far below its centre of mass rolled it 13 degrees (tests/fixtures/yfunnel/family.py).
 - When the check passes, write design_note.json in your package:
   {{"name": ..., "summary": "<one paragraph: the idea and how it captures and seats>",
     "changes": "<what you changed from the parent design and why, or 'first design'>",
-    "geometry": "Prismatic" | "Solid3D", "solid3d_reason": "<only for Solid3D>"}}
+    "geometry": "Prismatic" | "Solid3D"}}
   and stop. Keep your final message to one short paragraph.
 
 Base requirements (R1-R13):

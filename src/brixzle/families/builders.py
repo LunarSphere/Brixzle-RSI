@@ -190,16 +190,25 @@ def inclined_edges(polygon, angle_range=GUIDE_ANGLE_RANGE_DEG):
     return tuple(faces)
 
 
-def slice_section(mesh, y=SLICE_Y_MM):
-    """The XZ section of a watertight mesh at Y = y, with inclined outline edges as guide faces."""
+def slice_material(mesh, y=SLICE_Y_MM):
+    """The material of a watertight mesh's XZ slice at Y = y: a shapely (Multi)Polygon, possibly empty."""
     segments = trimesh.intersections.mesh_plane(mesh, plane_normal=[0, 1, 0], plane_origin=[0, y, 0])
+    if len(segments) == 0:
+        return Polygon()
     xz = np.round(np.asarray(segments)[:, :, [0, 2]], 6)  # snap: shared endpoints differ by float noise
     lines = unary_union([LineString(s) for s in xz if not np.array_equal(s[0], s[1])])
     faces = list(polygonize(lines))
     if not faces:
-        raise ValueError("the solid does not cross the y = 0 plane; give Solid3D a section")
+        return Polygon()
     points = np.array([[f.representative_point().x, y, f.representative_point().y] for f in faces])
-    material = unary_union([f for f, inside in zip(faces, mesh.contains(points)) if inside])
+    return unary_union([f for f, inside in zip(faces, mesh.contains(points)) if inside])
+
+
+def slice_section(mesh, y=SLICE_Y_MM):
+    """The XZ section of a watertight mesh at Y = y, with inclined outline edges as guide faces."""
+    material = slice_material(mesh, y)
+    if material.is_empty:
+        raise ValueError("the solid does not cross the y = 0 plane; give Solid3D a section")
     if not isinstance(material, Polygon):
         raise ValueError("the y = 0 slice is not one piece; give Solid3D a section")
     material = material.simplify(1e-3)
@@ -217,6 +226,12 @@ def section(family: Family, p, part) -> Section:
         return g.section(p, part)
     return _cached("section", family, p, part,
                    lambda: slice_section(solid_mesh(family, p, part, bored=False)))
+
+
+def varies_along_y(family: Family) -> bool:
+    """True unless the family is Prismatic: its contact geometry may change along Y (issue #105), so
+    a 2D analysis of one XZ slice does not describe it."""
+    return not isinstance(family.geometry, Prismatic)
 
 
 def decompose(mesh):
@@ -316,17 +331,49 @@ def contact_points(family: Family, p, part, offset=CONTACT_OFFSET_MM):
     (the faces other bricks and the base touch), at a quarter, half and three quarters of its
     length, ``offset`` inside and ``offset`` outside. Sharp corners are left out on purpose: a
     convex decomposition rounds them off slightly, which doesn't change how a brick seats.
-    Prismatic: at three depths across Y, following the bands. Solid3D: in the y = 0 slice.
+    Prismatic: at three depths across Y, following the bands. Solid3D (issue #105): the solid's
+    own slices at five depths across its Y extent (the centre, and a quarter and 45 % of the width
+    each side), so a feature that varies along Y cannot hide a missing face or a phantom ledge.
     """
-    s = section(family, p, part)
     g = family.geometry
-    if isinstance(g, Prismatic):
-        e = g.extrusion(p)
-        planes = [(y, _band_shift(e, y)) for y in (-0.4 * e.depth_mm, 0.0, 0.4 * e.depth_mm)]
-    else:
-        planes = [(SLICE_Y_MM, 0.0)]
-    coords = np.asarray(s.outer.simplify(1e-3).exterior.coords)
+    if not isinstance(g, Prismatic):
+        mesh = shell_mesh(family, p, part)
+        y0, y1 = float(mesh.bounds[0][1]), float(mesh.bounds[1][1])
+        c, w = (y0 + y1) / 2, y1 - y0
+        ins, outs = [], []
+        for y in (c - 0.45 * w, c - 0.25 * w, c + SLICE_Y_MM, c + 0.25 * w, c + 0.45 * w):
+            material = slice_material(mesh, y)
+            if material.is_empty:
+                continue
+            a, b = _outline_points(material, offset)
+            ins += [(q[0], y, q[1]) for q in a]
+            outs += [(q[0], y, q[1]) for q in b]
+        return np.asarray(ins, dtype=float).reshape(-1, 3), np.asarray(outs, dtype=float).reshape(-1, 3)
+    s = section(family, p, part)
+    e = g.extrusion(p)
+    planes = [(y, _band_shift(e, y)) for y in (-0.4 * e.depth_mm, 0.0, 0.4 * e.depth_mm)]
+    inside, outside = _outline_points(s.outer, offset)
+
+    def lift(xz):
+        xz = np.asarray(xz).reshape(-1, 2)
+        return np.vstack([np.column_stack([xz[:, 0], np.full(len(xz), y), xz[:, 1] + dz]) for y, dz in planes])
+    return lift(inside), lift(outside)
+
+
+def _outline_points(material, offset):
+    """(inside, outside) XZ points a quarter, half and three quarters along every outer edge of
+    ``material`` (a Polygon or MultiPolygon), ``offset`` either side of it."""
+    polys = list(getattr(material, "geoms", [material]))
     inside, outside = [], []
+    for poly in polys:
+        outer = Polygon(poly.exterior)
+        _edge_points(outer, material, offset, inside, outside)
+    return inside, outside
+
+
+def _edge_points(outer, material, offset, inside, outside):
+    coords = np.asarray(outer.simplify(1e-3).exterior.coords)
+    solid = unary_union([Polygon(q.exterior) for q in getattr(material, "geoms", [material])])
     for a, b in zip(coords[:-1], coords[1:]):
         length = np.linalg.norm(b - a)
         if length < 4 * offset:  # too short to hold a point clear of both corners
@@ -334,19 +381,14 @@ def contact_points(family: Family, p, part, offset=CONTACT_OFFSET_MM):
         n = np.array([-(b - a)[1], (b - a)[0]]) / length
         for t in (0.25, 0.5, 0.75):
             q = a + t * (b - a)
-            out_dir = n if not s.outer.contains(Point(*(q + offset * n))) else -n
+            out_dir = n if not outer.contains(Point(*(q + offset * n))) else -n
             # Keep only points that really are `offset` from the outline: on a feature thinner
             # than 2 * offset (a tooth tip, a chamfer) the inside point would leave the brick.
             for pt, want_inside, bucket in ((q - offset * out_dir, True, inside),
                                             (q + offset * out_dir, False, outside)):
                 point = Point(*pt)
-                if s.outer.contains(point) == want_inside and s.outer.exterior.distance(point) >= 0.99 * offset:
+                if solid.contains(point) == want_inside and solid.boundary.distance(point) >= 0.99 * offset:
                     bucket.append(pt)
-
-    def lift(xz):
-        xz = np.asarray(xz).reshape(-1, 2)
-        return np.vstack([np.column_stack([xz[:, 0], np.full(len(xz), y), xz[:, 1] + dz]) for y, dz in planes])
-    return lift(inside), lift(outside)
 
 
 def is_convex_vertex_set(piece, tol=1e-6):

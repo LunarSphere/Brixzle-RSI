@@ -41,11 +41,18 @@ def write_wedge(name="agentwedge", note=True):
     return step
 
 
+def test_the_agent_may_read_the_capture_feature_helper():
+    assert any(str(r).endswith("families/capture.py") for r in DA.READ_ROOTS)
+
+
 def test_the_system_prompt_holds_the_requirements_the_interface_and_the_rules_of_the_game():
     text = DA.system_prompt()
     assert "R11" in text and "deferred" in text            # base requirements, R12 marked deferred
     assert "## Two ways to describe the geometry" in text  # the family interface
-    assert "Prismatic" in text and "Solid3D only if" in text and "solid3d_reason" in text
+    # #105: Solid3D is a normal choice for capture features, with no reason to give
+    assert "Solid3D only if" not in text and "solid3d_reason" not in text
+    assert "with_capture_features" in text and "interlock may stay prismatic" in text
+    assert "D / 2" in text and "35 g" in text  # the physical limit of a Y guide, and what to trade for it
     assert "never copy" in text
     assert "Z = (seated - jammed)" in text
 
@@ -165,7 +172,7 @@ def test_the_prompts_let_the_agent_build_on_a_b_but_not_copy_papers(tmp_path):
 def test_the_design_prompt_says_the_error_is_a_disc():
     """Issue #86: a Y guide can only centre a brick whose centre of mass is still over the course below."""
     text = DA.system_prompt()
-    assert "disc in X-Y" in text and "half the depth" in text and "depth costs mass" in text
+    assert "disc in X-Y" in text and "at most about D / 2" in text and "trade depth" in text
 
 
 def test_the_design_prompt_says_a_brick_must_build_the_structures():

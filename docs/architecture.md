@@ -202,6 +202,8 @@ The check is not the score. A design that seats every drop in the box always pas
 
 `engine/jam_analysis.py` takes the failing cells inside the map's green zone and tells the critic which are real and what holds the brick. The failure type (jammed, wrong valley, fell) comes from the sim. The mechanism comes from the predictor's stability tests, applied to the sim's contacts.
 
+A family that varies along Y (any `Solid3D`, issue #105) gets steps 1 and 2 as usual, but step 3 stops at the sim: each band and capture limit reports the failure type, the rest pose (`rest_pose`), the contact count and the share of force along Y, with no sites, no holding set and no mechanism (`sim_only`). A 2D reduction of one XZ slice does not describe such a brick, and the summary says so.
+
 1. **Repeatable or one-off.** Each cell is re-run with 3 seeds at each friction coefficient (0.2, 0.3, 0.4, 0.5). A seed shifts the pose by up to 5% of a map cell. A cell is repeatable if it fails at least two thirds of the seeds at some friction; otherwise it is a one-off (solver noise).
 2. **Bands.** Repeatable cells that touch, on one slice and course, form a band.
 3. **Contacts.** The drop nearest each band's centre is run again, and its contacts at rest are reduced:

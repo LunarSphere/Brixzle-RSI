@@ -74,10 +74,20 @@ Issue #89. A design must close a ring: a square of n × n cells, course by cours
 - The parts: **L3**, the turn piece on even courses (a corner cell, one cell along +x and one along +y); **I3**, three straight cells that own the corner on odd courses, so the corner bond alternates; **K2**, the **closer**, the last brick of each course, its upstream end cut back by the stroke's sideways travel. The straight brick is the family's own part.
 - `stroke_mm(p)` is the slanted seating stroke's length for the closer's cut (default: `release_lift_mm`). A/B passes its tooth stroke, `tooth_L + slot_extra`, since its release lift also holds the sawtooth's drop.
 - A/B's kit (`families/ab/ring.py`) is `kit_from_cell` with a port of aerial-assembly's `cell_profile`.
+- A `Solid3D` made with `capture.with_capture_features` gets its kit the same way, from its interlock's cell (issue #105): the ring parts are the interlock only, without the capture features. The family's base may be a `Section` or exact convex pieces.
 
 ## Two ways to describe the geometry
 
-**Prismatic by default** (maintainer, 2026-11-06, on #18). The design agent writes `Prismatic` families. A `Solid3D` family is allowed only when a needed feature cannot be prismatic, and the agent must say which feature and why (`solid3d_reason` in its `design_note.json`, which the design log records). The reason: the analytic predictor steps one XZ slice at y = 0, so it is only sound when the contact geometry is uniform along Y. Mirror symmetry is not enough.
+**Capture features may vary along Y** (issue #105, maintainer, 2026-11-13). The interlock may stay prismatic. Capture features (funnels, crowns, tapered seats, wings, rails) may vary along Y, as `Solid3D`, with no reason to give. This replaced "Prismatic by default" (maintainer, 2026-11-06, on #18), which was there for the analytic predictor: it steps one XZ slice at y = 0. The loop scores with the sim map, not the predictor, so that rule cost more than it protected. For a family that varies along Y, the jam analysis reports the sim's failure type and rest pose only, with no 2D mechanism.
+
+What to know before adding a Y feature (sim results are simulated, uncalibrated contact; the cases are in `tests/fixtures/yfunnel/family.py`):
+
+- **The physical limit.** A guide on the course below can only centre a brick whose centre of mass is still over that course, so Y capture is at most about D / 2 (12.5 mm at A/B's D = 25 mm). The mean box reaches about ±14.8 mm. To capture more, trade depth, a wider lower course or mass, within R10's 35 g for brick plus gripper.
+- **A V across Y that keeps the X interlock is a shear.** A copy of the section sheared up across Y (`Extrusion` bands; A/B's gutter is one) keeps the ridges and grooves running across the V, so X and Y correct together. `Solid3D` is for what a shear cannot make.
+- **X and Y guides that engage at once can jam each other.** Wings with no X ridges on them, nesting in a V below, left every drop that was off in Y 3 mm off in X: the ridges landed on the smooth wing, X could not correct until Y had, and then the wings were loaded.
+- **Keep the guide force near the centre of mass.** Skirts hung beside the course below met the brick 12 mm under its core and rolled it 13°; rails on top with a flat bottom wedged its corner and rolled it 8.6°.
+
+**`families.capture.with_capture_features(section, extrusion, features)`** is the simplest way to write one: a prismatic interlock (`section(p, part)`, `extrusion(p)`) plus `features(p, part)`, a list of convex vertex sets (mm, brick frame), for example `capture.prism_x(yz_polygon, x0, x1)` (a convex Y-Z profile swept along X) or `builders._pieces(outer, Extrusion(...))` (sheared copies of a section). It returns a `Solid3D` with exact collision (the interlock's convex cut plus each feature's hull, no decomposition), its solid (the swept section fused with the features) and, as its section, the interlock's. `engine.ring_cells.kit_from_cell(family, cell)` builds its ring kit from the interlock's cell, without the features.
 
 **`Prismatic(section, extrusion)`** is for 2.5D bricks: an XZ profile swept through Y.
 - `section(p, part)` returns a `Section(outer, holes, guide_faces)`, built from shapely polygons in XZ. The holes are lightening holes, not the round grip bores.
@@ -125,7 +135,7 @@ These formulas come from the same `rules.py`. aerial-assembly used the first bor
 3. **solid:** the solid is valid and gives one watertight piece. For a straight `Prismatic` extrusion, its volume matches section area × depth within 1%.
 4. **sim_bodies:**
    - every collision piece is a convex vertex set with volume;
-   - the collision is right at the key contact points. These are points a quarter, half and three quarters along every outline edge, 0.5 mm inside and 0.5 mm outside it (half the 1 mm seat tolerance), at three depths across Y (Prismatic) or in the y = 0 slice (Solid3D). Every inside point must be in the collision (no missing material at a face), and no outside point may be (no phantom ledge). Sharp corners are left out, because a convex decomposition rounds them off slightly without changing how a brick seats;
+   - the collision is right at the key contact points. These are points a quarter, half and three quarters along every outline edge, 0.5 mm inside and 0.5 mm outside it (half the 1 mm seat tolerance): at three depths across Y on the section (Prismatic), or on the solid's own slices at five depths across its Y extent, the centre and a quarter and 45 % of the width each side (Solid3D, issue #105), so a Y feature cannot hide a missing face or a phantom ledge. Every inside point must be in the collision (no missing material at a face), and no outside point may be (no phantom ledge). Sharp corners are left out, because a convex decomposition rounds them off slightly without changing how a brick seats;
    - mass, centre of mass and inertia are finite, and inertia is symmetric positive-definite;
    - MuJoCo compiles the bodies.
 5. **lattice:**

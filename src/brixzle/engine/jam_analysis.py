@@ -476,6 +476,9 @@ def reduce_row(family, p, course, row, mu, cfg: JamConfig = JamConfig()):
     (DropRig.drop(..., rest=True)): contact sites named on both bodies, the 3D check, the smallest
     holding set and the mechanism."""
     rest = row["rest"]
+    pose = {"pos_mm": [float(v) for v in rest["pos_mm"]], "quat": [float(v) for v in rest["quat"]]}
+    if B.varies_along_y(family):
+        return _sim_only(family, p, course, row, mu, pose)
     frames = _Frames(family, p, course, rest)
     bodies = B.sim_bodies(family, p, frames.part)
     U = float(family.lattice(p).U_mm)
@@ -485,7 +488,32 @@ def reduce_row(family, p, course, row, mu, cfg: JamConfig = JamConfig()):
     for public, site in zip(out["sites"], kept):
         public["on_brick"], public["on_support"] = frames.name(site, cfg.corner_mm)
     return {"outcome": row["outcome"], "err_mm": [float(v) for v in row["err_mm"]], "angle_deg": float(row["angle_deg"]),
-            "weight_N": float(rest["weight_N"]), "com_mm": list(frames.com(bodies)), **out}
+            "weight_N": float(rest["weight_N"]), "com_mm": list(frames.com(bodies)), "rest_pose": pose,
+            "sim_only": False, **out}
+
+
+SIM_ONLY = ("not reduced: the family varies along Y (Solid3D), so the 2D contact reduction of one XZ slice does "
+            "not describe it; the failure type and the rest pose are from the sim only (issue #105)")
+
+
+def _sim_only(family, p, course, row, mu, pose):
+    """A drop row of a family that varies along Y (issue #105): the sim's failure type, rest pose and
+    contact count, with no 2D reduction, no named faces and no mechanism."""
+    rest = row["rest"]
+    touching = [c for c in rest["contacts"] if float(np.linalg.norm(c["force_N"])) > 0]
+    f_raw = sum(float(np.linalg.norm(c["force_N"])) for c in touching)
+    y_raw = sum(abs(c["force_N"][1]) for c in touching) / f_raw if f_raw > 0 else 0.0
+    rot = _rot(rest["quat"])
+    tilt = math.degrees(math.acos(float(np.clip(abs(rot.as_matrix()[1, 1]), 0.0, 1.0))))
+    bodies = B.sim_bodies(family, p, family.part_for(course, 1))
+    com = np.asarray(rest["pos_mm"], float) + rot.apply(np.asarray(bodies.com_mm, float))
+    return {"outcome": row["outcome"], "err_mm": [float(v) for v in row["err_mm"]], "angle_deg": float(row["angle_deg"]),
+            "weight_N": float(rest["weight_N"]), "com_mm": [float(com[0]), float(com[2])], "rest_pose": pose,
+            "sim_only": True, "three_d": True, "y_share": float(y_raw), "y_share_raw": float(y_raw),
+            "out_of_plane": {"dy_mm": float(row["err_mm"][1]), "tilt_deg": float(tilt)}, "mu": float(mu),
+            "contacts_touching": len(touching),
+            "max_point_share": max((float(c["normal_N"]) for c in touching), default=0.0) / float(rest["weight_N"]),
+            "sites": [], "holding": None, "all_sites": None, "mechanism": SIM_ONLY}
 
 
 def analyse_pose(family, p, course, sample, sim_cfg=None, cfg: JamConfig = JamConfig()):
@@ -635,6 +663,7 @@ def analyse(family, p, sim_map, cfg: JamConfig = JamConfig(), sim_cfg=None, work
         c.pop("_steps")
     return {
         "labels": dict(LABELS), "family": family.name, "family_version": family.version, "params": p.to_dict(),
+        "sim_only": B.varies_along_y(family),
         "box": sim_map["box"], "config": {**asdict(cfg), "mus": list(cfg.mus)}, "sim_mu": sim_mu,
         "cells": cells, "bands": out_bands, "one_offs": [c for c in cells if not c["repeatable"]],
         "capture_limits": out_limits, "seated_reference": references,
@@ -657,10 +686,14 @@ def write_analysis(result, map_dir):
 def summary(result):
     """A short text summary, for the terminal."""
     c = result["counts"]
+    if result.get("sim_only"):
+        LABELS_NOTE = "; the family varies along Y, so mechanisms are not reduced: sim failure type and rest pose only"
+    else:
+        LABELS_NOTE = ""
     lines = [f"{result['family']} placement {result['box']['statistic']}: {c['inside_failures']} failures inside the "
              f"green zone, {c['repeatable']} repeatable in {c['bands']} bands ({c['three_d']} of them 3D effects), "
              f"{len(result['one_offs'])} one-off; {c['reruns']} re-runs, {result['seconds']:.1f} s "
-             f"(sim: {LABELS['sim']}; mechanism: {LABELS['pred']})"]
+             f"(sim: {LABELS['sim']}; mechanism: {LABELS['pred']}{LABELS_NOTE})"]
     def detail(b):
         lines.append(f"    {b['mechanism']}")
         show = b["sites"] if b["holding"] is None else [b["sites"][i] for i in b["holding"]["sites"]]
