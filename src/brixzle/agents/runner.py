@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 import json
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import threading
@@ -271,11 +272,26 @@ def option_kwargs(call: AgentCall, model, remaining_usd, env):
 # --- runners ---
 
 
+_BUDGET_STOP = re.compile(r"Reached maximum budget \(\$([0-9]+(?:\.[0-9]+)?)\)")
+
+
+def budget_stop_cost(error_text):
+    """The amount the SDK reports when it stops a call at its budget, or None (#123)."""
+    m = _BUDGET_STOP.search(str(error_text))
+    return float(m.group(1)) if m else None
+
+
 class ClaudeRunner:
     """Runs calls through the Claude Agent SDK with ``model``, checked against ``ledger``."""
 
     def __init__(self, model, ledger: SpendLedger, environ=None):
         self.model, self.ledger, self.environ = model, ledger, environ
+
+    def sdk_cap(self, call):
+        """The SDK's budget for a call that holds its own budget in the ledger: its budget, or what
+        the ledger has left with this call's hold added back (#123: subtracting every hold gave each
+        of three calls side by side only $0.42)."""
+        return min(call.max_budget_usd, self.ledger.remaining() + call.max_budget_usd)
 
     def run(self, call: AgentCall) -> AgentResult:
         self.ledger.reserve(call.max_budget_usd)
@@ -286,9 +302,11 @@ class ClaudeRunner:
         try:
             result = asyncio.run(self._run(call, env))
         except BaseException as e:
-            # What a failed call spent is unknown, so it is charged its whole budget.
-            self.ledger.record(call.name, self.model, AgentResult(cost_usd=None, is_error=True,
-                                                                  errors=[f"{type(e).__name__}: {e}"]),
+            # What a failed call spent is unknown, so it is charged its whole budget, unless the SDK
+            # stopped it at its budget and said how much that was (#123).
+            err = f"{type(e).__name__}: {e}"
+            self.ledger.record(call.name, self.model, AgentResult(cost_usd=budget_stop_cost(err), is_error=True,
+                                                                  errors=[err]),
                                budget_usd=call.max_budget_usd)
             raise
         self.ledger.record(call.name, self.model, result, budget_usd=call.max_budget_usd)
@@ -307,7 +325,7 @@ class ClaudeRunner:
             # Every tool call passes here, before allowed_tools would approve it.
             return hook_decision(guard, hook_input)
 
-        kw = option_kwargs(call, self.model, self.ledger.remaining(), env)
+        kw = option_kwargs(call, self.model, self.sdk_cap(call), env)
         if call.mcp_tools:
             def serve(spec):
                 async def run(args):
