@@ -62,7 +62,7 @@ class FakeEngine:
     def quick_check(self, family, p):
         self.calls.append("quick_check")
         ok = self.checks.pop(0) if self.checks else True
-        res = {"passed": ok, "seated": 36 if ok else 20, "dropped": 40 if ok else 29, "need": 32,
+        res = {"passed": ok, "seated": 36 if ok else 20, "dropped": 40 if ok else 29, "need": 32, "seed": 0,
                "outcomes": {"seated": 36} if ok else {"seated": 20, "jammed": 9},
                "failures": [] if ok else [{"course": 1, "dx_mm": 12.0, "clear_mm": 6.0, "pitch_deg": 0.1,
                                            "outcome": "jammed", "err_mm": [3.0, 0.0, 4.0], "angle_deg": 20.0}]}
@@ -70,6 +70,10 @@ class FakeEngine:
 
     def score(self, family, p, check, allow_failed_check=False):
         self.calls.append(("score", family.name, allow_failed_check))
+        assert "seed" in check, "the map needs the full quick check"
+        if getattr(self, "score_raises", 0):
+            self.score_raises -= 1
+            raise RuntimeError("the map broke")
         z = self.zs.pop(0)
         z = z if isinstance(z, dict) else {s: z for s in ("mean", "p95", "max")}
         d = self._dir("map")
@@ -144,7 +148,9 @@ class FakeEngine:
         for k, root, module in jobs:
             s_, j_, n_, ok = getattr(self, "screens", {}).get(module, (40, 4, 60, True))
             out[k] = {"Z": (s_ - j_) / n_, "S": s_, "J": j_, "N": n_, "seconds": 2.0,
-                      "check": {"passed": ok, "seated": 36 if ok else 20, "dropped": 40, "outcomes": {"seated": 36}}}
+                      "check": {"passed": ok, "seated": 36 if ok else 20, "dropped": 40, "outcomes": {"seated": 36}},
+                      "check_full": {"passed": ok, "seed": 0, "drops": [], "module": module},
+                      "check_run": str(self._dir("check"))}
         return out
 
     def probe_poses(self, map_dir, target, seed):
@@ -892,6 +898,10 @@ def test_the_screen_maps_only_the_candidates_it_cannot_rule_out_and_logs_the_res
     cands = [{"id": k, "root": str(tmp_path), "module": f"m_{k}"} for k in "abcde"]
     mapped = loop.screen_round(rec, cands, "mean")
     assert [c["id"] for c in mapped] == ["c", "a"]
+    # The full quick check goes with a mapped candidate: the map reads its seed and drops
+    # (concept-sonnet-20261114-mean crashed on KeyError 'seed' without it).
+    assert all(c["check_full"]["module"] == c["module"] and "seed" in c["check_full"] for c in mapped)
+    assert all(c["quick_check"]["run"] for c in mapped)
     by = {c["id"]: c for c in cands}
     assert by["b"]["decision"] == "screened_out" and "cap" in by["b"]["reason"]
     assert by["d"]["decision"] == "screened_out" and "below the best" in by["d"]["reason"]
@@ -1058,3 +1068,52 @@ def test_a_tune_that_breaks_the_gate_or_the_ring_is_refused(tmp_path, intake):
     tune = state["tune"]
     assert tune["accepted"] is False and "structure gate" in tune["refused"]
     assert tune["seconds_checks"] >= 0
+
+
+# --- the concept step and its model (#111) ---
+
+
+def test_explore_calls_go_to_the_concept_model_and_the_critic_to_the_other(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6, 0.55, 0.5], held=[0.5, 0.5, 0.5])
+    cfg = _cfg(tmp_path, max_iterations=2, concepts=2)
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", cfg.budget_usd)
+    runner = RN.ScriptedRunner([critic_step(), design_step("reshape")], ledger=led, model="sonnet-like")
+    concept = RN.ScriptedRunner([concept_step("cx"), concept_step("cx")], ledger=led, model="opus-like")
+    loop = OR.Loop(intake, cfg, runner=runner, concept_runner=concept, engine=engine, name="t")
+    loop.ledger = led
+    state = loop.run()
+    assert [c.name for c in concept.calls] == ["design", "design"]
+    assert [c.name for c in runner.calls] == ["critic", "design"]
+    assert LoopConfig().concept_model == "claude-opus-5-5" and LoopConfig().model == "claude-sonnet-5-5"
+    summary = (Path(loop.results) / "summary.md").read_text(encoding="utf-8")
+    assert "opus-like" in summary and "sonnet-like" in summary  # spend, turns and wall-clock per model
+    assert state["iterations"][0]["concepts"][0]["model"] == "opus-like"
+
+
+def test_an_explore_note_without_three_concepts_is_refused_and_the_three_are_logged(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, _ = _loop(tmp_path, intake, [concept_step("cx", concepts=THREE[:1]), concept_step("cx")], engine,
+                    max_iterations=1, concepts=2)
+    it = loop.run()["iterations"][0]
+    refused = [c for c in it["concepts"] if c["decision"] == "no_concepts"]
+    assert len(refused) == 1 and "three" in refused[0]["reason"]
+    kept = next(e for e in loop.log.entries() if e["decision"] == "kept")
+    assert [c["name"] for c in kept["concepts"]] == ["m0", "m1", "m2"]
+
+
+def test_an_explore_call_that_never_probed_is_a_failed_attempt(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, _ = _loop(tmp_path, intake, [concept_step("cx", probe=False), concept_step("cx")], engine,
+                    max_iterations=1, concepts=2)
+    it = loop.run()["iterations"][0]
+    assert sum(c["decision"] == "no_probe" for c in it["concepts"]) == 1
+
+
+def test_a_concept_whose_map_breaks_is_an_error_and_the_round_goes_on(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    engine.score_raises = 1  # the first concept's map raises
+    loop, _ = _loop(tmp_path, intake, [concept_step("cx"), concept_step("cx")], engine, max_iterations=1, concepts=2)
+    it = loop.run()["iterations"][0]
+    assert sorted(c["decision"] for c in it["concepts"]) == ["error", "kept"]
+    assert "the map broke" in next(c["reason"] for c in it["concepts"] if c["decision"] == "error")
+

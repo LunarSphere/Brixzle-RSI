@@ -5,12 +5,14 @@ import math
 
 from brixzle.engine import boxes as BX
 
-MODEL = "claude-sonnet-5-5"  # the design agent and the critic (maintainer, 2026-11-12)
+MODEL = "claude-sonnet-5-5"  # reshapes and the critic (maintainer, 2026-11-12)
+CONCEPT_MODEL = "claude-opus-5-5"  # explore calls and repairs of a new concept (#111; maintainer, 2026-11-13)
 
 
 @dataclass(frozen=True)
 class LoopConfig:
     model: str = MODEL
+    concept_model: str = CONCEPT_MODEL
     target: str = "mean"             # the box the run starts on: the first rung of the ladder (#84)
     ladder: bool = True              # climb mean -> p95 -> max as Z reaches 1 (#84); False: stay on target
     y_error: bool = True             # score the X-Y error disc (#86); False: X offsets only, as before
@@ -71,8 +73,8 @@ class LoopConfig:
                                  f"known: {registry.names()}")
         if self.baseline_only and self.parent is None:
             raise ValueError("baseline_only needs a parent family to score")
-        if not self.model.strip():
-            raise ValueError("model must be named")
+        if not self.model.strip() or not self.concept_model.strip():
+            raise ValueError("model and concept_model must be named")
         return self
 
     def to_dict(self):

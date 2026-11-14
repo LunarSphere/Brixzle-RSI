@@ -223,6 +223,22 @@ def principles():
     return out
 
 
+CONCEPT_KEYS = ("name", "failure", "why", "cost")
+
+
+def concepts_problem(note):
+    """Why an explore note's concepts (#111) are not acceptable, or None."""
+    cs = note.get("concepts")
+    if not isinstance(cs, list) or len(cs) != 3:
+        return "the note must list three concepts (\"concepts\": three mechanisms) before the one built"
+    for k, c in enumerate(cs):
+        if not isinstance(c, dict) or any(not str(c.get(q, "")).strip() for q in CONCEPT_KEYS):
+            return f"concept {k + 1} needs {', '.join(CONCEPT_KEYS)}"
+    if not str(note.get("picked", "")).strip():
+        return "the note must say which concept was built (\"picked\")"
+    return None
+
+
 def explore_text(explore):
     """The explore task's part of the prompt (#106): the principle, what was tried, and A/B as the
     score to beat."""
@@ -235,7 +251,13 @@ def explore_text(explore):
             f"You may still read A/B for how a family is written.\n"
             f"Score to beat: {explore.get('beat') or 'A/B'}.\n"
             f"Principle {p['id']}. {p['title']}: {p['text']}\n"
-            f"Already tried: {tried}. Do not repeat a concept the design log shows failing.")
+            f"Already tried: {tried}. Do not repeat a concept the design log shows failing.\n"
+            f"Concepts before code (#111): before you write the family, think of three different mechanisms built on "
+            f"this principle. In design_note.json give them as \"concepts\": a list of three objects, each with "
+            f"\"name\", \"failure\" (the failure it targets, from the brief or the map), \"why\" (why it should work, "
+            f"with design rule ids) and \"cost\" (mass, depth, printability), then \"picked\" (the name you built) "
+            f"and \"picked_why\". Then build the one you picked, and probe it with probe_drops before you finish: "
+            f"an explore call without three concepts or without a probe is counted as a failed attempt.")
 
 
 def check_tool(ws, reference=None, share=None):

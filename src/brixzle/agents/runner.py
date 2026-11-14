@@ -154,7 +154,8 @@ class SpendLedger:
         row = {"time": datetime.now(timezone.utc).isoformat(), "name": name, "model": model,
                "cost_usd": float(cost), "reported": result.cost_usd is not None, "turns": result.turns,
                "usage": {k: v for k, v in (result.usage or {}).items() if isinstance(v, (int, float))},
-               "api_key_source": result.api_key_source, "is_error": result.is_error}
+               "api_key_source": result.api_key_source, "is_error": result.is_error,
+               "seconds": float(result.seconds or 0.0) if math.isfinite(float(result.seconds or 0.0)) else 0.0}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             with open(self.path, "a", encoding="utf-8") as f:

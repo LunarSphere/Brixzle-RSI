@@ -362,7 +362,7 @@ class Loop:
     a ledger capped at ``budget_usd``); ``engine`` runs the sim stages (default: SimEngine)."""
 
     def __init__(self, intake_path, cfg: LoopConfig = LoopConfig(), runner=None, engine=None, name=None,
-                 resume=False):
+                 resume=False, concept_runner=None):
         self.cfg = cfg.validate()
         root = Path(cfg.runs) / "loop"
         if resume:
@@ -387,6 +387,9 @@ class Loop:
         self.intake = load_intake(intake_path)
         self.ledger = SpendLedger(cfg.ledger or self.run_dir / "api-spend.jsonl", cfg.budget_usd)
         self.runner = runner or ClaudeRunner(cfg.model, self.ledger)
+        # Explore calls and repairs of a new concept go to the concept model (#111); a test's single runner does both.
+        self.concept_runner = concept_runner or (runner if runner is not None else
+                                                 ClaudeRunner(cfg.concept_model, self.ledger))
         self.engine = engine or SimEngine(cfg)
         self.log = DesignLog.in_dir(self.run_dir)
         _save(self.run_dir, self.state)
@@ -514,7 +517,8 @@ class Loop:
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
             try:
-                outcome = DA.design(self.runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
+                runner = self.concept_runner if (prov or {}).get("new_concept") else self.runner
+                outcome = DA.design(runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
                                     parent=parent, failures=failures, log_text=self.log.text(),
                                     budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
                                     lessons_text=self.lessons_text(), prober=prober, probe_calls=cfg.probe_calls,
@@ -696,6 +700,8 @@ class Loop:
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
                          "module": rec["module"], "decision": rec["decision"], "reason": why, "note": rec["note"],
                          **({"concept": last_att.get("concept")} if last_att.get("concept") else {}),
+                         **({"concepts": (rec.get("note") or {}).get("concepts")} if (rec.get("note") or {}).get("concepts")
+                            else {}),
                          "probes": len(last_att.get("probes") or []), "probe_s": round(last_att.get("probe_s", 0.0), 2),
                          "z": rec["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
                          "overhang_n": rec.get("overhang_n"),
@@ -783,7 +789,8 @@ class Loop:
             c = {"id": f"c{k}", "attempt": k, "concept": principle["id"], "principle": principle["title"],
                  "module": module, "root": str(iter_dir / f"concept-{k}" / "pkg")}
             try:
-                out = DA.design(self.runner, self.intake, iter_dir / f"concept-{k}", module, brief=brief, parent=None,
+                out = DA.design(self.concept_runner, self.intake, iter_dir / f"concept-{k}", module, brief=brief,
+                                parent=None,
                                 log_text=self.log.text(), budget_usd=cfg.design_budget_usd,
                                 max_turns=cfg.design_max_turns, lessons_text=self.lessons_text(), prober=prober,
                                 probe_calls=cfg.probe_calls,
@@ -796,7 +803,8 @@ class Loop:
                 c.update(decision="error", reason=f"{type(e).__name__}: {e}"[:500], design_s=time.time() - t)
                 return c
             probe_s = sum(float(q.get("seconds") or 0.0) for q in out.probes)
-            c.update(root=str(out.workspace.root), design_cost_usd=out.result.cost_usd, design_s=time.time() - t,
+            c.update(model=getattr(self.concept_runner, "model", None), turns=out.result.turns,
+                     root=str(out.workspace.root), design_cost_usd=out.result.cost_usd, design_s=time.time() - t,
                      family=out.check.get("family") or module, note=out.note, probes=list(out.probes), probe_s=probe_s)
             if (out.check.get("novelty") or {}).get("near_copy"):
                 c.update(decision="near_copy", reason=out.check["novelty"]["reason"], novelty=out.check["novelty"])
@@ -806,6 +814,13 @@ class Loop:
                             *[f"{part}: {', '.join(info['broken'])}" for part, info in out.check.get("parts", {}).items()
                               if info.get("broken")], *([out.check["error"]] if out.check.get("error") else [])]
                 c.update(decision="failed_contract", reason="; ".join(map(str, problems))[:500] or "the check failed")
+                return c
+            problem = DA.concepts_problem(out.note or {})
+            if problem:
+                c.update(decision="no_concepts", reason=problem)
+                return c
+            if cfg.probe_calls and not out.probes:
+                c.update(decision="no_probe", reason="the explore call finished without probing its draft (probe_drops)")
                 return c
             if ref is not None:
                 fam = CF.load_family(out.workspace.root, module)
@@ -840,7 +855,13 @@ class Loop:
             fam = CF.load_family(c["root"], c["module"])
             crec = {"iteration": i, "seconds": {}, "runs": {"quick_check": c.get("quick_check", {}).get("run")}}
             check = c.pop("check_full", None) or c.get("quick_check")
-            measured = self._measure(crec, fam, check)
+            try:
+                measured = self._measure(crec, fam, check)
+            except Exception as e:  # noqa: BLE001 - one concept's broken map must not lose the round's paid calls
+                c.update(decision="error", reason=f"its map raised {type(e).__name__}: {e}"[:500])
+                self.log.append({"iteration": i, "attempt": c["attempt"], "family": c["family"], "module": c["module"],
+                                 "concept": c["concept"], "decision": "error", "reason": c["reason"]})
+                continue
             for k in ("map", "jam"):
                 rec["seconds"][k] = rec["seconds"].get(k, 0.0) + crec["seconds"][k]
             t = time.time()
@@ -915,9 +936,10 @@ class Loop:
                 c["decision"] = "failed_quick_check"
                 c["reason"] = (f"the quick check seated {r['check']['seated']} of {r['check']['dropped']} "
                                f"(needs {r['check'].get('need', 32)})")
-                c["quick_check"] = r["check"]
+                c["quick_check"] = {**r["check"], "run": r.get("check_run")}
             else:
-                c["quick_check"] = r["check"]
+                c["quick_check"] = {**r["check"], "run": r.get("check_run")}
+                c["check_full"] = r.get("check_full")  # the map reads its seed and drops
                 passing[c["id"]] = rec["screen"][c["id"]]
         est = score_s or self.score_estimate()
         left = cfg.max_minutes * 60 - (time.time() - getattr(self, "_t0", time.time())) - (cfg.tune_seconds if cfg.tune else 0.0)
@@ -967,7 +989,8 @@ class Loop:
         self.state["provisional"] = {"iteration": rec["iteration"], "module": rec["module"], "root": rec["root"],
                                      "family": rec["family"], "family_py": str(family_py(rec)), "failures": failures,
                                      "repairs": repairs, "z_target": z_t, "target": target,
-                                     "first": (prov or {}).get("first", rec["iteration"])}
+                                     "first": (prov or {}).get("first", rec["iteration"]),
+                                     "new_concept": bool((prov or {}).get("new_concept") or rec.get("mode") == "explore")}
 
     def _failed_repair(self, rec, why):
         """A repair that was not kept for another reason (Z, held-out, no design): one repair spent."""
@@ -1066,7 +1089,8 @@ class Loop:
         (res_dir / "summary.md").write_text(text, encoding="utf-8")
 
     def write_run_summary(self):
-        text = RD.run_summary(self.state, self.cfg.target, self.ledger.path, self.ledger.spent(), self.cfg.budget_usd)
+        text = RD.run_summary(self.state, self.cfg.target, self.ledger.path, self.ledger.spent(), self.cfg.budget_usd,
+                              ledger_rows=self.ledger.rows())
         (self.results / "summary.md").write_text(text, encoding="utf-8")
 
 
@@ -1093,6 +1117,8 @@ def parser():
     ap.add_argument("--ledger", help="spend ledger to share with other runs (default: the run's own)")
     ap.add_argument("--max-minutes", type=float, default=d.max_minutes)
     ap.add_argument("--design-attempts", type=int, default=d.design_attempts)
+    ap.add_argument("--concept-model", default=d.concept_model,
+                    help="the model of explore calls and repairs of a new concept (#111)")
     ap.add_argument("--concepts", type=int, default=d.concepts,
                     help="designs in an explore round, each from its own capture principle (#106; 1: no explore rounds)")
     ap.add_argument("--stall-iterations", type=int, default=d.stall_iterations,
@@ -1123,7 +1149,7 @@ def _interrupt_on_sigterm():
 
 def config_from_args(args):
     parent = None if str(args.parent).lower() == "none" else args.parent
-    return LoopConfig(target=args.target, ladder=not args.no_ladder, y_error=not args.no_y_error,
+    return LoopConfig(concept_model=args.concept_model, target=args.target, ladder=not args.no_ladder, y_error=not args.no_y_error,
                       lessons=not args.no_lessons, parent=parent,
                       baseline_only=args.baseline_only,
                       max_iterations=args.max_iterations, patience=args.patience,

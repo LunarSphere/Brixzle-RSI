@@ -398,3 +398,10 @@ The maintainer chose up to two repair attempts (2026-11-13).
 - **Repairs skip the critic.** The repair's task is the failing builds, so a brief would only compete with it, and the call is saved.
 - **The end tune re-checks the gate and the ring.** In `ab4iter2-20261114-mean` the tune took Z mean +0.537 to +0.596 with neither checked (`runs/tune-20261114T004530116358Z-rsi_ab4iter2_20261114_mean_i03_a2-mean`). The extra stages cost about one gate and one ring: 25 s and 5–14 s in that run (`RSI_RESULTS/ab4iter2-20261114-mean/iter-0*/summary.md`).
 
+## The concept step (issue #111)
+
+The maintainer chose `claude-opus-5-5` for explore calls and repairs of a new concept; reshapes and the critic stay on `claude-sonnet-5-5` (2026-11-13). Sim results are simulated, uncalibrated contact.
+
+- **Sonnet arm** (`runs/loop/concept-sonnet-20261114-mean`, same intake and seed as `ab4iter2`, `--concept-model claude-sonnet-5-5 --max-iterations 1 --no-tune`): $1.017 (3 design calls $0.242, $0.289, $0.414, 18–20 turns, 107–198 s; the critic $0.072). All three listed three concepts and probed. CP1 failed the quick check (28 of 37), CP2 ended its call with the contract failing, CP3 passed the screen. The run then crashed on CP3's map (`KeyError: 'seed'`: `screen_round` did not pass the full quick check on; fixed, with a test, and a concept whose map raises is now an error that does not end the round). CP3 mapped offline: Z mean +0.593, p95 +0.177, max +0.072, Y capture ±4.16 mm (`runs/map-20261114T034140825661Z-rsi_concept_sonnet_20261114_mean_i01_c3-mean`, 85.3 s), against A/B's +0.506, +0.139, +0.045. Its gate, held-out and ring were not run. It is still an A/B-style sawtooth (U 26, H0 20, a steeper tooth lean).
+- **Opus arm**: not run on its own, to keep the batch under $10. The final run (all nine issues merged, same intake and seed) starts with exactly this round on Opus and is the comparison.
+
