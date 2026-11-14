@@ -153,6 +153,16 @@ class FakeEngine:
                       "check_run": str(self._dir("check"))}
         return out
 
+    def rest_pictures(self, family, p, map_dir, target, out_dir, seed):
+        """Rest pictures and contacts of a few failures (#112), canned."""
+        self.calls.append(("rest", target, seed))
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        (Path(out_dir) / "rest-1-xz.png").write_bytes(b"png")
+        return {"dir": str(out_dir), "seconds": 0.5, "drops": [
+            {"k": 1, "outcome": "jammed", "slice": "xy", "course": 1, "pose": {"x": 1.0, "y": 8.0, "z": 0.0, "t": 0.0},
+             "pictures": ["rest-1-xz.png"], "contacts": [{"brick": "A", "on_brick": "A: tooth tip",
+                                                         "on_support": "A (brick0): slot mouth", "normal": [0.6, 0.8]}]}]}
+
     def probe_poses(self, map_dir, target, seed):
         """The probe's poses (#107): records which map and box they came from."""
         self.calls.append(("probe_poses", None if map_dir is None else Path(map_dir).name, target, seed))
@@ -1116,4 +1126,41 @@ def test_a_concept_whose_map_breaks_is_an_error_and_the_round_goes_on(tmp_path, 
     it = loop.run()["iterations"][0]
     assert sorted(c["decision"] for c in it["concepts"]) == ["error", "kept"]
     assert "the map broke" in next(c["reason"] for c in it["concepts"] if c["decision"] == "error")
+
+
+# --- the critic sees where failed bricks rest (#112) ---
+
+
+def test_the_critic_gets_the_rest_pictures_and_the_next_design_is_told_to_look_at_the_parents_pictures(
+        tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.6], held=[0.5, 0.5])
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2")], engine,
+                         max_iterations=2)
+    state = loop.run()
+    it1 = state["iterations"][0]
+    assert it1["rest"]["drops"] and it1["seconds"]["rest"] >= 0 and ("rest", "mean", 1) in engine.calls
+    critic = next(c for c in runner.calls if c.name == "critic")
+    assert critic.tools == ("Read",) and "A: tooth tip" in critic.prompt
+    design2 = [c for c in runner.calls if c.name == "design"][1]
+    res1 = Path(it1["results"])
+    assert str(res1 / "jam_map.png") in design2.prompt and str(res1 / "module.png") in design2.prompt
+    assert "rest-1-xz.png" in design2.prompt
+    assert any(str(res1) == str(r) or str(r) in str(res1) for r in design2.read_roots)
+
+
+def test_after_a_parameter_only_stall_a_parameter_brief_is_sent_back_once(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.5], held=[0.5, 0.5])
+    params_brief = {"decision": "redesign", "reason": "nudge", "clusters": [
+        {"failure": "f", "diagnosis": "d", "rules": ["DR2"], "change": "tooth_L 7", "scope": "reshape",
+         "expected_effect": "e", "faces": "A: tooth ON A: slot", "shape_change": "tooth_L 6.5 -> 7",
+         "change_kind": "parameters"}]}
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w1"),
+                                            RN.AgentResult(structured=params_brief, cost_usd=0.02),
+                                            critic_step()], engine, max_iterations=3)
+    loop.state["iterations"].append(loop.iterate(1))
+    rec = loop.iterate(2)  # the same source again: a parameter-only change, and Z did not move
+    assert rec["stalled_parameters"] is True
+    critics = [c for c in runner.calls if c.name == "critic"]
+    assert len(critics) == 3 and "parameter" in critics[2].prompt
+    assert rec["brief"]["clusters"][0]["change_kind"] == "shape"
 

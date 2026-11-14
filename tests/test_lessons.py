@@ -20,7 +20,8 @@ def _rec(i, decision, z, target="mean", family="zigzag_w", map_dir=None):
 def _brief(*lessons):
     return {"decision": "redesign", "reason": "r", "clusters": [{"failure": "f", "diagnosis": "d", "rules": ["DR7"],
                                                                  "change": "c", "scope": "reshape",
-                                                                 "expected_effect": "e"}],
+                                                                 "expected_effect": "e",
+                                                                 "faces": "a ON b", "shape_change": "s", "change_kind": "shape"}],
             "lessons": list(lessons)}
 
 
