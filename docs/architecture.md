@@ -35,7 +35,7 @@ Each iteration:
 6. **Acceptance.** The design replaces the current best only if all three hold:
    1. on the pair (Z on the current target, `overhang_n`), neither is lower than the best's and at least one is higher (a best from before #83 has no overhang, and then Z alone must improve);
    2. Z on every lower rung of the ladder is not below the best's;
-   3. held-out Z on the current target is not worse at either friction.
+   3. held-out Z on the current target is not worse at either friction. Since issue #110, "worse" means lower by more than the noise band: one standard error of the best's held-out Z for its counts, √(((S + J)/N − Z²)/N) (`zscore.z_band`). A drop inside the band is reported in the reason (for example "held-out −0.006, inside the band of 0.033") and does not reject the design. The same band defines a stall: a change in Z inside it is no change.
 
    A design the rule would keep then builds a **ring** (issue #89): 6 × 6 cells, 2 courses, ideal placement, from the family's ring kit. If it does not come out complete, the design is rejected (`failed_ring`), the best does not change, and the next design call gets the stage where the ring stopped. The ring is slow, so it runs last and only when it can change the decision; with less than two minutes of the run's wall-clock left it is not started and nothing is rejected on that ground. The parent's ring is built and shown too.
 

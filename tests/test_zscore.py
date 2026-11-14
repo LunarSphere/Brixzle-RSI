@@ -169,3 +169,28 @@ def test_a_straight_extruded_v_scores_lower_with_y_than_without(stack_v):
     z = ZS.z_from_drops(drops, {"mean": MEAN}, C0)["mean"]
     zx = ZS.z_from_drops(drops, {"mean": MEAN}, C0, x_only=True)["mean"]
     assert zx["N"] == 1 and z["N"] == 5 and z["Z"] < zx["Z"]
+
+
+# --- the noise band (#110) ---
+
+
+def test_the_band_is_one_standard_error_of_z_for_its_counts():
+    # each drop scores +1, 0 or -1, so var = (S + J) / N - Z^2 and the band is sqrt(var / N)
+    c = {"Z": 248 / 356, "S": 279, "J": 31, "N": 356}
+    var = (279 + 31) / 356 - (248 / 356) ** 2
+    assert ZS.z_band(c) == pytest.approx((var / 356) ** 0.5)
+    assert ZS.z_band(c) == pytest.approx(0.0329, abs=5e-4)
+
+
+def test_the_band_is_zero_when_every_drop_has_the_same_outcome_and_refuses_no_drops():
+    assert ZS.z_band({"Z": 1.0, "S": 10, "J": 0, "N": 10}) == 0.0
+    assert ZS.z_band({"Z": -1.0, "S": 0, "J": 10, "N": 10}) == 0.0
+    with pytest.raises(ValueError):
+        ZS.z_band({"Z": 0.0, "S": 0, "J": 0, "N": 0})
+
+
+def test_a_change_inside_the_band_is_no_change():
+    c = {"Z": 0.5, "S": 70, "J": 20, "N": 100}
+    band = ZS.z_band(c)
+    assert ZS.within_band(0.5 + band * 0.9, 0.5, band)
+    assert not ZS.within_band(0.5 - band * 1.1, 0.5, band)
