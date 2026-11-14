@@ -218,3 +218,50 @@ def test_the_probe_tool_runs_the_prober_logs_each_call_and_stops_at_the_cap(tmp_
 def test_the_design_prompt_asks_for_a_probe_before_finishing_and_its_finding_in_the_note():
     text = DA.system_prompt()
     assert "probe_drops" in text and '"probe"' in text
+
+
+# --- explore rounds (issue #106) ---
+
+
+def test_the_capture_principles_load_with_unique_ids_and_rule_citations():
+    ps = DA.principles()
+    assert len(ps) >= 4 and len({p["id"] for p in ps}) == len(ps)
+    assert all(p["id"].startswith("CP") and p["title"] and "DR" in p["text"] for p in ps)
+
+
+def test_an_explore_task_gives_a_principle_and_makes_a_b_the_score_to_beat_not_the_start(tmp_path):
+    ws = DA.Workspace.make(tmp_path / "attempt-1", "explorer")
+    p = DA.principles()[1]
+    text = DA.task_prompt(ws, _intake(tmp_path), explore={"principle": p, "tried": ["CP1"], "beat": "A/B, Z mean +0.506"})
+    assert p["id"] in text and p["text"].split(".")[0] in text
+    assert "score to beat, not your starting file" in text and "A/B, Z mean +0.506" in text
+    assert "Already tried: CP1" in text
+    assert "Parent design (the current best)" not in text
+
+
+def test_a_package_name_reused_under_another_root_is_imported_from_that_root(tmp_path):
+    """Two runs (or two tests) can use the same module name in different places; the loop must load
+    the one it is given, not the one imported first (found in #106's tests)."""
+    for k, name in ((1, "first"), (2, "second")):
+        pkg = tmp_path / f"r{k}" / "samename"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "family.py").write_text(WEDGE.replace('name="wedge"', f'name="{name}"'), encoding="utf-8")
+    assert CF.load_family(tmp_path / "r1", "samename").name == "first"
+    assert CF.load_family(tmp_path / "r2", "samename").name == "second"
+
+
+def test_in_an_explore_call_the_check_refuses_a_near_copy_of_the_reference(tmp_path):
+    """explore1-20261114-mean: all three concepts were A/B variants and learned it only after the call
+    (#106). The check now says so inside the call."""
+    pkg = tmp_path / "abcopy"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    from conftest import AB_COPY_SRC
+
+    (pkg / "family.py").write_text(AB_COPY_SRC, encoding="utf-8")
+    from conftest import cached_check
+
+    out = cached_check(tmp_path, "abcopy", reference="ab", share=0.2)
+    assert out["ok"] is False and out["novelty"]["near_copy"] is True and "near copy" in out["novelty"]["reason"]
+    assert not out["violations"] and not out["error"]  # only the novelty makes it not ok

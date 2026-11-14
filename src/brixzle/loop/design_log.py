@@ -26,7 +26,8 @@ FILE = "design_log.jsonl"
 HIDDEN = ("held_out",)  # keys the agents never see
 DECISIONS = ("baseline", "kept", "rejected", "failed_contract", "failed_quick_check", "failed_structure_gate",
              "failed_ring", "error",
-             "screened_out", "failed_screen")  # a round's candidate the cheap screen did not map (#108)
+             "screened_out", "failed_screen",  # a round's candidate the cheap screen did not map (#108)
+             "near_copy")  # an explore design too close to A/B's section (#106)
 REQUIRED = ("iteration", "attempt", "family", "decision")
 
 

@@ -30,6 +30,9 @@ class LoopConfig:
     probe_calls: int = 5             # probe_drops calls per design call (#107); 0: no probe tool
     probe_drops: int = 30            # poses per probe, the aim included (#107)
     screen_max_maps: int = 3         # of a round's candidates, at most this many get a full score (#108)
+    concepts: int = 3                # designs in an explore round, each from its own principle (#106; maintainer); 1: none
+    stall_iterations: int = 2        # explore again after this many iterations in a row with Z inside the noise band
+    near_copy_share: float = 0.2     # an explore design's section must differ from A/B's by at least this share (#106)
     seed: int = 0                    # quick-check seed; held-out Z uses seed + 1
     workers: int | None = None       # sim drop processes
     held_out: bool = True
@@ -42,7 +45,8 @@ class LoopConfig:
     def validate(self):
         if self.target not in BX.STATISTICS:
             raise ValueError(f"target must be one of {BX.STATISTICS}, got {self.target!r}")
-        for name in ("max_iterations", "patience", "design_attempts", "design_max_turns", "screen_max_maps"):
+        for name in ("max_iterations", "patience", "design_attempts", "design_max_turns", "screen_max_maps",
+                     "concepts", "stall_iterations"):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, int) or v < 1:
                 raise ValueError(f"{name} must be an integer >= 1, got {v!r}")
@@ -54,6 +58,8 @@ class LoopConfig:
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, int) or v < lo:
                 raise ValueError(f"{name} must be an integer >= {lo}, got {v!r}")
+        if not (isinstance(self.near_copy_share, (int, float)) and 0 <= self.near_copy_share < 1):
+            raise ValueError(f"near_copy_share must be in [0, 1), got {self.near_copy_share!r}")
         if isinstance(self.videos, bool) or not isinstance(self.videos, int) or self.videos < 0:
             raise ValueError(f"videos must be an integer >= 0, got {self.videos!r}")
         if self.parent is not None:

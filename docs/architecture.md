@@ -69,6 +69,17 @@ Then the end tune runs on the best design, on the current target (the first box 
 
 The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 
+### Explore rounds
+
+Issue #106. In the last real run every design was a 14–18 line subclass of A/B's parameters (`runs/loop/ab4iter2-20261114-mean`): A/B was the parent, the only example, importable, and a new concept had to beat a tuned brick on its first try. So the first design iteration, and the one after a brief that asks for a new family or after `--stall-iterations` (default 2) iterations whose Z moved by no more than the noise band (#110; an iteration that scored nothing counts as a stall too), is an **explore round**:
+
+1. `--concepts` design calls (default 3, maintainer) run side by side, as many as the API budget left can hold (the ledger holds each call's budget while it is in flight). Each gets its own capture principle from `rules/capture_principles.md` (principles only, each citing the design rules), the ones not tried yet in the run first, and A/B (the run's parent) as the score to beat, not the starting file. Each may probe its draft (#107) on a spread over the error disc.
+2. A design whose section differs from A/B's by less than `near_copy_share` (20 %) of its area is refused as `near_copy` (`loop/novelty.py`; a family that varies along Y is judged new by construction). The last run's four designs differed by 0–3 %. In an explore call `check_family` reports this (`novelty`) and is not ok for a near copy, so the agent learns it inside its call.
+3. The cheap screen (#108) picks which concepts to score; each of those gets the structure gate, the full map and the jam analysis. The best by Z on the target goes through the usual decision (held-out, acceptance, ring, renders, critic) as the iteration's design; the others are `rejected` ("another concept of this round scored higher").
+4. Each concept's principle, decision, screen score and Z go in the design log, the iteration's `summary.md` and the run's summary table.
+
+`--concepts 1` turns explore rounds off.
+
 ### Cheap screen of a round's candidates
 
 Issue #108. A full score costs about 3 to 5 minutes, so when a round has several candidates (#106) they are screened first, side by side, each in its own process (`engine/screen.py`, `Loop.screen_round`): the quick check (40 drops along X, the candidate's pass/fail filter) and 20 seeded drops on the target box's X-Y disc. The screen score is (S − J) / N over both, the form of Z.

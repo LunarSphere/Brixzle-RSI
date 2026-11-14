@@ -24,26 +24,14 @@ GRID = {"slice": "xz", "course": 0, "axes": ["x", "z"], "step": {"x": 1.0, "z": 
         "rows": ["WSSJSSJ", "FSSSSSJ"], "fixed": {"t": 0.0}}
 
 
-_CHECKS = {}
-
-
 @pytest.fixture(autouse=True)
 def _memo_family_check(monkeypatch):
     """The family check (contract, rules, two aim drops) runs in a subprocess in about 2.5 s, and
     every scripted design here writes one of a few identical sources: check each source once per
-    session. tests/test_design_agent.py covers the real check."""
-    real = CF.check_in_subprocess
+    session (conftest.cached_check). tests/test_design_agent.py covers the real check."""
+    from conftest import cached_check
 
-    def memo(root, module, **kw):
-        path = Path(root) / module / "family.py"
-        key = path.read_text(encoding="utf-8") if path.exists() else None
-        if key is None:
-            return real(root, module, **kw)
-        if key not in _CHECKS:
-            _CHECKS[key] = real(root, module, **kw)
-        return {**_CHECKS[key], "module": module}
-
-    monkeypatch.setattr(CF, "check_in_subprocess", memo)
+    monkeypatch.setattr(CF, "check_in_subprocess", cached_check)
 
 
 def counts(z, n=100):
@@ -172,7 +160,8 @@ class FakeEngine:
     def tune(self, family, p, fixed=(), target=None):
         self.calls.append(("tune", tuple(fixed)))
         self.tune_targets.append(target)
-        return {"accepted": False, "improved": False, "baseline": {"score": 0.1}, "tuned": {"score": 0.1},
+        ok = getattr(self, "tune_accepted", False)
+        return {"accepted": ok, "improved": ok, "baseline": {"score": 0.1}, "tuned": {"score": 0.3 if ok else 0.1},
                 "params": p.to_dict()}, self._dir("tune")
 
 
@@ -198,10 +187,29 @@ def probing_design_step(name="probewedge", calls=2):
     return step
 
 
+THREE = [{"name": f"m{k}", "failure": "jams in Y", "why": "DR1", "cost": "2 g"} for k in range(3)]
+
+
+def concept_step(name="cx", concepts=THREE, probe=True):
+    """An explore call as #111 wants it: probes its draft and writes three concepts in its note."""
+    def step(call):
+        if probe:
+            next(t for t in call.mcp_tools if t.name == "probe_drops").handler({})
+        out = design_step(name)(call)
+        note_path = Path(call.write_root) / "design_note.json"
+        note = json.loads(note_path.read_text(encoding="utf-8"))
+        if concepts is not None:
+            note.update(concepts=concepts, picked="m0", picked_why="simplest")
+        note_path.write_text(json.dumps(note), encoding="utf-8")
+        return out
+    return step
+
+
 def critic_step(decision="redesign"):
     brief = {"decision": decision, "reason": "jams at the +X edge", "clusters": [] if decision == "stop" else [
         {"failure": "jam band", "diagnosis": "two-point wedge", "rules": ["DR2"], "change": "longer face",
-         "scope": "reshape", "expected_effect": "fewer jams"}]}
+         "scope": "reshape", "expected_effect": "fewer jams", "faces": "B: tooth ON A: slot",
+         "shape_change": "a longer entry face", "change_kind": "shape"}]}
     return RN.AgentResult(structured=brief, cost_usd=0.02, turns=1)
 
 
@@ -219,7 +227,7 @@ def _cfg(tmp_path, **kw):
     """The existing cases run from scratch (``--parent none``) on a fixed target (``ladder=False``);
     the baseline tests pass parent='ab' and the ladder tests ladder=True."""
     return LoopConfig(runs=str(tmp_path / "runs"), results=str(tmp_path / "RSI_RESULTS"),
-                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, "ladder": False,
+                      **{"max_iterations": 2, "budget_usd": 5.0, "parent": None, "ladder": False, "concepts": 1,
                          "lessons_file": str(tmp_path / "lessons.jsonl"), **kw})
 
 
@@ -903,3 +911,89 @@ def test_the_round_maps_no_more_designs_than_the_clock_allows_and_says_so(tmp_pa
     assert len(mapped) == 2  # 4 minutes left: two full scores of 100 s fit, a third does not
     assert any("wall-clock" in w for w in rec["warnings"])
 
+
+# --- explore rounds (#106) ---
+
+def ab_copy_step(name="abcopy"):
+    def step(call):
+        next(t for t in call.mcp_tools if t.name == "probe_drops").handler({})
+        pkg = Path(call.write_root)
+        from conftest import AB_COPY_SRC
+
+        (pkg / "family.py").write_text(AB_COPY_SRC, encoding="utf-8")
+        (pkg / "design_note.json").write_text(json.dumps({"summary": "A/B again", "changes": "tooth_L",
+                                                          "geometry": "Prismatic", "concepts": THREE,
+                                                          "picked": "m0"}), encoding="utf-8")
+        return RN.AgentResult(text="done", cost_usd=0.10, turns=5)
+    return step
+
+
+def test_the_first_iteration_explores_n_concepts_with_n_principles_and_keeps_the_best(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.3, 0.7, 0.5], held=[0.5, 0.5, 0.5])
+    loop, runner = _loop(tmp_path, intake, [concept_step("cx"), concept_step("cx"), concept_step("cx")], engine,
+                         max_iterations=1, concepts=3)
+    state = loop.run()
+    it = state["iterations"][0]
+    assert it["mode"] == "explore" and "first" in it["explore_reason"]
+    design_calls = [c for c in runner.calls if c.name == "design"]
+    assert len(design_calls) == 3
+    principles = [c["concept"] for c in it["concepts"]]
+    assert len(set(principles)) == 3 and all(p.startswith("CP") for p in principles)
+    assert all(p in call.prompt for p, call in zip(sorted(principles), sorted(
+        design_calls, key=lambda c: next(x for x in principles if x in c.prompt))))
+    scored = [c for c in it["concepts"] if c.get("z")]
+    assert len(scored) == 3
+    best = max(scored, key=lambda c: c["z"]["mean"]["Z"])
+    assert it["decision"] == "kept" and it["module"] == best["module"] and best["z"]["mean"]["Z"] == pytest.approx(0.7)
+    others = [c for c in scored if c is not best]
+    assert all(c["decision"] == "rejected" and "another concept" in c["reason"] for c in others)
+    assert state["principles_tried"] == sorted(principles, key=lambda x: int(x[2:]))
+    logged = [e for e in loop.log.entries() if e["iteration"] == 1]
+    assert len(logged) == 3 and {e.get("concept") for e in logged} == set(principles)
+    summary = (Path(loop.results) / "summary.md").read_text(encoding="utf-8")
+    it_summary = (Path(loop.results) / "iter-01" / "summary.md").read_text(encoding="utf-8")
+    for c in it["concepts"]:
+        assert c["module"] in summary and c["concept"] in summary and c["module"] in it_summary
+
+
+def test_an_explore_design_that_is_a_near_copy_of_a_b_is_refused(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, runner = _loop(tmp_path, intake, [ab_copy_step("abcopy"), concept_step("cx")], engine,
+                         max_iterations=1, concepts=2)
+    state = loop.run()
+    it = state["iterations"][0]
+    copies = [c for c in it["concepts"] if c["decision"] == "near_copy"]
+    assert len(copies) == 1 and "near copy" in copies[0]["reason"]
+    assert any(e["decision"] == "near_copy" for e in loop.log.entries())
+
+
+def test_one_concept_keeps_the_old_one_design_iteration(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, _ = _loop(tmp_path, intake, [design_step("solo")], engine, max_iterations=1, concepts=1)
+    it = loop.run()["iterations"][0]
+    assert it.get("mode", "reshape") == "reshape" and "concepts" not in it
+
+
+def _it(i, z, best_before, mode="reshape", decision="rejected", brief=None):
+    n = 356
+    s = round((z + 1) / 2 * n)
+    return {"iteration": i, "mode": mode, "decision": decision, "brief": brief, "target": "mean",
+            "z": {"mean": {"Z": z, "S": s, "J": n - s, "N": n}},
+            "z_change": {"best_before": best_before, "delta": z - best_before,
+                         "band": 0.033}}
+
+
+def test_explore_again_on_a_stall_or_when_the_critic_asks_for_a_new_family():
+    cfg = LoopConfig(concepts=3, stall_iterations=2)
+    first = {"iterations": [{"iteration": 0, "decision": "baseline"}]}
+    assert "first" in OR.explore_reason(first, cfg)
+    explored = {"iterations": [{"iteration": 0, "decision": "baseline"}, _it(1, 0.6, 0.5, mode="explore", decision="kept")]}
+    assert OR.explore_reason(explored, cfg) is None
+    stalled = {"iterations": explored["iterations"] + [_it(2, 0.61, 0.6), _it(3, 0.58, 0.6)]}
+    assert "noise band" in OR.explore_reason(stalled, cfg)
+    moving = {"iterations": explored["iterations"] + [_it(2, 0.61, 0.6), _it(3, 0.7, 0.6, decision="kept")]}
+    assert OR.explore_reason(moving, cfg) is None
+    brief = {"decision": "redesign", "clusters": [{"scope": "new_family"}]}
+    asked = {"iterations": explored["iterations"] + [_it(2, 0.61, 0.6, brief=brief)]}
+    assert "new family" in OR.explore_reason(asked, cfg)
+    assert OR.explore_reason(first, LoopConfig(concepts=1)) is None

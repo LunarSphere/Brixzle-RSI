@@ -47,5 +47,6 @@ def test_screens_run_side_by_side_in_subprocesses(tmp_path):
     # The X part stops early once the quick check has failed (yfunnel fails it); the X-Y part always runs.
     one = out["one"]
     assert one["xy"]["N"] == 4 and one["N"] == one["x"]["N"] + 4 and one["check"]["passed"] is False
-    assert one == {**out["two"], "seconds": one["seconds"]}
+    same = lambda r: {k: v for k, v in r.items() if k not in ("seconds", "check_full")}  # noqa: E731
+    assert same(one) == same(out["two"]) and one["check_full"]["drops"] == out["two"]["check_full"]["drops"]
     assert "error" in out["bad"]

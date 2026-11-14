@@ -62,6 +62,7 @@ def screen(family, p, box, seed=0, n_x=QC.N_DROPS, n_xy=N_XY, check=None):
     out = combine(x, xy)
     out["check"] = {"passed": bool(x["passed"]), "seated": x["seated"], "dropped": x["dropped"], "outcomes": x["outcomes"],
                     "need": x.get("need", need)}
+    out["check_full"] = x  # the whole quick check, for the full map's ranges (#106)
     out["label"] = LABEL
     out["seconds"] = round(time.time() - t0, 2)
     return out

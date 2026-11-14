@@ -155,8 +155,9 @@ Design rules (rules/design_rules.md; the critic cites them by id):
 {lessons}"""
 
 
-def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None):
-    """The task: the concept, the extras, the parent design and what to change."""
+def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None, explore=None):
+    """The task: the concept, the extras, the parent design and what to change. ``explore`` (#106):
+    {'principle', 'tried', 'beat'} for an explore call, which gets no parent to reshape."""
     images = "\n".join(f"- {img['abs_path']}" for img in intake["concept_images"])
     extras = [e for e in intake.get("extras", []) if (e.get("resolution") or {}).get("choice") != "drop_extra"]
     extra_lines = "\n".join(
@@ -170,7 +171,9 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
              "it): " + ", ".join(str(REPO / e) for e in EXAMPLES)]
     if (fixed or {}).get("U_mm"):
         parts.append(f"The voxel pitch U is fixed at intake: {fixed['U_mm']} mm. Do not give U a bounds entry.")
-    if parent is not None:
+    if explore is not None:
+        parts.append(explore_text(explore))
+    elif parent is not None:
         parts.append(f"Parent design (the current best), to reshape or replace: {parent}")
     if brief is not None:
         parts.append("Redesign brief from the critic:\n" + json.dumps(brief, indent=2))
@@ -192,9 +195,38 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
     return "\n\n".join(parts)
 
 
-def check_tool(ws):
+PRINCIPLES = REPO / "src" / "brixzle" / "rules" / "capture_principles.md"
+
+
+def principles():
+    """The capture principles for explore rounds (#106): [{'id', 'title', 'text'}] in file order."""
+    out = []
+    for block in re.split(r"^## ", PRINCIPLES.read_text(encoding="utf-8"), flags=re.M)[1:]:
+        head, _, body = block.partition("\n")
+        m = re.match(r"(CP\d+)\.\s*(.+)", head.strip())
+        if m:
+            out.append({"id": m.group(1), "title": m.group(2).strip(), "text": " ".join(body.split())})
+    return out
+
+
+def explore_text(explore):
+    """The explore task's part of the prompt (#106): the principle, what was tried, and A/B as the
+    score to beat."""
+    p = explore["principle"]
+    tried = ", ".join(explore.get("tried") or []) or "none"
+    return (f"This is an explore call: design a NEW brick from the capture principle below. Write your own "
+            f"profile and interlock. A/B is the score to beat, not your starting file: the loop refuses a design "
+            f"whose section is a near copy of A/B's (a subclass of its parameters with a few numbers changed); "
+            f"check_family reports it ('novelty') and is not ok until your section differs enough. "
+            f"You may still read A/B for how a family is written.\n"
+            f"Score to beat: {explore.get('beat') or 'A/B'}.\n"
+            f"Principle {p['id']}. {p['title']}: {p['text']}\n"
+            f"Already tried: {tried}. Do not repeat a concept the design log shows failing.")
+
+
+def check_tool(ws, reference=None, share=None):
     def handler(_args):
-        return json.dumps(CF.check_in_subprocess(ws.root, ws.module), indent=1)
+        return json.dumps(CF.check_in_subprocess(ws.root, ws.module, reference=reference, share=share), indent=1)
 
     return ToolSpec(CHECK_TOOL, "Check the family in your package: the family contract and the rule margins. "
                     "Returns JSON with ok, violations, broken rules, margins and mass.", {}, handler)
@@ -236,21 +268,22 @@ class DesignOutcome:
 
 def design(runner, intake, attempt_dir, module, brief=None, parent=None, failures=None, log_text="",
            budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text="", prober=None,
-           probe_calls=PROBE_CALLS):
+           probe_calls=PROBE_CALLS, explore=None):
     """Run the design agent once; returns a DesignOutcome. The loop checks the package itself
     afterwards, whatever the agent said. ``prober(root, module)``, if given, is served as the
     probe_drops tool, at most ``probe_calls`` times (issue #107)."""
     ws = Workspace.make(attempt_dir, module)
     probes = []
-    tools = (check_tool(ws),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
+    ref, share = (explore or {}).get("reference"), (explore or {}).get("share")
+    tools = (check_tool(ws, ref, share),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
     call = AgentCall(name="design", system=system_prompt(lessons_text),
-                     prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed")),
+                     prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed"), explore),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
                      write_root=ws.pkg, read_roots=(*READ_ROOTS, Path(attempt_dir).parent.parent,
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
                      mcp_tools=tools, max_turns=max_turns)
     result = runner.run(call)
-    final = CF.check_in_subprocess(ws.root, ws.module)
+    final = CF.check_in_subprocess(ws.root, ws.module, reference=ref, share=share)
     note_path = ws.pkg / NOTE_FILE
     try:
         note = json.loads(note_path.read_text(encoding="utf-8")) if note_path.exists() else {}

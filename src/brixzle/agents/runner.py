@@ -28,6 +28,7 @@ import math
 import os
 from pathlib import Path
 import subprocess
+import threading
 from typing import Any, Callable
 
 # Credentials Claude Code may report (SystemMessage init 'apiKeySource') for the spend to be on
@@ -116,6 +117,9 @@ class SpendLedger:
                 or cap_usd <= 0:
             raise ValueError(f"the spend cap must be a finite number of dollars > 0, got {cap_usd!r}")
         self.path, self.cap_usd = Path(path), float(cap_usd)
+        # Calls in flight hold their budget until recorded, so calls made side by side (#106) cannot
+        # pass the cap together.
+        self._held, self._lock = 0.0, threading.Lock()
 
     def rows(self):
         if not self.path.exists():
@@ -126,13 +130,21 @@ class SpendLedger:
         return float(sum(r["cost_usd"] for r in self.rows()))
 
     def remaining(self):
-        return max(0.0, self.cap_usd - self.spent())
+        return max(0.0, self.cap_usd - self.spent() - self._held)
 
     def reserve(self, budget_usd):
-        """Raise BudgetExceeded unless a call costing up to ``budget_usd`` fits under the cap."""
-        if self.spent() + budget_usd > self.cap_usd + 1e-12:
-            raise BudgetExceeded(f"a call of up to ${budget_usd:.2f} could pass the cap: ${self.spent():.4f} spent "
-                                 f"of ${self.cap_usd:.2f} ({self.path})")
+        """Hold ``budget_usd`` for a call, or raise BudgetExceeded if it could pass the cap with the
+        spend so far and the calls in flight. ``record`` (or ``release``) frees the hold."""
+        with self._lock:
+            if self.spent() + self._held + budget_usd > self.cap_usd + 1e-12:
+                raise BudgetExceeded(f"a call of up to ${budget_usd:.2f} could pass the cap: ${self.spent():.4f} spent "
+                                     f"and ${self._held:.2f} held by calls in flight, of ${self.cap_usd:.2f} ({self.path})")
+            self._held += float(budget_usd)
+
+    def release(self, budget_usd):
+        """Free a hold made by ``reserve``."""
+        with self._lock:
+            self._held = max(0.0, self._held - float(budget_usd or 0.0))
 
     def record(self, name, model, result: AgentResult, budget_usd=None):
         """Add a finished call. A call whose cost the SDK did not report counts as its whole budget."""
@@ -144,8 +156,10 @@ class SpendLedger:
                "usage": {k: v for k, v in (result.usage or {}).items() if isinstance(v, (int, float))},
                "api_key_source": result.api_key_source, "is_error": result.is_error}
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, allow_nan=False) + "\n")
+        with self._lock:
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, allow_nan=False) + "\n")
+        self.release(budget_usd)
         return row
 
 
@@ -335,7 +349,12 @@ class ScriptedRunner:
             self.ledger.reserve(call.max_budget_usd)
         self.calls.append(call)
         step = self.script.pop(0)
-        result = step(call) if callable(step) else step
+        try:
+            result = step(call) if callable(step) else step
+        except BaseException:
+            if self.ledger is not None:
+                self.ledger.release(call.max_budget_usd)
+            raise
         if self.ledger is not None:
             self.ledger.record(call.name, self.model, result, budget_usd=call.max_budget_usd)
         return result

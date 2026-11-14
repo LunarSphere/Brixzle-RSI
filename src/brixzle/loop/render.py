@@ -336,6 +336,23 @@ def ring_lines(ring):
             f"(6 x 6 cells, 2 courses, ideal placement; {LABEL}). Run: `{ring.get('run')}`.", ""]
 
 
+def _fz(c):
+    return f"{c['Z']:+.3f}" if c else "–"
+
+
+def concept_lines(concepts, target):
+    """A table of an explore round's concepts (#106): principle, package, decision, screen and Z."""
+    out = ["| Concept | Principle | Package | Decision | Screen | Z on the target | Reason |",
+           "|---|---|---|---|---|---|---|"]
+    for c in concepts:
+        sc = c.get("screen")
+        z = (c.get("z") or {}).get(target)
+        out.append(f"| {c.get('id', '?')} | {c.get('concept', '?')} {c.get('principle', '')} | `{c.get('module', '?')}` | "
+                   f"{c.get('decision', '?')} | {_fz(sc)} | "
+                   f"{_fz(z)} | {str(c.get('reason') or '')[:160]} |")
+    return out
+
+
 def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
     """summary.md for one iteration, from the loop's record of it (orchestrator.Loop.iterate)."""
     i = rec["iteration"]
@@ -377,6 +394,9 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
                   f"Changes: {note.get('changes', '')}", "",
                   f"Geometry: {note.get('geometry', '?')}" + (f" ({note['solid3d_reason']})"
                                                               if note.get("solid3d_reason") else ""), ""]
+    if rec.get("concepts"):
+        lines += [f"This was an explore round (#106): {rec.get('explore_reason', '')}.", ""]
+        lines += concept_lines(rec["concepts"], target) + [""]
     lines += ["Attempts:", "", "| Attempt | Package | Outcome | Quick check | Structure gate |", "|---|---|---|---|---|"]
     for a in rec.get("attempts", []):
         qc, g = a.get("quick_check"), a.get("gate")
@@ -473,6 +493,15 @@ def run_summary(state, target, ledger_path, spent_usd, cap_usd):
         rung = it.get("target") or target
         lines.append(f"| {it['iteration']} | {it.get('family', '–')} | {it['decision']} | {zz(rung)} | "
                      f"{zz('mean')} | {zz('p95')} | {zz('max')} | {rung if z else '–'} |")
+        for c in it.get("concepts") or []:  # every concept of an explore round (#106)
+            cz = c.get("z") or {}
+
+            def cc(s_, cz=cz):
+                return f"{cz[s_]['Z']:+.3f}" if s_ in cz else "–"
+
+            lines.append(f"| {it['iteration']} · {c.get('concept', '?')} | `{c.get('module', '?')}` | "
+                         f"{c.get('decision', '?')} | {cc(rung)} | {cc('mean')} | {cc('p95')} | {cc('max')} | "
+                         f"{rung if cz else '–'} |")
     best = state.get("best")
     lines += ["", f"**Stopped:** {state.get('stop')}", "",
               f"**Best:** {best['family']} from iteration {best['iteration']}, Z {best.get('target', target)} "
