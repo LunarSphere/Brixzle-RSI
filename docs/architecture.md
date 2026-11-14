@@ -275,6 +275,10 @@ Issue #81. `engine/structures.py` and `engine/sim/assemble.py` port aerial-assem
 
 Only ideal placement is reported so far.
 
+### Pickup check on the final design
+
+Issue #113: a report, not a gate (maintainer, 2026-11-13). After the end tune, the run's final design (at its tuned parameters if the tune was accepted) gets `engine/pickup_check.py`: the R10 margins (two large through-Y openings straddling and above the centre of mass; brick plus gripper within 35 g, the 5 g gripper allowance a guess until #24), and, for a Prismatic family with two usable openings, today's fixed fork as a stand-in for the gripper: one pick at ideal alignment and six seeded picks inside the mean pickup box, then the clean release check. Otherwise the report says plainly why the fork was not run. It is written to `runs/pickup-<UTC>-<family>/pickup.json` and the run summary's Pickup section; nothing is rejected on it. `--no-pickup` skips it. A/B: R10 passes; the fork picks it at ideal alignment only (1 of 7: four offset picks jam, two miss) and releases it cleanly; 11.3 s (`runs/pickup-20261114T040502193725Z-ab`, simulated, uncalibrated contact).
+
 ### End tune
 
 `engine/tune.py` runs once, on the family the loop settled on (issue #14). The loop itself changes shapes, not numbers; this last step moves the numbers.

@@ -63,6 +63,7 @@ from brixzle.agents import design as DA
 from brixzle.agents.runner import BudgetExceeded, ClaudeRunner, SpendLedger
 from brixzle.engine import boxes as BX
 from brixzle.engine import jam_analysis as JA
+from brixzle.engine import pickup_check as PU
 from brixzle.engine import probe as PB
 from brixzle.engine import quick_check as QC
 from brixzle.engine import report as RP
@@ -153,6 +154,10 @@ class SimEngine:
             if r.get("check_full"):
                 r["check_run"] = str(QC.write_check(r["check_full"], self.cfg.runs))
         return out
+
+    def pickup(self, family, p):
+        """The pickup check on the final design (#113): R10 and today's fork, a report."""
+        return PU.pickup_check(family, p, seed=self.cfg.seed, runs=self.cfg.runs)
 
     def rest_pictures(self, family, p, map_dir, target, out_dir, seed):
         """Pictures and contact tables of a few failed rests inside ``target``'s box (#112)."""
@@ -429,6 +434,8 @@ class Loop:
         _save(self.run_dir, self.state)
         if self.cfg.tune and self.state["best"] and self.state.get("tune") is None and not self.cfg.baseline_only:
             self.state["tune"] = self.end_tune()
+        if self.cfg.pickup and self.state["best"] and self.state.get("pickup") is None and not self.cfg.baseline_only:
+            self.state["pickup"] = self.pickup_report()
         self.state["elapsed_s"] = time.time() - t0
         self.state["spent_usd"] = self.ledger.spent()
         _save(self.run_dir, self.state)
@@ -1151,6 +1158,22 @@ class Loop:
                 tune.update(accepted=False, refused="the tuned design does not build: " + "; ".join(refused))
         return tune
 
+    def pickup_report(self):
+        """The pickup check (#113) on the run's final design: the best, at its tuned parameters if the
+        tune was accepted. A report, not a gate."""
+        best = self.state["best"]
+        fam = load_scored(best)
+        tune = self.state.get("tune") or {}
+        p = fam.params_type.from_dict(tune["params"]) if tune.get("accepted") and tune.get("params") else fam.defaults
+        t = time.time()
+        try:
+            out = self.engine.pickup(fam, p)
+        except Exception as e:  # noqa: BLE001 - a report must not lose the run
+            out = {"checked": False, "error": f"{type(e).__name__}: {e}"[:500]}
+        out["tuned"] = bool(tune.get("accepted"))
+        out.setdefault("seconds", time.time() - t)
+        return out
+
     def write_iteration_summary(self, rec, res_dir):
         text = RD.iteration_summary(rec, self.name, rec.get("target") or self.cfg.target, self.ledger.path,
                                     self.ledger.spent(), self.cfg.budget_usd)
@@ -1198,6 +1221,7 @@ def parser():
     ap.add_argument("--seed", type=int, default=d.seed)
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--no-tune", action="store_true", help="skip the end tune")
+    ap.add_argument("--no-pickup", action="store_true", help="skip the pickup check on the final design (#113)")
     ap.add_argument("--videos", type=int, default=d.videos, help="drop videos per iteration (0: none)")
     ap.add_argument("--runs", default=d.runs)
     ap.add_argument("--results", default=d.results)
@@ -1225,7 +1249,7 @@ def config_from_args(args):
                       design_attempts=args.design_attempts, probe_calls=args.probe_calls,
                       screen_max_maps=args.screen_max_maps, concepts=args.concepts,
                       stall_iterations=args.stall_iterations, seed=args.seed, workers=args.workers,
-                      tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results).validate()
+                      tune=not args.no_tune, pickup=not args.no_pickup, videos=args.videos, runs=args.runs, results=args.results).validate()
 
 
 def main(argv=None):
