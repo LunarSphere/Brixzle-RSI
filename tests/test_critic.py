@@ -29,9 +29,13 @@ JAM = {"family": "ab", "box": BOX.to_dict(), "seconds": 3.0, "one_offs": [],
        "capture_limits": []}
 GOOD = {"decision": "redesign", "reason": "a wedging band and wrong valleys at both X edges", "clusters": [
     {"failure": "jam band on course 1 at x 0", "diagnosis": "two-point contact wedges", "rules": ["DR2", "DR10"],
-     "change": "lengthen the engaging face", "scope": "reshape", "expected_effect": "J falls by about 3"},
+     "change": "lengthen the engaging face", "scope": "reshape", "expected_effect": "J falls by about 3",
+     "faces": "B: tooth tip ON A: slot mouth chamfer; B: long ramp ON A: long ramp",
+     "shape_change": "make the slot mouth a 60 degree funnel twice as wide", "change_kind": "shape"},
     {"failure": "wrong valley past +-12 mm", "diagnosis": "a stable rest away from the seat", "rules": ["DR5"],
-     "change": "slope the outer ledge", "scope": "reshape", "expected_effect": "more of the box seats"}]}
+     "change": "slope the outer ledge", "scope": "reshape", "expected_effect": "more of the box seats",
+     "faces": "B: bottom flat ON A: outer ledge", "shape_change": "replace the flat outer ledge with a 45 degree ramp",
+     "change_kind": "shape"}]}
 
 
 def _run(answer):
@@ -53,7 +57,7 @@ def test_the_critic_reads_z_the_map_the_jam_analysis_the_code_and_the_rules():
     assert "wedged (Whitney 1982)" in call.prompt                      # the jam analysis
     assert "FAMILY = Family(...)" in call.prompt
     assert "## DR2." in call.system and "whitney-1982" in call.system  # the rules and their sources
-    assert call.tools == () and call.output_schema == CR.BRIEF_SCHEMA
+    assert call.output_schema == CR.BRIEF_SCHEMA
 
 
 def test_a_stop_needs_only_a_reason():
@@ -68,6 +72,9 @@ def test_a_stop_needs_only_a_reason():
     {**GOOD, "clusters": [{**GOOD["clusters"][0], "scope": "tweak"}]},    # an unknown scope
     {**GOOD, "decision": "maybe"},
     {**GOOD, "reason": " "},
+    {**GOOD, "clusters": [{k: v for k, v in GOOD["clusters"][0].items() if k != "faces"}]},  # #112: faces
+    {**GOOD, "clusters": [{**GOOD["clusters"][0], "shape_change": " "}]},
+    {**GOOD, "clusters": [{**GOOD["clusters"][0], "change_kind": "vibes"}]},
 ])
 def test_a_malformed_brief_is_refused(bad):
     with pytest.raises(ValueError):
@@ -105,3 +112,32 @@ def test_the_critic_reads_the_structure_gate_and_the_overhang():
     call = runner.calls[0]
     assert "Structure gate" in call.prompt and "overhang_n 5" in call.prompt and "b5_5" in call.prompt
     assert "keep the structure gate passing" in call.system and "raise the overhang" in call.system
+
+
+# --- faces in contact and a shape change (#112) ---
+
+PARAMS_ONLY = {**GOOD, "clusters": [{**GOOD["clusters"][0], "change_kind": "parameters",
+                                     "shape_change": "tooth_L 6.5 -> 7.0"}]}
+
+
+def test_after_a_stall_a_brief_that_only_changes_parameters_is_refused():
+    assert CR.validate_brief(PARAMS_ONLY)  # fine while Z is moving
+    with pytest.raises(ValueError, match="parameter"):
+        CR.validate_brief(PARAMS_ONLY, stalled=True)
+    assert CR.validate_brief(GOOD, stalled=True)
+
+
+def test_the_critic_reads_the_rest_pictures_and_the_contact_table(tmp_path):
+    (tmp_path / "rest-1-xz.png").write_bytes(b"png")
+    rest = {"dir": str(tmp_path), "drops": [{"k": 1, "outcome": "jammed", "slice": "xy", "course": 1,
+                                             "pose": {"x": 2.0, "y": 8.0, "z": 1.0, "t": 0.0},
+                                             "pictures": ["rest-1-xz.png", "rest-1-yz.png"],
+                                             "contacts": [{"brick": "B", "on_brick": "B: tooth tip",
+                                                           "on_support": "A: slot mouth", "normal": [0.6, 0.0, 0.8]}]}]}
+    runner = RN.ScriptedRunner([RN.AgentResult(structured=GOOD, cost_usd=0.03)])
+    CR.critique(runner, REPORT, MAP, JAM, "FAMILY = Family(...)", "none", "mean", rest=rest)
+    call = runner.calls[0]
+    assert call.tools == ("Read",) and tuple(map(str, call.read_roots)) == (str(tmp_path),)
+    assert "rest-1-xz.png" in call.prompt and "B: tooth tip" in call.prompt and "A: slot mouth" in call.prompt
+    assert "faces" in call.system and "shape_change" in call.system
+

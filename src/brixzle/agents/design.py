@@ -167,7 +167,7 @@ def repair_text(repair):
 
 
 def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None, explore=None,
-                repair=None):
+                repair=None, pictures=()):
     """The task: the concept, the extras, the parent design and what to change. ``explore`` (#106):
     {'principle', 'tried', 'beat'} for an explore call, which gets no parent to reshape."""
     images = "\n".join(f"- {img['abs_path']}" for img in intake["concept_images"])
@@ -189,6 +189,10 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
         parts.append(explore_text(explore))
     elif parent is not None:
         parts.append(f"Parent design (the current best), to reshape or replace: {parent}")
+    if pictures:
+        parts.append("Pictures of the parent design to read with the Read tool before you change it (#112): its jam "
+                     "map, its module and where failed drops came to rest (rest-K-xz side on, rest-K-yz end on; "
+                     "simulated, uncalibrated contact):\n" + "\n".join(f"- {q}" for q in pictures))
     if brief is not None:
         parts.append("Redesign brief from the critic:\n" + json.dumps(brief, indent=2))
     if failures and "ring" in failures:
@@ -304,7 +308,7 @@ class DesignOutcome:
 
 def design(runner, intake, attempt_dir, module, brief=None, parent=None, failures=None, log_text="",
            budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text="", prober=None,
-           probe_calls=PROBE_CALLS, explore=None, repair=None):
+           probe_calls=PROBE_CALLS, explore=None, repair=None, pictures=()):
     """Run the design agent once; returns a DesignOutcome. The loop checks the package itself
     afterwards, whatever the agent said. ``prober(root, module)``, if given, is served as the
     probe_drops tool, at most ``probe_calls`` times (issue #107)."""
@@ -314,9 +318,10 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
     tools = (check_tool(ws, ref, share),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
     call = AgentCall(name="design", system=system_prompt(lessons_text),
                      prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed"), explore,
-                                        repair),
+                                        repair, pictures),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
                      write_root=ws.pkg, read_roots=(*READ_ROOTS, Path(attempt_dir).parent.parent,
+                                                    *dict.fromkeys(Path(q).parent for q in pictures),
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
                      mcp_tools=tools, max_turns=max_turns)
     result = runner.run(call)

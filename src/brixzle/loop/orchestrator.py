@@ -78,6 +78,7 @@ from brixzle.loop import render as RD
 from brixzle.loop import videos as VD
 from brixzle.loop.config import LoopConfig
 from brixzle.loop import novelty as NV
+from brixzle.loop import rest as RS
 from brixzle.loop.design_log import DesignLog
 
 STATE = "state.json"
@@ -152,6 +153,10 @@ class SimEngine:
             if r.get("check_full"):
                 r["check_run"] = str(QC.write_check(r["check_full"], self.cfg.runs))
         return out
+
+    def rest_pictures(self, family, p, map_dir, target, out_dir, seed):
+        """Pictures and contact tables of a few failed rests inside ``target``'s box (#112)."""
+        return RS.rest_pictures(family, p, SM.read_drops(map_dir), self.boxes[target], out_dir, seed=seed)
 
     def probe_poses(self, map_dir, target, seed):
         """The drop probe's poses (#107) on ``target``'s box: the failures, some seats and the aim of
@@ -268,6 +273,12 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
     if elapsed_s > cfg.max_minutes * 60:
         return f"wall-clock budget spent ({elapsed_s / 60:.1f} of {cfg.max_minutes:g} min)"
     return None
+
+
+def B_varies(family):
+    from brixzle.families import builders as B
+
+    return B.varies_along_y(family)
 
 
 def _stalled(it):
@@ -513,6 +524,7 @@ class Loop:
             failures = {"ring": last["ring"]["failure"]}  # the last design closed no ring (#89)
         last_err, repeated = None, None
         prober = self._prober(iter_dir, i, best)
+        pictures = self._pictures(prov or best, self.state["iterations"])
         for a in range(1, cfg.design_attempts + 1):
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
@@ -522,7 +534,7 @@ class Loop:
                                     parent=parent, failures=failures, log_text=self.log.text(),
                                     budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
                                     lessons_text=self.lessons_text(), prober=prober, probe_calls=cfg.probe_calls,
-                                    repair=repair)
+                                    repair=repair, pictures=pictures)
             except BudgetExceeded:
                 raise
             except Exception as e:  # noqa: BLE001 - an SDK or API error: log it and try again
@@ -646,6 +658,8 @@ class Loop:
             # How far Z moved against the best, and the noise band of the best's Z (#110): a stall (#106).
             rec["z_change"] = {"best_before": z_on(best, target), "delta": z_t - z_on(best, target),
                                "band": ZS.z_band(best["z"][target])}
+        if best is not None and not baseline and rec.get("mode") not in ("explore",):
+            rec["stalled_parameters"] = self._parameter_only(fam, p, best) and _stalled(rec)
         if baseline:
             kept, why = True, f"the parent family {rec['family']!r}, scored as the baseline the designs must beat"
             self._ring(rec, fam, p)  # recorded, not judged: it is the reference
@@ -692,7 +706,7 @@ class Loop:
                                   "z_target": z_t, "target": target, "z": rec["z"], "held_out": held,
                                   "held_out_by": {target: held} if held else {}, "map": str(map_dir),
                                   "mass_g": rec.get("mass_g"), "overhang_n": rec.get("overhang_n"),
-                                  "gate": (rec.get("runs") or {}).get("gate")}
+                                  "gate": (rec.get("runs") or {}).get("gate"), "results": rec.get("results")}
         sim_map = self.engine.read_map(map_dir)
         last_att = rec["attempts"][-1] if rec["attempts"] else {}
         if rec.get("mode") == "explore":
@@ -725,18 +739,28 @@ class Loop:
         if (not at_top(self.state["best"], cfg) and i < cfg.max_iterations and not cfg.baseline_only
                 and rec["decision"] != "provisional"):  # a provisional design is repaired next, not critiqued (#109)
             family_source = family_py(rec).read_text(encoding="utf-8")
+            rec["critic_target"] = current_target(self.state, cfg)  # the rung the next design is judged on
+            rest = self._rest(rec, fam, p, map_dir, res_dir)
+            stalled = bool(rec.get("stalled_parameters"))
             t = time.time()
-            try:
-                rec["critic_target"] = current_target(self.state, cfg)  # the rung the next design is judged on
-                brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
-                                            rec["critic_target"], budget_usd=cfg.critic_budget_usd,
-                                            lessons_text=self.lessons_text(), gate=rec.get("gate"))
-                rec["brief"], rec["critic_cost_usd"] = brief, result.cost_usd
-            except BudgetExceeded:
-                raise
-            except Exception as e:  # noqa: BLE001 - a malformed brief or an SDK error: the next design gets no brief
-                rec["brief"] = None
-                rec["critic_error"] = f"{type(e).__name__}: {e}"[:500]
+            note = ""
+            for _ in range(2):  # one retry, with the reason, when a brief is refused after a stall (#112)
+                try:
+                    brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
+                                                rec["critic_target"], budget_usd=cfg.critic_budget_usd,
+                                                lessons_text=self.lessons_text(), gate=rec.get("gate"), rest=rest,
+                                                stalled=stalled, retry_note=note)
+                    rec["brief"], rec["critic_cost_usd"] = brief, result.cost_usd
+                    rec.pop("critic_error", None)
+                    break
+                except BudgetExceeded:
+                    raise
+                except Exception as e:  # noqa: BLE001 - a malformed brief or an SDK error: the next design gets no brief
+                    rec["brief"] = None
+                    rec["critic_error"] = f"{type(e).__name__}: {e}"[:500]
+                    if not (stalled and "parameter" in str(e)):
+                        break
+                    note = f"Your last brief was refused: {e}. Write it again with a change of shape."
             rec["seconds"]["critic"] = time.time() - t
         rec["spent_usd"] = self.ledger.spent() - spent0
         rec["seconds"]["total"] = time.time() - t_iter
@@ -898,6 +922,23 @@ class Loop:
         c["decision"], c["reason"] = out["decision"], out.get("reason")
         return out
 
+    @staticmethod
+    def _pictures(src, iterations):
+        """The parent design's jam map, module picture and rest pictures, for the design agent (#112)."""
+        if not src:
+            return ()
+        res = src.get("results") or next((it.get("results") for it in iterations
+                                          if it["iteration"] == src.get("iteration")), None)
+        if not res:
+            return ()
+        res = Path(res)
+        out = [res / "jam_map.png", res / "module.png"]
+        rest = src.get("rest") or next((it.get("rest") for it in iterations if it["iteration"] == src.get("iteration")),
+                                       None) or {}
+        for d in rest.get("drops") or []:
+            out += [Path(rest["dir"]) / f for f in d.get("pictures") or []]
+        return tuple(q for q in out if q.exists())
+
     def _reference(self):
         """The family an explore design must not copy (#106): the run's parent, else A/B."""
         from brixzle.families import registry
@@ -975,6 +1016,32 @@ class Loop:
         engine = self.engine
         return lambda root, module: engine.probe(root, module, path)
 
+    PARAMETER_SHARE = 0.05  # a section within 5 % of its parent's is a change of parameter values (#112)
+
+    def _parameter_only(self, fam, p, best):
+        """Whether ``fam`` changed only parameter values against the best design (its parent)."""
+        try:
+            parent = load_scored(best)
+            if B_varies(fam) or B_varies(parent):
+                return False
+            return NV.near_copy(fam, p, parent, parent.defaults, share=self.PARAMETER_SHARE)["near_copy"]
+        except Exception:  # noqa: BLE001 - unknown: not a stall
+            return False
+
+    def _rest(self, rec, fam, p, map_dir, res_dir):
+        """Rest pictures and contacts of a few failures for the critic (#112), into ``res_dir/rest``."""
+        t = time.time()
+        try:
+            rest = self.engine.rest_pictures(fam, p, map_dir, rec.get("critic_target") or rec["target"],
+                                             Path(res_dir) / "rest", self.cfg.seed * 1000 + rec["iteration"])
+        except Exception as e:  # noqa: BLE001 - the critic still gets the text
+            rec["rest_error"] = f"{type(e).__name__}: {e}"[:300]
+            return None
+        rec["seconds"]["rest"] = time.time() - t
+        rec["rest"] = {"dir": rest["dir"], "drops": [{k: d.get(k) for k in ("k", "outcome", "slice", "course", "pictures")}
+                                                      for d in rest.get("drops", [])]}
+        return rest
+
     def _make_provisional(self, rec, failures, why, z_t, target):
         """A design kept on Z that does not build yet (#109): provisional, repaired next; a repair that
         still does not build counts against ``repair_attempts``."""
@@ -987,6 +1054,7 @@ class Loop:
             return
         rec["decision"], rec["reason"] = "provisional", f"provisional: {why}"
         self.state["provisional"] = {"iteration": rec["iteration"], "module": rec["module"], "root": rec["root"],
+                                     "results": rec.get("results"), "rest": rec.get("rest"),
                                      "family": rec["family"], "family_py": str(family_py(rec)), "failures": failures,
                                      "repairs": repairs, "z_target": z_t, "target": target,
                                      "first": (prov or {}).get("first", rec["iteration"]),

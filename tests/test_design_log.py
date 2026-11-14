@@ -61,7 +61,8 @@ def test_the_critic_sees_past_attempts_in_its_prompt(tmp_path):
     log.append(_entry(note={"summary": "steeper ramps at 60 deg"}, decision="rejected",
                       reason="Z on the target did not improve"))
     brief = {"decision": "redesign", "reason": "x", "clusters": [
-        {"failure": "f", "diagnosis": "d", "rules": ["DR1"], "change": "c", "scope": "reshape", "expected_effect": "e"}]}
+        {"failure": "f", "diagnosis": "d", "rules": ["DR1"], "change": "c", "scope": "reshape", "expected_effect": "e",
+         "faces": "a ON b", "shape_change": "s", "change_kind": "shape"}]}
     runner = RN.ScriptedRunner([RN.AgentResult(structured=brief)])
     report = {"statistics": ["mean"], "z": {"mean": {"Z": 0.5, "S": 10, "J": 1, "fell": 0, "wrong_valley": 7,
                                                      "other": 0, "N": 18}}}

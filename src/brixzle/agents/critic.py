@@ -28,6 +28,8 @@ from brixzle.engine import sim_map as SM
 
 CRITIC_BUDGET_USD = 0.40
 MAX_TURNS = 4  # a structured answer takes one tool call; the rest is margin
+MAX_TURNS_WITH_PICTURES = 12  # reading up to eight rest pictures first (#112)
+CHANGE_KINDS = ("shape", "parameters")
 SCOPES = ("reshape", "new_family")
 DECISIONS = ("redesign", "stop")
 BRIEF_SCHEMA = {
@@ -37,11 +39,15 @@ BRIEF_SCHEMA = {
         "reason": {"type": "string"},
         "clusters": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["failure", "diagnosis", "rules", "change", "scope", "expected_effect"],
+            "required": ["failure", "diagnosis", "rules", "change", "scope", "expected_effect", "faces",
+                         "shape_change", "change_kind"],
             "properties": {"failure": {"type": "string"}, "diagnosis": {"type": "string"},
                            "rules": {"type": "array", "items": {"type": "string"}},
                            "change": {"type": "string"}, "scope": {"type": "string", "enum": list(SCOPES)},
-                           "expected_effect": {"type": "string"}}}},
+                           "expected_effect": {"type": "string"},
+                           # #112: the faces in contact at rest, and a change a designer can draw
+                           "faces": {"type": "string"}, "shape_change": {"type": "string"},
+                           "change_kind": {"type": "string", "enum": list(CHANGE_KINDS)}}}},
         # Lessons a later design could use (issue #88); the loop writes them once the next design is scored.
         "lessons": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["lesson", "rules", "cluster"],
@@ -71,6 +77,12 @@ How to work:
   below. Propose one concrete geometric change, say whether it reshapes this family or needs a new family, and
   say what it should do to Z and why. Do not invent results: sim results are "simulated, uncalibrated contact"
   and mechanisms are "predicted, quasi-static 2D".
+- For each cluster, name the faces in contact at rest ("faces"), from the contact table and the rest pictures
+  when you are given them (the face of the falling brick ON the face below), and give a shape change a designer
+  can draw ("shape_change": a change to the profile or to the Y geometry, such as "replace the flat ledge at the
+  slot mouth with a 45 degree ramp twice as wide"), and say whether it changes the shape or only parameter values
+  ("change_kind": "shape" or "parameters"). If you are told Z stalled after a change of parameter values only,
+  a brief whose change is again only parameter values is refused: propose a change of shape, or scope new_family.
 - Do not propose an idea the design log shows already failed, unless you say what is different now.
 - Do not copy a brick, joint or structure from any paper or system.
 - Decide "stop" only if Z is already 1 on the target, or you see no change that could raise it; say why.
@@ -111,9 +123,27 @@ def _gate_lines(gate):
             f"{gate['overhang_floor']}; simulated, uncalibrated contact):\n" + SG.failures_text(gate))
 
 
-def task_prompt(report, sim_map, jam, family_source, log_text, target, gate=None):
+def rest_text(rest):
+    """The rest pictures and the contacts at rest of a few failures (#112), as prompt text."""
+    if not rest or not rest.get("drops"):
+        return "Rests of failed drops: none recorded."
+    lines = [f"Rests of failed drops (simulated, uncalibrated contact). Pictures are in {rest['dir']}: read them "
+             f"with the Read tool (rest-K-xz.png from the side, rest-K-yz.png end-on)."]
+    for d in rest["drops"]:
+        q = d.get("pose") or {}
+        lines.append(f"- rest {d['k']}: {d['outcome']}, {d['slice']} slice, course {d['course']}, dropped at x "
+                     f"{q.get('x', 0.0):+.1f} mm, y {q.get('y', 0.0):+.1f} mm; pictures {', '.join(d.get('pictures') or []) or 'none'}")
+        for c in d.get("contacts") or []:
+            n = ", ".join(f"{v:+.2f}" for v in c.get("normal") or [])
+            lines.append(f"    {c.get('on_brick')}  ON  {c.get('on_support')}  (normal {n})")
+    return "\n".join(lines)
+
+
+def task_prompt(report, sim_map, jam, family_source, log_text, target, gate=None, rest=None, stalled=False):
     grids = "\n\n".join(SM.ascii_grid(g) for g in sim_map["grids"])
-    return "\n\n".join([
+    stall = ("Z stalled: the last design changed parameter values only and Z moved by no more than its noise band "
+             "(#110). A brief whose change is again only parameter values will be refused." if stalled else "")
+    return "\n\n".join(x for x in [
         f"Target box: {target}. Z per target box (simulated, uncalibrated contact):\n{_z_lines(report)}"
         + _y_lines(report),
         _gate_lines(gate),
@@ -122,13 +152,16 @@ def task_prompt(report, sim_map, jam, family_source, log_text, target, gate=None
         "Jam analysis (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D):\n"
         + (JA.summary(jam) if jam else "not run"),
         "Design log (earlier attempts):\n" + (log_text or "none"),
+        rest_text(rest),
         "The family's code (family.py):\n" + family_source,
+        stall,
         "Write the brief.",
-    ])
+    ] if x)
 
 
-def validate_brief(brief):
-    """Raise ValueError unless the brief is well formed and cites only rules that exist."""
+def validate_brief(brief, stalled=False):
+    """Raise ValueError unless the brief is well formed and cites only rules that exist. ``stalled``
+    (#112): Z stalled after a parameter-only change, so a parameter-only cluster is refused."""
     known = {r.id for r in RL.load_rules()}
     if not isinstance(brief, dict) or brief.get("decision") not in DECISIONS:
         raise ValueError(f"a brief needs a decision from {DECISIONS}")
@@ -143,6 +176,14 @@ def validate_brief(brief):
                 raise ValueError(f"cluster {k} has no {f}")
         if c.get("scope") not in SCOPES:
             raise ValueError(f"cluster {k}: scope must be one of {SCOPES}")
+        for f in ("faces", "shape_change"):
+            if not str(c.get(f, "")).strip():
+                raise ValueError(f"cluster {k} has no {f} (#112: the faces in contact at rest and a shape change)")
+        if c.get("change_kind") not in CHANGE_KINDS:
+            raise ValueError(f"cluster {k}: change_kind must be one of {CHANGE_KINDS}")
+        if stalled and c["change_kind"] == "parameters" and c.get("scope") != "new_family":
+            raise ValueError(f"cluster {k} changes parameter values only, but Z stalled after a parameter-only change: "
+                             f"propose a change of shape or a new family")
         rules = c.get("rules") or []
         if not rules:
             raise ValueError(f"cluster {k} cites no design rule")
@@ -166,13 +207,18 @@ def validate_brief(brief):
 
 
 def critique(runner, report, sim_map, jam, family_source, log_text, target, budget_usd=CRITIC_BUDGET_USD,
-             lessons_text="", gate=None):
+             lessons_text="", gate=None, rest=None, stalled=False, retry_note=""):
     """Run the critic once; returns (brief, AgentResult). Raises ValueError on a malformed brief.
     ``lessons_text`` (loop/lessons.py, #88) goes into its system prompt; ``gate`` is the design's
     structure gate (#83)."""
-    call = AgentCall(name="critic", system=system_prompt(lessons_text),
-                     prompt=task_prompt(report, sim_map, jam, family_source, log_text, target, gate),
-                     max_budget_usd=budget_usd, output_schema=BRIEF_SCHEMA, max_turns=MAX_TURNS)
+    pictures = bool(rest and rest.get("dir"))
+    prompt = task_prompt(report, sim_map, jam, family_source, log_text, target, gate, rest, stalled)
+    if retry_note:
+        prompt += "\n\n" + retry_note
+    call = AgentCall(name="critic", system=system_prompt(lessons_text), prompt=prompt,
+                     max_budget_usd=budget_usd, output_schema=BRIEF_SCHEMA,
+                     max_turns=MAX_TURNS_WITH_PICTURES if pictures else MAX_TURNS,
+                     tools=("Read",) if pictures else (), read_roots=(Path(rest["dir"]),) if pictures else ())
     result = runner.run(call)
     brief = result.structured if result.structured is not None else json.loads(result.text)
-    return validate_brief(brief), result
+    return validate_brief(brief, stalled=stalled), result
