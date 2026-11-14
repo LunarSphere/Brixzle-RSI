@@ -782,22 +782,24 @@ def test_the_baseline_runs_the_gate_and_sets_the_overhang_to_beat(tmp_path, inta
 # --- the ring (issue #89) ---
 
 
-def test_a_design_that_would_be_kept_but_fails_the_ring_is_rejected(tmp_path, intake):
+def test_a_design_that_would_be_kept_but_fails_the_ring_is_provisional_and_repaired_with_the_ring_failure(
+        tmp_path, intake):
+    # #89 rejected it as failed_ring; since #109 it is provisional and the next call repairs it.
     engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7, 0.6], held=[0.2] * 6)
     engine.rings = ["complete", "placement_jammed"]
-    loop, runner = _loop(tmp_path, intake, [design_step("r1"), critic_step(), design_step("r2"), critic_step(),
-                                            design_step("r3")], engine, max_iterations=3)
+    loop, runner = _loop(tmp_path, intake, [design_step("r1"), critic_step(), design_step("r2"), design_step("r3")],
+                         engine, max_iterations=3)
     loop.state["iterations"].append(loop.iterate(1))
     rec = loop.iterate(2)
-    assert rec["decision"] == "failed_ring" and "ring" in rec["reason"] and "placement_jammed" in rec["reason"]
+    assert rec["decision"] == "provisional" and "ring" in rec["reason"] and "placement_jammed" in rec["reason"]
     assert loop.state["best"]["iteration"] == 1 and rec["ring"]["status"] == "placement_jammed"
     assert rec["seconds"]["ring"] >= 0
     log = [json.loads(line)["decision"] for line in (loop.run_dir / "design_log.jsonl").read_text().splitlines()]
-    assert log == ["kept", "failed_ring"]
+    assert log == ["kept", "provisional"]
     loop.state["iterations"].append(rec)
     loop.iterate(3)
     prompt = [c for c in runner.calls if c.name == "design"][-1].prompt
-    assert "ring" in prompt and "K2_1_0_2" in prompt and "jammed" in prompt
+    assert "ring" in prompt and "K2_1_0_2" in prompt and "jammed" in prompt and "repair" in prompt
 
 
 def test_a_design_that_passes_the_ring_is_kept(tmp_path, intake):
@@ -997,3 +999,62 @@ def test_explore_again_on_a_stall_or_when_the_critic_asks_for_a_new_family():
     asked = {"iterations": explored["iterations"] + [_it(2, 0.61, 0.6, brief=brief)]}
     assert "new family" in OR.explore_reason(asked, cfg)
     assert OR.explore_reason(first, LoopConfig(concepts=1)) is None
+
+
+# --- capture first, provisional designs and repairs (#109) ---
+
+
+def test_a_design_that_improves_z_but_fails_the_ring_is_provisional_and_a_repair_that_builds_is_kept(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7, 0.75], held=[0.5, 0.5, 0.5, 0.5])
+    engine.rings = ["complete", "placement_jammed", "complete"]
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2"), design_step("w3")],
+                         engine, max_iterations=3)
+    state = loop.run()
+    it1, it2, it3 = state["iterations"]
+    assert it1["decision"] == "kept"
+    assert it2["decision"] == "provisional" and "ring" in it2["reason"]
+    assert "brief" not in it2 or it2["brief"] is None  # no critic: the next call is a repair
+    assert it3["mode"] == "repair" and it3["repair_of"] == 2 and it3["decision"] == "kept"
+    repair_call = [c for c in runner.calls if c.name == "design"][2]
+    assert "repair" in repair_call.prompt and "keep the capture geometry" in repair_call.prompt
+    assert str(Path(it2["root"]) / it2["module"] / "family.py") in repair_call.prompt
+    assert state["best"]["iteration"] == 3
+    assert state.get("provisional") is None
+
+
+def test_two_failed_repairs_reject_the_provisional_design_and_the_best_never_moves_to_it(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7, 0.72, 0.74], held=[0.5] * 6)
+    engine.rings = ["complete", "placement_jammed", "placement_jammed", "placement_jammed"]
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2"), design_step("w3"),
+                                            design_step("w4")], engine, max_iterations=4, patience=4)
+    state = loop.run()
+    decisions = [it["decision"] for it in state["iterations"]]
+    assert decisions == ["kept", "provisional", "provisional", "rejected"]
+    assert "2 repairs" in state["iterations"][3]["reason"]
+    assert state["best"]["iteration"] == 1
+    assert any(e["decision"] == "rejected" and "2 repairs" in e["reason"] for e in loop.log.entries())
+
+
+def test_a_new_concept_is_mapped_before_its_gate_and_a_failed_gate_makes_it_provisional(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.7], held=[0.5])
+    engine.gates = [(False, 2)]
+    loop, runner = _loop(tmp_path, intake, [concept_step("cx"), concept_step("cx")], engine,
+                         max_iterations=1, concepts=2)
+    engine.screens = {"rsi_t_i01_c2": (10, 30, 60, False)}  # one concept fails the quick check
+    state = loop.run()
+    it = state["iterations"][0]
+    order = [c if isinstance(c, str) else c[0] for c in engine.calls]
+    assert order.index("score") < order.index("gate")  # capture first for a new concept
+    assert it["decision"] == "provisional" and "structure gate" in it["reason"]
+    assert state["best"] is None and state["provisional"]["iteration"] == 1
+
+
+def test_a_tune_that_breaks_the_gate_or_the_ring_is_refused(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    engine.tune_accepted = True
+    loop, _ = _loop(tmp_path, intake, [design_step("w1")], engine, max_iterations=1, tune=True)
+    engine.gates = [(True, 5), (False, 5)]  # the design's gate passes; the tuned design's does not
+    state = loop.run()
+    tune = state["tune"]
+    assert tune["accepted"] is False and "structure gate" in tune["refused"]
+    assert tune["seconds_checks"] >= 0

@@ -261,7 +261,7 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
     if len(designs) >= cfg.max_iterations:
         return f"{cfg.max_iterations} iterations run"
     last_kept = max((i["iteration"] for i in its if i.get("decision") in ("kept", BASELINE)), default=0)
-    if designs and its[-1]["iteration"] - last_kept >= cfg.patience:
+    if designs and its[-1]["iteration"] - last_kept >= cfg.patience and not state.get("provisional"):
         return f"no kept design for {cfg.patience} iterations"
     if remaining_usd < cfg.design_budget_usd + cfg.critic_budget_usd:
         return f"API budget spent (${remaining_usd:.2f} left of ${cfg.budget_usd:.2f})"
@@ -481,7 +481,8 @@ class Loop:
     def iterate(self, i):
         if i == 0:
             return self.baseline()
-        why = explore_reason(self.state, self.cfg)
+        prov = self.state.get("provisional")
+        why = None if prov else explore_reason(self.state, self.cfg)
         if why:
             return self.explore(i, why)
         cfg, t_iter = self.cfg, time.time()
@@ -496,7 +497,16 @@ class Loop:
                "decision": "no_design", "z": None, "runs": {}, "seconds": {}}
         failures, fam, outcome, check = None, None, None, None
         last = self.state["iterations"][-1] if self.state["iterations"] else None
-        if last and last.get("decision") == "failed_ring":
+        repair = None
+        if prov:
+            # A repair of the provisional design (#109): its own file, its failing builds, no brief.
+            rec.update(mode="repair", repair_of=prov["iteration"])
+            parent, failures, brief = Path(prov["family_py"]), dict(prov["failures"]), None
+            rec["brief_in"] = None
+            z = prov.get("z_target")
+            repair = {"family_py": prov["family_py"], "attempt": prov["repairs"] + 1, "of": cfg.repair_attempts,
+                      "z_text": f" ({prov['target']} {z:+.3f}, simulated, uncalibrated contact)" if z is not None else ""}
+        elif last and last.get("decision") == "failed_ring":
             failures = {"ring": last["ring"]["failure"]}  # the last design closed no ring (#89)
         last_err, repeated = None, None
         prober = self._prober(iter_dir, i, best)
@@ -507,7 +517,8 @@ class Loop:
                 outcome = DA.design(self.runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
                                     parent=parent, failures=failures, log_text=self.log.text(),
                                     budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
-                                    lessons_text=self.lessons_text(), prober=prober, probe_calls=cfg.probe_calls)
+                                    lessons_text=self.lessons_text(), prober=prober, probe_calls=cfg.probe_calls,
+                                    repair=repair)
             except BudgetExceeded:
                 raise
             except Exception as e:  # noqa: BLE001 - an SDK or API error: log it and try again
@@ -579,6 +590,8 @@ class Loop:
                              f"{repeated[:300]}" if repeated else
                              f"no design passed the contract, the quick check and the structure gate in "
                              f"{cfg.design_attempts} attempts")
+            if prov:
+                self._failed_repair(rec, rec["reason"])
             rec["spent_usd"] = self.ledger.spent() - spent0
             rec["seconds"]["total"] = time.time() - t_iter
             if outcome is not None and outcome.ok:
@@ -637,7 +650,8 @@ class Loop:
             lower = [(s, rec["z"][s]["Z"], z_on(best, s)) for s in ladder[:ladder.index(target)]] if best else []
             view = ({"z_target": z_on(best, target), "held_out": {}, "overhang_n": best.get("overhang_n")}
                     if best else None)
-            over = rec.get("overhang_n")
+            # A concept whose gate failed (#109) has no overhang to compare: it is judged on Z alone.
+            over = rec.get("overhang_n") if (rec.get("gate") or {}).get("passed", True) else None
             kept, why = accept(z_t, held, view, lower, over)
             if kept and view is not None and held:
                 # The best's held-out Z on this box, computed once when the rung moves up (#84).
@@ -647,12 +661,26 @@ class Loop:
             if kept:
                 # The ring is slow, so it runs only on a design the rule would keep (#89).
                 ring = self._ring(rec, fam, p)
+                builds, fails = [], {}
+                gate_ok = (rec.get("gate") or {}).get("passed", True)
+                if not gate_ok:  # a new concept is mapped before its gate (#109)
+                    builds.append("the structure gate failed")
+                    fails["structure_gate"] = rec.get("gate_failures")
                 if ring is not None and ring["status"] != "complete":
-                    kept = False
                     stop = (rec["ring"]["failure"].get("stopped_at") or {}).get("brick")
-                    why = (f"the ring did not close ({ring['status']}" + (f" at {stop}" if stop else "")
-                           + f", {ring['seated']} of {ring['total']} seated); otherwise: {why}")
-                    rec["decision"] = "failed_ring"
+                    builds.append(f"the ring did not close ({ring['status']}" + (f" at {stop}" if stop else "")
+                                  + f", {ring['seated']} of {ring['total']} seated)")
+                    fails["ring"] = rec["ring"]["failure"]
+                if builds:
+                    kept = False
+                    why = "; ".join(builds) + f"; otherwise: {why}"
+                    self._make_provisional(rec, fails, why, z_t, target)
+                    why = rec["reason"]
+                elif rec.get("mode") == "repair":
+                    self.state["provisional"] = None  # repaired: it builds and is kept
+            elif rec.get("mode") == "repair":
+                self._failed_repair(rec, why)
+                why = rec["reason"]
         rec["reason"] = why
         if kept:
             self.state["best"] = {"iteration": i, "module": rec["module"], "root": rec["root"], "family": rec["family"],
@@ -688,7 +716,8 @@ class Loop:
         except Exception as e:  # noqa: BLE001 - an export must not stop the loop
             rec["stl_error"] = f"{type(e).__name__}: {e}"[:300]
         rec["seconds"]["render"] = time.time() - t
-        if not at_top(self.state["best"], cfg) and i < cfg.max_iterations and not cfg.baseline_only:
+        if (not at_top(self.state["best"], cfg) and i < cfg.max_iterations and not cfg.baseline_only
+                and rec["decision"] != "provisional"):  # a provisional design is repaired next, not critiqued (#109)
             family_source = family_py(rec).read_text(encoding="utf-8")
             t = time.time()
             try:
@@ -806,28 +835,24 @@ class Loop:
         mapped = self.screen_round(rec, live, target) if live else []
         scored = []
         for c in mapped:
+            # Capture first (#109): a new concept is mapped before its structure gate, so the loop learns
+            # whether its capture idea works even when its interlock is not right yet.
             fam = CF.load_family(c["root"], c["module"])
             crec = {"iteration": i, "seconds": {}, "runs": {"quick_check": c.get("quick_check", {}).get("run")}}
-            t = time.time()
-            gate, gate_dir = self.engine.gate(fam, fam.defaults)
-            rec["seconds"]["gate"] = rec["seconds"].get("gate", 0.0) + (time.time() - t)
-            c["gate"] = gate_record(gate, gate_dir)
-            if not gate["passed"]:
-                c.update(decision="failed_structure_gate", reason=SG.failures_text(gate)[:500])
-                self.log.append({"iteration": i, "attempt": c["attempt"], "family": c["family"], "module": c["module"],
-                                 "concept": c["concept"], "decision": "failed_structure_gate", "reason": c["reason"],
-                                 "note": c.get("note"), "overhang_n": gate["overhang_n"], "screen": c.get("screen")})
-                continue
-            c["overhang_n"] = gate["overhang_n"]
             check = c.pop("check_full", None) or c.get("quick_check")
             measured = self._measure(crec, fam, check)
             for k in ("map", "jam"):
                 rec["seconds"][k] = rec["seconds"].get(k, 0.0) + crec["seconds"][k]
+            t = time.time()
+            gate, gate_dir = self.engine.gate(fam, fam.defaults)
+            rec["seconds"]["gate"] = rec["seconds"].get("gate", 0.0) + (time.time() - t)
+            c["gate"] = gate_record(gate, gate_dir)
+            c["gate_failures"] = None if gate["passed"] else SG.failures_for_agent(gate)
+            c["overhang_n"] = gate["overhang_n"]
             c.update(z=crec["z"], runs={**crec["runs"], "gate": str(gate_dir)})
             scored.append((c, fam, crec, measured, gate, gate_dir, check))
         if not scored:
-            rec["reason"] = ("no concept of the round passed the contract, the novelty check, the screen and the "
-                             "structure gate")
+            rec["reason"] = "no concept of the round passed the contract, the novelty check and the screen"
             rec["spent_usd"] = self.ledger.spent() - spent0
             rec["seconds"]["total"] = time.time() - t_iter
             self.write_iteration_summary(rec, res_dir)
@@ -835,15 +860,17 @@ class Loop:
         top = max(scored, key=lambda s_: (s_[0]["z"][target]["Z"], s_[0].get("screen", {}).get("Z", 0.0)))
         for c, *_ in scored:
             if c is not top[0]:
+                gate_note = "" if c["gate"]["passed"] else "; its structure gate failed too"
                 c.update(decision="rejected", reason=(f"another concept of this round scored higher on {target} "
-                                                      f"({c['z'][target]['Z']:+.3f} < {top[0]['z'][target]['Z']:+.3f})"))
+                                                      f"({c['z'][target]['Z']:+.3f} < {top[0]['z'][target]['Z']:+.3f})"
+                                                      + gate_note))
                 self.log.append({"iteration": i, "attempt": c["attempt"], "family": c["family"], "module": c["module"],
                                  "concept": c["concept"], "decision": "rejected", "reason": c["reason"],
                                  "note": c.get("note"), "z": c["z"], "screen": c.get("screen"), "runs": c["runs"]})
         c, fam, crec, measured, gate, gate_dir, check = top
         rec.update(module=c["module"], root=c["root"], family=c["family"], note=c["note"], concept=c["concept"])
         rec["runs"].update(crec["runs"], gate=str(gate_dir))
-        rec["gate"], rec["overhang_n"] = c["gate"], gate["overhang_n"]
+        rec["gate"], rec["overhang_n"], rec["gate_failures"] = c["gate"], gate["overhang_n"], c["gate_failures"]
         for k in ("z", "z_with_y", "z_x_only", "y_capture_mm"):
             rec[k] = crec.get(k)
         out = self._score(rec, fam, check, res_dir, brief, spent0, t_iter, measured=measured)
@@ -926,6 +953,33 @@ class Loop:
         engine = self.engine
         return lambda root, module: engine.probe(root, module, path)
 
+    def _make_provisional(self, rec, failures, why, z_t, target):
+        """A design kept on Z that does not build yet (#109): provisional, repaired next; a repair that
+        still does not build counts against ``repair_attempts``."""
+        prov = self.state.get("provisional")
+        repairs = prov["repairs"] + 1 if rec.get("mode") == "repair" and prov else 0
+        if repairs >= self.cfg.repair_attempts:
+            rec["decision"], rec["reason"] = "rejected", (f"after {repairs} repairs the design still does not build: "
+                                                          f"{why}")
+            self.state["provisional"] = None
+            return
+        rec["decision"], rec["reason"] = "provisional", f"provisional: {why}"
+        self.state["provisional"] = {"iteration": rec["iteration"], "module": rec["module"], "root": rec["root"],
+                                     "family": rec["family"], "family_py": str(family_py(rec)), "failures": failures,
+                                     "repairs": repairs, "z_target": z_t, "target": target,
+                                     "first": (prov or {}).get("first", rec["iteration"])}
+
+    def _failed_repair(self, rec, why):
+        """A repair that was not kept for another reason (Z, held-out, no design): one repair spent."""
+        prov = self.state.get("provisional")
+        if not prov:
+            return
+        prov["repairs"] += 1
+        if prov["repairs"] >= self.cfg.repair_attempts:
+            rec["decision"] = "rejected"
+            rec["reason"] = f"after {prov['repairs']} repairs the provisional design was not kept: {why}"
+            self.state["provisional"] = None
+
     RING_MIN_LEFT_S = 120.0  # no ring is started with less of the run's wall-clock left (#89)
 
     def _ring(self, rec, fam, p):
@@ -985,9 +1039,26 @@ class Loop:
             result, out = self.engine.tune(fam, fam.defaults, fixed, target=target)
         except ValueError as e:  # for example a family with nothing left to tune
             return {"error": str(e), "target": target}
-        return {"run": str(out), "target": target, "accepted": result["accepted"], "improved": result["improved"],
+        tune = {"run": str(out), "target": target, "accepted": result["accepted"], "improved": result["improved"],
                 "baseline": result["baseline"]["score"], "tuned": result["tuned"]["score"],
                 "params": result["params"], "seconds": time.time() - t}
+        if result["accepted"]:
+            # The tuned design must still build (#109): the structure gate and the ring, or the untuned one stands.
+            t = time.time()
+            p_t = fam.params_type.from_dict(result["params"])
+            gate, gate_dir = self.engine.gate(fam, p_t)
+            tune["gate"] = gate_record(gate, gate_dir)
+            refused = [] if gate["passed"] else [f"the structure gate failed ({SG.failures_text(gate)[:300]})"]
+            if not refused:
+                ring, ring_dir = self.engine.ring(fam, p_t)
+                tune["ring"] = {"status": ring["status"], "seated": ring["seated"], "total": ring["total"],
+                                "run": str(ring_dir)}
+                if ring["status"] != "complete":
+                    refused.append(f"the ring did not close ({ring['status']}, {ring['seated']} of {ring['total']})")
+            tune["seconds_checks"] = time.time() - t
+            if refused:
+                tune.update(accepted=False, refused="the tuned design does not build: " + "; ".join(refused))
+        return tune
 
     def write_iteration_summary(self, rec, res_dir):
         text = RD.iteration_summary(rec, self.name, rec.get("target") or self.cfg.target, self.ledger.path,

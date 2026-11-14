@@ -514,7 +514,10 @@ def run_summary(state, target, ledger_path, spent_usd, cap_usd):
         lines += ["**End tune:** " + (f"error: {tune['error']}" if "error" in tune else
                                       f"Z {tune.get('target', target)} {tune['baseline']:+.3f} -> "
                                       f"{tune['tuned']:+.3f}, "
-                                      f"{'accepted' if tune['accepted'] else 'not accepted'} (`{tune['run']}`)"), ""]
+                                      f"{'accepted' if tune['accepted'] else 'not accepted'} (`{tune['run']}`)"
+                                      + (f"; {tune['refused']}" if tune.get("refused") else "")
+                                      + (", gate and ring re-checked" if tune.get("gate") and not tune.get("refused")
+                                         else "")), ""]
     lines += [f"API spend: ${spent_usd:.4f} of ${cap_usd:.2f} (`{ledger_path}`).",
               f"Wall-clock: {state.get('elapsed_s', 0.0) / 60:.1f} min.", "", "![progress](progress.png)", ""]
     return "\n".join(lines)

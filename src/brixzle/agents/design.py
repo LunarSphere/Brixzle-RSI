@@ -155,7 +155,19 @@ Design rules (rules/design_rules.md; the critic cites them by id):
 {lessons}"""
 
 
-def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None, explore=None):
+def repair_text(repair):
+    """The repair task (#109): keep what captures, fix what does not build."""
+    z = repair.get("z_text") or ""
+    return (f"This is a repair. The design below captured well enough to be kept on Z{z}, but it does not build "
+            f"yet (its failing builds follow), so it was not kept. Start from its file, keep the capture geometry "
+            f"(the guide faces, funnels and seats that gave it its Z) and fix the interlock or the ring kit so it "
+            f"builds the tower, the wall, the bridge, the overhang and the ring. This is repair "
+            f"{repair.get('attempt', 1)} of {repair.get('of', 2)}; after that it is rejected.\n"
+            f"Design to repair: {repair['family_py']}")
+
+
+def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None, explore=None,
+                repair=None):
     """The task: the concept, the extras, the parent design and what to change. ``explore`` (#106):
     {'principle', 'tried', 'beat'} for an explore call, which gets no parent to reshape."""
     images = "\n".join(f"- {img['abs_path']}" for img in intake["concept_images"])
@@ -171,7 +183,9 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
              "it): " + ", ".join(str(REPO / e) for e in EXAMPLES)]
     if (fixed or {}).get("U_mm"):
         parts.append(f"The voxel pitch U is fixed at intake: {fixed['U_mm']} mm. Do not give U a bounds entry.")
-    if explore is not None:
+    if repair is not None:
+        parts.append(repair_text(repair))
+    elif explore is not None:
         parts.append(explore_text(explore))
     elif parent is not None:
         parts.append(f"Parent design (the current best), to reshape or replace: {parent}")
@@ -268,7 +282,7 @@ class DesignOutcome:
 
 def design(runner, intake, attempt_dir, module, brief=None, parent=None, failures=None, log_text="",
            budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text="", prober=None,
-           probe_calls=PROBE_CALLS, explore=None):
+           probe_calls=PROBE_CALLS, explore=None, repair=None):
     """Run the design agent once; returns a DesignOutcome. The loop checks the package itself
     afterwards, whatever the agent said. ``prober(root, module)``, if given, is served as the
     probe_drops tool, at most ``probe_calls`` times (issue #107)."""
@@ -277,7 +291,8 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
     ref, share = (explore or {}).get("reference"), (explore or {}).get("share")
     tools = (check_tool(ws, ref, share),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
     call = AgentCall(name="design", system=system_prompt(lessons_text),
-                     prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed"), explore),
+                     prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed"), explore,
+                                        repair),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
                      write_root=ws.pkg, read_roots=(*READ_ROOTS, Path(attempt_dir).parent.parent,
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),

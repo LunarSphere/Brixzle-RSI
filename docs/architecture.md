@@ -80,6 +80,15 @@ Issue #106. In the last real run every design was a 14–18 line subclass of A/B
 
 `--concepts 1` turns explore rounds off.
 
+### Capture first, provisional designs and repairs
+
+Issue #109. A design that failed the structure gate or the ring used to be discarded, which pushed every design back towards A/B, the one brick known to build (in `ab4iter2-20261114-mean` iteration 1 raised Z mean to +0.539 and was dropped for its ring). The requirement is unchanged: a kept design builds the tower, the wall, the bridge, the overhang and the ring.
+
+- **Order.** A new concept (an explore round's) gets its full map and Z before its structure gate, so the loop learns whether its capture idea works even when its interlock is not right yet. A reshape of a design that builds keeps the gate first: it is cheaper than the map.
+- **Provisional.** A design the acceptance rule would keep on Z (a concept whose gate failed is judged on Z alone, since it has no overhang to compare) but that fails the gate or the ring becomes `provisional`: the best is unchanged, the critic is not called, and the next iteration is a **repair**. The repair call starts from the provisional design's file with its failing builds and is told to keep the capture geometry and fix the interlock or the ring kit. It is scored as a reshape (gate first); kept if it builds and passes the acceptance rule.
+- **Limit.** Up to `repair_attempts` (2, maintainer) repairs; a repair that again does not build, or is not kept for another reason, uses one. After the last the design is `rejected` and the log says why. Patience does not stop the run while repairs are left.
+- **The end tune checks the structures too.** A tuned design that scores higher is built again: the structure gate and the ring at the tuned parameters. If either fails it is refused and the untuned design stands (`tune.refused`; their wall-clock in `tune.seconds_checks`).
+
 ### Cheap screen of a round's candidates
 
 Issue #108. A full score costs about 3 to 5 minutes, so when a round has several candidates (#106) they are screened first, side by side, each in its own process (`engine/screen.py`, `Loop.screen_round`): the quick check (40 drops along X, the candidate's pass/fail filter) and 20 seeded drops on the target box's X-Y disc. The screen score is (S − J) / N over both, the form of Z.
