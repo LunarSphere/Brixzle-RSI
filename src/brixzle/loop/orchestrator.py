@@ -758,7 +758,9 @@ class Loop:
                                 log_text=self.log.text(), budget_usd=cfg.design_budget_usd,
                                 max_turns=cfg.design_max_turns, lessons_text=self.lessons_text(), prober=prober,
                                 probe_calls=cfg.probe_calls,
-                                explore={"principle": principle, "tried": tried, "beat": beat})
+                                explore={"principle": principle, "tried": tried, "beat": beat,
+                                         "reference": ref.name if ref is not None else None,
+                                         "share": cfg.near_copy_share})
             except BudgetExceeded:
                 raise
             except Exception as e:  # noqa: BLE001 - an SDK or API error: this concept is lost, the round goes on
@@ -767,6 +769,9 @@ class Loop:
             probe_s = sum(float(q.get("seconds") or 0.0) for q in out.probes)
             c.update(root=str(out.workspace.root), design_cost_usd=out.result.cost_usd, design_s=time.time() - t,
                      family=out.check.get("family") or module, note=out.note, probes=list(out.probes), probe_s=probe_s)
+            if (out.check.get("novelty") or {}).get("near_copy"):
+                c.update(decision="near_copy", reason=out.check["novelty"]["reason"], novelty=out.check["novelty"])
+                return c
             if not out.ok:
                 problems = [*(out.check.get("violations") or []),
                             *[f"{part}: {', '.join(info['broken'])}" for part, info in out.check.get("parts", {}).items()

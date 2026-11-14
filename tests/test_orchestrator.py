@@ -24,26 +24,14 @@ GRID = {"slice": "xz", "course": 0, "axes": ["x", "z"], "step": {"x": 1.0, "z": 
         "rows": ["WSSJSSJ", "FSSSSSJ"], "fixed": {"t": 0.0}}
 
 
-_CHECKS = {}
-
-
 @pytest.fixture(autouse=True)
 def _memo_family_check(monkeypatch):
     """The family check (contract, rules, two aim drops) runs in a subprocess in about 2.5 s, and
     every scripted design here writes one of a few identical sources: check each source once per
-    session. tests/test_design_agent.py covers the real check."""
-    real = CF.check_in_subprocess
+    session (conftest.cached_check). tests/test_design_agent.py covers the real check."""
+    from conftest import cached_check
 
-    def memo(root, module, **kw):
-        path = Path(root) / module / "family.py"
-        key = path.read_text(encoding="utf-8") if path.exists() else None
-        if key is None:
-            return real(root, module, **kw)
-        if key not in _CHECKS:
-            _CHECKS[key] = real(root, module, **kw)
-        return {**_CHECKS[key], "module": module}
-
-    monkeypatch.setattr(CF, "check_in_subprocess", memo)
+    monkeypatch.setattr(CF, "check_in_subprocess", cached_check)
 
 
 def counts(z, n=100):
@@ -172,7 +160,8 @@ class FakeEngine:
     def tune(self, family, p, fixed=(), target=None):
         self.calls.append(("tune", tuple(fixed)))
         self.tune_targets.append(target)
-        return {"accepted": False, "improved": False, "baseline": {"score": 0.1}, "tuned": {"score": 0.1},
+        ok = getattr(self, "tune_accepted", False)
+        return {"accepted": ok, "improved": ok, "baseline": {"score": 0.1}, "tuned": {"score": 0.3 if ok else 0.1},
                 "params": p.to_dict()}, self._dir("tune")
 
 
@@ -198,10 +187,29 @@ def probing_design_step(name="probewedge", calls=2):
     return step
 
 
+THREE = [{"name": f"m{k}", "failure": "jams in Y", "why": "DR1", "cost": "2 g"} for k in range(3)]
+
+
+def concept_step(name="cx", concepts=THREE, probe=True):
+    """An explore call as #111 wants it: probes its draft and writes three concepts in its note."""
+    def step(call):
+        if probe:
+            next(t for t in call.mcp_tools if t.name == "probe_drops").handler({})
+        out = design_step(name)(call)
+        note_path = Path(call.write_root) / "design_note.json"
+        note = json.loads(note_path.read_text(encoding="utf-8"))
+        if concepts is not None:
+            note.update(concepts=concepts, picked="m0", picked_why="simplest")
+        note_path.write_text(json.dumps(note), encoding="utf-8")
+        return out
+    return step
+
+
 def critic_step(decision="redesign"):
     brief = {"decision": decision, "reason": "jams at the +X edge", "clusters": [] if decision == "stop" else [
         {"failure": "jam band", "diagnosis": "two-point wedge", "rules": ["DR2"], "change": "longer face",
-         "scope": "reshape", "expected_effect": "fewer jams"}]}
+         "scope": "reshape", "expected_effect": "fewer jams", "faces": "B: tooth ON A: slot",
+         "shape_change": "a longer entry face", "change_kind": "shape"}]}
     return RN.AgentResult(structured=brief, cost_usd=0.02, turns=1)
 
 
@@ -906,30 +914,23 @@ def test_the_round_maps_no_more_designs_than_the_clock_allows_and_says_so(tmp_pa
 
 # --- explore rounds (#106) ---
 
-AB_SUB = (
-    "from dataclasses import replace\n"
-    "from brixzle.families.ab.family import FAMILY as AB\n"
-    "from brixzle.families.ab.params import BrickParams\n"
-    "from dataclasses import dataclass\n\n"
-    "@dataclass(frozen=True)\n"
-    "class P(BrickParams):\n"
-    "    tooth_L: float = 7.0\n\n"
-    "FAMILY = replace(AB, name='{name}', params_type=P)\n")
-
-
 def ab_copy_step(name="abcopy"):
     def step(call):
+        next(t for t in call.mcp_tools if t.name == "probe_drops").handler({})
         pkg = Path(call.write_root)
-        (pkg / "family.py").write_text(AB_SUB.format(name=name), encoding="utf-8")
+        from conftest import AB_COPY_SRC
+
+        (pkg / "family.py").write_text(AB_COPY_SRC, encoding="utf-8")
         (pkg / "design_note.json").write_text(json.dumps({"summary": "A/B again", "changes": "tooth_L",
-                                                          "geometry": "Prismatic"}), encoding="utf-8")
+                                                          "geometry": "Prismatic", "concepts": THREE,
+                                                          "picked": "m0"}), encoding="utf-8")
         return RN.AgentResult(text="done", cost_usd=0.10, turns=5)
     return step
 
 
 def test_the_first_iteration_explores_n_concepts_with_n_principles_and_keeps_the_best(tmp_path, intake):
     engine = FakeEngine(tmp_path / "eng", zs=[0.3, 0.7, 0.5], held=[0.5, 0.5, 0.5])
-    loop, runner = _loop(tmp_path, intake, [design_step("cx"), design_step("cx"), design_step("cx")], engine,
+    loop, runner = _loop(tmp_path, intake, [concept_step("cx"), concept_step("cx"), concept_step("cx")], engine,
                          max_iterations=1, concepts=3)
     state = loop.run()
     it = state["iterations"][0]
@@ -957,7 +958,7 @@ def test_the_first_iteration_explores_n_concepts_with_n_principles_and_keeps_the
 
 def test_an_explore_design_that_is_a_near_copy_of_a_b_is_refused(tmp_path, intake):
     engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
-    loop, runner = _loop(tmp_path, intake, [ab_copy_step("abcopy"), design_step("cx")], engine,
+    loop, runner = _loop(tmp_path, intake, [ab_copy_step("abcopy"), concept_step("cx")], engine,
                          max_iterations=1, concepts=2)
     state = loop.run()
     it = state["iterations"][0]
@@ -996,4 +997,3 @@ def test_explore_again_on_a_stall_or_when_the_critic_asks_for_a_new_family():
     asked = {"iterations": explored["iterations"] + [_it(2, 0.61, 0.6, brief=brief)]}
     assert "new family" in OR.explore_reason(asked, cfg)
     assert OR.explore_reason(first, LoopConfig(concepts=1)) is None
-

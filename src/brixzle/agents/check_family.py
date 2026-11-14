@@ -53,8 +53,10 @@ def _num(v):
     return round(v, 4) if math.isfinite(v) else None
 
 
-def check(root, module, samples=2):
-    """The contract violations, rule margins, mass and size of a written family, JSON-safe."""
+def check(root, module, samples=2, reference=None, share=None):
+    """The contract violations, rule margins, mass and size of a written family, JSON-safe.
+    ``reference`` (an explore call, #106): a registry family the design must not be a near copy of
+    (loop/novelty.py); a near copy is not ok."""
     from brixzle.families import builders as B
     from brixzle.families import contract as C
     from brixzle.families import rules as R
@@ -99,7 +101,16 @@ def check(root, module, samples=2):
             return out
     if not out["violations"] and not out["error"]:
         out["ring"] = ring_report(fam)  # reported, not part of ok: the loop's ring build judges it (#89)
-    out["ok"] = not out["violations"] and not any(i["broken"] for i in out["parts"].values()) and not out["error"]
+    if reference and not out["violations"] and not out["error"]:
+        from brixzle.families import registry
+        from brixzle.loop import novelty as NV
+
+        ref = registry.get(reference)
+        nv = NV.near_copy(fam, fam.defaults, ref, ref.defaults, share=NV.NEAR_COPY_SHARE if share is None else share)
+        out["novelty"] = {"near_copy": bool(nv["near_copy"]), "share": _num(nv["share"]) if nv["share"] is not None else None,
+                          "reason": nv["reason"]}
+    out["ok"] = (not out["violations"] and not any(i["broken"] for i in out["parts"].values()) and not out["error"]
+                 and not (out.get("novelty") or {}).get("near_copy"))
     out["seconds"] = round(time.time() - t0, 2)
     return out
 
@@ -142,9 +153,11 @@ def aim_drops(fam, p):
     return out
 
 
-def check_in_subprocess(root, module, timeout=CHECK_TIMEOUT_S):
+def check_in_subprocess(root, module, timeout=CHECK_TIMEOUT_S, reference=None, share=None):
     """``check`` in a fresh process with a time limit; a crash or a hang is reported, not raised."""
     cmd = [sys.executable, "-m", "brixzle.agents.check_family", "--root", str(root), "--module", module]
+    if reference:
+        cmd += ["--reference", reference] + (["--share", str(share)] if share is not None else [])
     try:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -162,8 +175,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--root", required=True)
     ap.add_argument("--module", required=True)
+    ap.add_argument("--reference", help="a registry family the design must not be a near copy of (#106)")
+    ap.add_argument("--share", type=float, default=None)
     args = ap.parse_args(argv)
-    print(json.dumps(check(args.root, args.module), allow_nan=False))
+    print(json.dumps(check(args.root, args.module, reference=args.reference, share=args.share), allow_nan=False))
 
 
 if __name__ == "__main__":

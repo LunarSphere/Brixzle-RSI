@@ -216,16 +216,17 @@ def explore_text(explore):
     tried = ", ".join(explore.get("tried") or []) or "none"
     return (f"This is an explore call: design a NEW brick from the capture principle below. Write your own "
             f"profile and interlock. A/B is the score to beat, not your starting file: the loop refuses a design "
-            f"whose section is a near copy of A/B's (a subclass of its parameters with a few numbers changed). "
+            f"whose section is a near copy of A/B's (a subclass of its parameters with a few numbers changed); "
+            f"check_family reports it ('novelty') and is not ok until your section differs enough. "
             f"You may still read A/B for how a family is written.\n"
             f"Score to beat: {explore.get('beat') or 'A/B'}.\n"
             f"Principle {p['id']}. {p['title']}: {p['text']}\n"
             f"Already tried: {tried}. Do not repeat a concept the design log shows failing.")
 
 
-def check_tool(ws):
+def check_tool(ws, reference=None, share=None):
     def handler(_args):
-        return json.dumps(CF.check_in_subprocess(ws.root, ws.module), indent=1)
+        return json.dumps(CF.check_in_subprocess(ws.root, ws.module, reference=reference, share=share), indent=1)
 
     return ToolSpec(CHECK_TOOL, "Check the family in your package: the family contract and the rule margins. "
                     "Returns JSON with ok, violations, broken rules, margins and mass.", {}, handler)
@@ -273,7 +274,8 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
     probe_drops tool, at most ``probe_calls`` times (issue #107)."""
     ws = Workspace.make(attempt_dir, module)
     probes = []
-    tools = (check_tool(ws),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
+    ref, share = (explore or {}).get("reference"), (explore or {}).get("share")
+    tools = (check_tool(ws, ref, share),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
     call = AgentCall(name="design", system=system_prompt(lessons_text),
                      prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed"), explore),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
@@ -281,7 +283,7 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
                      mcp_tools=tools, max_turns=max_turns)
     result = runner.run(call)
-    final = CF.check_in_subprocess(ws.root, ws.module)
+    final = CF.check_in_subprocess(ws.root, ws.module, reference=ref, share=share)
     note_path = ws.pkg / NOTE_FILE
     try:
         note = json.loads(note_path.read_text(encoding="utf-8")) if note_path.exists() else {}

@@ -249,3 +249,19 @@ def test_a_package_name_reused_under_another_root_is_imported_from_that_root(tmp
         (pkg / "family.py").write_text(WEDGE.replace('name="wedge"', f'name="{name}"'), encoding="utf-8")
     assert CF.load_family(tmp_path / "r1", "samename").name == "first"
     assert CF.load_family(tmp_path / "r2", "samename").name == "second"
+
+
+def test_in_an_explore_call_the_check_refuses_a_near_copy_of_the_reference(tmp_path):
+    """explore1-20261114-mean: all three concepts were A/B variants and learned it only after the call
+    (#106). The check now says so inside the call."""
+    pkg = tmp_path / "abcopy"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    from conftest import AB_COPY_SRC
+
+    (pkg / "family.py").write_text(AB_COPY_SRC, encoding="utf-8")
+    from conftest import cached_check
+
+    out = cached_check(tmp_path, "abcopy", reference="ab", share=0.2)
+    assert out["ok"] is False and out["novelty"]["near_copy"] is True and "near copy" in out["novelty"]["reason"]
+    assert not out["violations"] and not out["error"]  # only the novelty makes it not ok
