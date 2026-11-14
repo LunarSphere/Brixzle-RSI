@@ -58,6 +58,7 @@ from brixzle.engine import jam_analysis as JA
 from brixzle.engine import probe as PB
 from brixzle.engine import quick_check as QC
 from brixzle.engine import report as RP
+from brixzle.engine import screen as SC
 from brixzle.engine import structure_gate as SG
 from brixzle.engine.sim import ring_build as RB
 from brixzle.engine import sim_map as SM
@@ -132,6 +133,11 @@ class SimEngine:
     def drop_videos(self, family, p, sim_map, map_dir, out_dir, n, seed):
         """``n`` drops of the map, picked at random with ``seed``, recorded to ``out_dir`` (#77)."""
         return VD.drop_videos(family, p, sim_map, SM.read_drops(map_dir), out_dir, n=n, seed=seed)
+
+    def screen(self, jobs, target):
+        """{id: screen} for candidates [(id, root, module)] (#108): the quick check and a 20-drop X-Y
+        check on ``target``'s box, each candidate in its own process, side by side."""
+        return SC.screen_many(jobs, target, seed=self.cfg.seed, workers=max(1, min(3, self.cfg.workers or 3)))
 
     def probe_poses(self, map_dir, target, seed):
         """The drop probe's poses (#107) on ``target``'s box: the failures, some seats and the aim of
@@ -641,6 +647,59 @@ class Loop:
         self.write_iteration_summary(rec, res_dir)
         return rec
 
+    SCORE_S = 240.0  # a full score's wall-clock before any was measured (gate, map, jam, held-out, ring, renders)
+    SCORED_STAGES = ("gate", "map", "jam", "held_out", "held_out_best", "ring", "videos", "render")
+
+    def score_estimate(self):
+        """Seconds one full score takes in this run: the mean over the scored iterations so far."""
+        done = [sum(it["seconds"].get(k, 0.0) for k in self.SCORED_STAGES) for it in self.state["iterations"]
+                if it.get("z") and it.get("seconds")]
+        return sum(done) / len(done) if done else self.SCORE_S
+
+    def screen_round(self, rec, candidates, target, score_s=None):
+        """Screen ``candidates`` [{'id', 'root', 'module'}] side by side (#108) and return the ones to
+        score in full, best first. A candidate that fails the quick check, a clear loser on the screen,
+        and any past the cap (``screen_max_maps``, or fewer if the run's wall-clock left would not
+        hold them) get their decision and reason in place and a line in the design log."""
+        cfg = self.cfg
+        t = time.time()
+        res = self.engine.screen([(c["id"], c["root"], c["module"]) for c in candidates], target)
+        rec["seconds"]["screen"] = rec["seconds"].get("screen", 0.0) + (time.time() - t)
+        rec["screen"] = {k: {q: v[q] for q in ("Z", "S", "J", "N")} for k, v in res.items() if "Z" in v}
+        passing = {}
+        for c in candidates:
+            r = res.get(c["id"]) or {"error": "no screen result"}
+            c["screen"] = rec["screen"].get(c["id"])
+            if "error" in r:
+                c["decision"], c["reason"] = "failed_screen", r["error"]
+            elif not r["check"]["passed"]:
+                c["decision"] = "failed_quick_check"
+                c["reason"] = (f"the quick check seated {r['check']['seated']} of {r['check']['dropped']} "
+                               f"(needs {r['check'].get('need', 32)})")
+                c["quick_check"] = r["check"]
+            else:
+                c["quick_check"] = r["check"]
+                passing[c["id"]] = rec["screen"][c["id"]]
+        est = score_s or self.score_estimate()
+        left = cfg.max_minutes * 60 - (time.time() - getattr(self, "_t0", time.time())) - (cfg.tune_seconds if cfg.tune else 0.0)
+        fit = max(1, int(left // est))
+        cap = min(cfg.screen_max_maps, fit)
+        mapped, out = SC.select(passing, cap) if passing else ([], {})
+        if fit < cfg.screen_max_maps and len(mapped) + sum("cap" in r for r in out.values()) > fit:
+            rec.setdefault("warnings", []).append(
+                f"wall-clock: {left / 60:.1f} min left after the end tune's {cfg.tune_seconds / 60 if cfg.tune else 0:.1f} min "
+                f"holds {fit} full score(s) of about {est:.0f} s, so only {fit} of this round's candidates are mapped")
+        for c in candidates:
+            if c["id"] in out:
+                c["decision"], c["reason"] = "screened_out", out[c["id"]]
+        for c in candidates:
+            if c.get("decision") in ("screened_out", "failed_quick_check", "failed_screen"):
+                self.log.append({"iteration": rec["iteration"], "attempt": c.get("attempt", 1), "family": c["module"],
+                                 "module": c["module"], "concept": c.get("concept"), "decision": c["decision"],
+                                 "reason": c["reason"], "screen": c.get("screen"), "note": c.get("note")})
+        by = {c["id"]: c for c in candidates}
+        return [by[k] for k in mapped]
+
     def _prober(self, iter_dir, i, best):
         """The design agent's probe (#107): ``prober(root, module)`` drops a package at this
         iteration's poses, the best design's map failures on the current target (or a spread over
@@ -751,6 +810,8 @@ def parser():
     ap.add_argument("--ledger", help="spend ledger to share with other runs (default: the run's own)")
     ap.add_argument("--max-minutes", type=float, default=d.max_minutes)
     ap.add_argument("--design-attempts", type=int, default=d.design_attempts)
+    ap.add_argument("--screen-max-maps", type=int, default=d.screen_max_maps,
+                    help="of a round's candidates, at most this many get a full score (#108)")
     ap.add_argument("--probe-calls", type=int, default=d.probe_calls,
                     help="probe_drops calls per design call (#107; 0: no probe tool)")
     ap.add_argument("--seed", type=int, default=d.seed)
@@ -780,7 +841,8 @@ def config_from_args(args):
                       baseline_only=args.baseline_only,
                       max_iterations=args.max_iterations, patience=args.patience,
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
-                      design_attempts=args.design_attempts, probe_calls=args.probe_calls, seed=args.seed, workers=args.workers,
+                      design_attempts=args.design_attempts, probe_calls=args.probe_calls,
+                      screen_max_maps=args.screen_max_maps, seed=args.seed, workers=args.workers,
                       tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results).validate()
 
 

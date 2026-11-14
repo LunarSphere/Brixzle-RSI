@@ -149,6 +149,16 @@ class FakeEngine:
         return {"structure": "ring6x2", "status": status, "seated": 16 if ok else 15, "placed": 16, "total": 16,
                 "stages": [stage], "seconds": 3.0, "run": str(d), "label": "simulated, uncalibrated contact"}, d
 
+    def screen(self, jobs, target):
+        """The cheap screen (#108): ``screens`` is {module: (S, J, N, quick check passed)}; default (40, 4, 60, True)."""
+        self.calls.append(("screen", tuple(k for k, _, _ in jobs), target))
+        out = {}
+        for k, root, module in jobs:
+            s_, j_, n_, ok = getattr(self, "screens", {}).get(module, (40, 4, 60, True))
+            out[k] = {"Z": (s_ - j_) / n_, "S": s_, "J": j_, "N": n_, "seconds": 2.0,
+                      "check": {"passed": ok, "seated": 36 if ok else 20, "dropped": 40, "outcomes": {"seated": 36}}}
+        return out
+
     def probe_poses(self, map_dir, target, seed):
         """The probe's poses (#107): records which map and box they came from."""
         self.calls.append(("probe_poses", None if map_dir is None else Path(map_dir).name, target, seed))
@@ -858,4 +868,38 @@ def test_the_probe_can_be_turned_off(tmp_path, intake):
     loop, runner = _loop(tmp_path, intake, [design_step("plain")], engine, max_iterations=1, probe_calls=0)
     loop.run()
     assert not [c for c in engine.calls if c[0] in ("probe_poses", "probe")]
+
+
+# --- the cheap screen (#108) ---
+
+
+def test_the_screen_maps_only_the_candidates_it_cannot_rule_out_and_logs_the_rest(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[])
+    engine.screens = {"m_a": (47, 6, 60, True), "m_b": (46, 7, 60, True), "m_c": (49, 3, 60, True),
+                      "m_d": (17, 19, 37, True), "m_e": (40, 4, 60, False)}
+    loop, _ = _loop(tmp_path, intake, [], engine, screen_max_maps=2)
+    rec = {"iteration": 1, "seconds": {}, "attempts": []}
+    cands = [{"id": k, "root": str(tmp_path), "module": f"m_{k}"} for k in "abcde"]
+    mapped = loop.screen_round(rec, cands, "mean")
+    assert [c["id"] for c in mapped] == ["c", "a"]
+    by = {c["id"]: c for c in cands}
+    assert by["b"]["decision"] == "screened_out" and "cap" in by["b"]["reason"]
+    assert by["d"]["decision"] == "screened_out" and "below the best" in by["d"]["reason"]
+    assert by["e"]["decision"] == "failed_quick_check"
+    assert ("screen", tuple("abcde"), "mean") in engine.calls
+    assert rec["seconds"]["screen"] >= 0 and rec["screen"]["c"]["Z"] == pytest.approx(46 / 60)
+    logged = {e["family"]: e for e in loop.log.entries()}
+    assert logged["m_b"]["decision"] == "screened_out" and logged["m_b"]["screen"]["Z"] == pytest.approx(39 / 60)
+    assert logged["m_e"]["decision"] == "failed_quick_check"
+
+
+def test_the_round_maps_no_more_designs_than_the_clock_allows_and_says_so(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[])
+    loop, _ = _loop(tmp_path, intake, [], engine, screen_max_maps=3, max_minutes=10.0, tune_seconds=60.0)
+    loop._t0 = __import__("time").time() - 5 * 60  # 5 of 10 minutes gone; 1 min held for the end tune
+    rec = {"iteration": 1, "seconds": {}, "attempts": []}
+    cands = [{"id": k, "root": str(tmp_path), "module": f"m_{k}"} for k in "abc"]
+    mapped = loop.screen_round(rec, cands, "mean", score_s=100.0)
+    assert len(mapped) == 2  # 4 minutes left: two full scores of 100 s fit, a third does not
+    assert any("wall-clock" in w for w in rec["warnings"])
 
