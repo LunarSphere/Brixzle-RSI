@@ -362,3 +362,19 @@ The maintainer chose option b on 2026-11-13: `Solid3D` is a normal choice for ca
 - **A/B's Y capture is about ±8 mm, not ±4.** `sim_map.y_capture` reads only the X = 0 column of the X-Y slice, and A/B has a jam stripe there at |y| = 6–8 mm; the columns at X = ±4 mm seat to ±8 (`runs/map-20261114T002030501064Z-ab-mean`). It jams at |y| = 10–12 (on the gutter's edge) and falls past D / 2. A/B's V gutter is already a Y guide, made with `Extrusion` bands.
 - **The fixture (`tests/fixtures/yfunnel`)** has a V across Y outside a narrow core: Y capture ±10 mm on both courses by the same metric, against A/B's ±4; map 48.0 s against A/B's 75.6 s (`runs/map-20261114T013741540525Z-yfunnel-mean`). Three earlier versions jammed, which is what the design notes in `docs/family-interface.md` come from: skirts below the brick rolled it 13°, rails with a flat bottom rolled it 8.6°, and wings with no X ridges held every Y-offset drop 3 mm off in X. A V that keeps the X interlock is a shear of the section, so it is also expressible as `Prismatic` bands. Its ring seated 7 of 16 and collapsed at the closer (`runs/ring-20261114T013819974881Z-yfunnel`).
 
+## The cheap screen (issue #108)
+
+Simulated, uncalibrated contact; `runs/screen-compare-20261113.json` (quick check 40 X drops + 20 X-Y disc drops, seed 0, mean box; 8–10 s per design):
+
+| design | Z mean (map) | screen |
+|---|---|---|
+| ab4iter2 iteration 4 | +0.573 | +0.700 |
+| ab4iter2 iteration 1 | +0.539 | +0.650 |
+| ab4iter2 iteration 3 | +0.537 | +0.767 |
+| A/B | +0.506 | +0.683 |
+| ab4iter2 iteration 2 | +0.472 | +0.650 |
+| yfunnel fixture | −0.169 | −0.054 |
+
+- **The screen does not rank close designs as the map does.** Its best is iteration 3, the map's is iteration 4 (Spearman 0.64 over the six). The five A/B variants lie within 0.1 of each other in Z; the screen's standard error at N = 60 is about 0.08, and the map's own noise band at N = 356 is about 0.03 (#110). It does put the yfunnel fixture far below them.
+- **So it only drops clear losers** (issue #108's "do not screen on it yet"): more than two standard errors of the difference below the best. Of the rest, up to `screen_max_maps` (3) are mapped by rank. With these six it would have mapped iterations 3, 4 and A/B and dropped yfunnel.
+

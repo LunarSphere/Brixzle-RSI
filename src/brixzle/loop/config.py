@@ -29,6 +29,7 @@ class LoopConfig:
     design_max_turns: int = 40
     probe_calls: int = 5             # probe_drops calls per design call (#107); 0: no probe tool
     probe_drops: int = 30            # poses per probe, the aim included (#107)
+    screen_max_maps: int = 3         # of a round's candidates, at most this many get a full score (#108)
     seed: int = 0                    # quick-check seed; held-out Z uses seed + 1
     workers: int | None = None       # sim drop processes
     held_out: bool = True
@@ -41,7 +42,7 @@ class LoopConfig:
     def validate(self):
         if self.target not in BX.STATISTICS:
             raise ValueError(f"target must be one of {BX.STATISTICS}, got {self.target!r}")
-        for name in ("max_iterations", "patience", "design_attempts", "design_max_turns"):
+        for name in ("max_iterations", "patience", "design_attempts", "design_max_turns", "screen_max_maps"):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, int) or v < 1:
                 raise ValueError(f"{name} must be an integer >= 1, got {v!r}")

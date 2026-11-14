@@ -69,6 +69,12 @@ Then the end tune runs on the best design, on the current target (the first box 
 
 The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
 
+### Cheap screen of a round's candidates
+
+Issue #108. A full score costs about 3 to 5 minutes, so when a round has several candidates (#106) they are screened first, side by side, each in its own process (`engine/screen.py`, `Loop.screen_round`): the quick check (40 drops along X, the candidate's pass/fail filter) and 20 seeded drops on the target box's X-Y disc. The screen score is (S − J) / N over both, the form of Z.
+
+The screen does not pick a winner among close candidates. On A/B and the four designs of `ab4iter2-20261114-mean` its ranking disagreed with the maps' at the top (`runs/screen-compare-20261113.json`): those five lie within 0.1 of each other in Z, and the screen's standard error at 60 drops is about 0.08. So a candidate is screened out only if its score is more than two standard errors of the difference below the best (a clear loser, such as the yfunnel fixture), and the rest are scored in full by rank, up to `--screen-max-maps` (default 3). If the wall-clock left after holding the end tune's time cannot fit that many full scores (each estimated from the run's scored iterations so far, 240 s before any), fewer are mapped and the iteration records a warning. The others are logged as `screened_out` with their screen score; the iteration records `seconds.screen`.
+
 ## Per-iteration results
 
 Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/render.py`):
