@@ -212,3 +212,21 @@ def test_a_reservation_holds_its_budget_until_the_call_is_recorded(tmp_path):
     led.record("design", "m", AgentResult(cost_usd=0.5), budget_usd=2.0)
     led.reserve(2.0)  # 0.5 spent, 2.0 held: 2.5 of 3.0
     assert led.remaining() == pytest.approx(0.5)
+
+
+def test_calls_side_by_side_each_get_their_own_budget_as_the_sdk_cap(tmp_path):
+    """overhaul-20261114-mean (#123): three explore calls held $4.50 of a $5 cap and each was given
+    the $0.42 left as its SDK cap, so all three stopped."""
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 5.0)
+    led.record("critic", "m", RN.AgentResult(cost_usd=0.08), budget_usd=0.4)
+    runner = RN.ClaudeRunner("m", led)
+    calls = [_call(max_budget_usd=1.5) for _ in range(3)]
+    for c in calls:
+        led.reserve(c.max_budget_usd)
+    assert [runner.sdk_cap(c) for c in calls] == [1.5, 1.5, 1.5]
+
+
+def test_a_call_stopped_at_its_budget_is_charged_what_the_sdk_reported():
+    err = "ResultError: Claude Code returned an error result: Reached maximum budget ($0.41813520000000004) (exit code: 1)"
+    assert RN.budget_stop_cost(err) == pytest.approx(0.4181352)
+    assert RN.budget_stop_cost("RuntimeError: something else") is None
