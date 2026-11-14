@@ -40,6 +40,7 @@ class LoopConfig:
     workers: int | None = None       # sim drop processes
     held_out: bool = True
     tune: bool = True                # the end tune on the final design (#14)
+    pickup: bool = True              # the pickup check on the final design, a report (#113)
     videos: int = 5                  # drop videos per iteration, picked at random from the map (#77; 0: none)
     tune_seconds: float = 420.0
     runs: str = "runs"

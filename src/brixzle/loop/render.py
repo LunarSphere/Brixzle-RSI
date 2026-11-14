@@ -535,6 +535,9 @@ def run_summary(state, target, ledger_path, spent_usd, cap_usd, ledger_rows=None
                                       + (f"; {tune['refused']}" if tune.get("refused") else "")
                                       + (", gate and ring re-checked" if tune.get("gate") and not tune.get("refused")
                                          else "")), ""]
+    from brixzle.engine import pickup_check as PU
+
+    lines += PU.summary_lines(state.get("pickup"))
     lines += model_lines(ledger_rows)
     lines += [f"API spend: ${spent_usd:.4f} of ${cap_usd:.2f} (`{ledger_path}`).",
               f"Wall-clock: {state.get('elapsed_s', 0.0) / 60:.1f} min.", "", "![progress](progress.png)", ""]

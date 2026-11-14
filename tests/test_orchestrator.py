@@ -163,6 +163,14 @@ class FakeEngine:
              "pictures": ["rest-1-xz.png"], "contacts": [{"brick": "A", "on_brick": "A: tooth tip",
                                                          "on_support": "A (brick0): slot mouth", "normal": [0.6, 0.8]}]}]}
 
+    def pickup(self, family, p):
+        """The pickup check on the final design (#113), canned."""
+        self.calls.append(("pickup", family.name))
+        return {"checked": True, "label": "simulated, uncalibrated contact", "r10": {"R10.two_openings": 0.0},
+                "picks": [{"sample": {"dx": 0.0, "dz": 0.0, "psi": 0.0}, "outcome": "picked"}],
+                "picked": 1, "n": 1, "release": {"passed": True, "drift_mm": 0.1}, "seconds": 3.0,
+                "run": str(self._dir("pickup"))}
+
     def probe_poses(self, map_dir, target, seed):
         """The probe's poses (#107): records which map and box they came from."""
         self.calls.append(("probe_poses", None if map_dir is None else Path(map_dir).name, target, seed))
@@ -1163,4 +1171,18 @@ def test_after_a_parameter_only_stall_a_parameter_brief_is_sent_back_once(tmp_pa
     critics = [c for c in runner.calls if c.name == "critic"]
     assert len(critics) == 3 and "parameter" in critics[2].prompt
     assert rec["brief"]["clusters"][0]["change_kind"] == "shape"
+
+
+# --- pickup check on the final design (#113) ---
+
+
+def test_the_final_design_gets_a_pickup_report_after_the_tune_not_a_gate(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, _ = _loop(tmp_path, intake, [design_step("w1")], engine, max_iterations=1, tune=True)
+    state = loop.run()
+    order = [c[0] if isinstance(c, tuple) else c for c in engine.calls]
+    assert order.index("tune") < order.index("pickup") and order.count("pickup") == 1
+    assert state["pickup"]["checked"] and state["best"]["iteration"] == 1  # a report: nothing is rejected
+    summary = (Path(loop.results) / "summary.md").read_text(encoding="utf-8")
+    assert "## Pickup" in summary and "picked" in summary and "not a gate" in summary
 
