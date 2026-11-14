@@ -479,7 +479,24 @@ def baseline_table(state):
     return out + [""]
 
 
-def run_summary(state, target, ledger_path, spent_usd, cap_usd):
+def model_lines(rows):
+    """Calls, spend, turns and wall-clock per model, from the spend ledger (#111)."""
+    by = {}
+    for r in rows or []:
+        m = by.setdefault((r.get("model") or "?", r.get("name") or "?"), {"calls": 0, "usd": 0.0, "turns": 0, "s": 0.0})
+        m["calls"] += 1
+        m["usd"] += float(r.get("cost_usd") or 0.0)
+        m["turns"] += int(r.get("turns") or 0)
+        m["s"] += float(r.get("seconds") or 0.0)
+    if not by:
+        return []
+    out = ["| Model | Call | Calls | Spend | Turns | Wall-clock |", "|---|---|---|---|---|---|"]
+    for (model, name), m in sorted(by.items()):
+        out.append(f"| {model} | {name} | {m['calls']} | ${m['usd']:.4f} | {m['turns']} | {m['s']:.0f} s |")
+    return out + [""]
+
+
+def run_summary(state, target, ledger_path, spent_usd, cap_usd, ledger_rows=None):
     """summary.md for the whole run."""
     lines = [f"# {state['run']}", "", f"Starting box: **{target}**. Sim results are {LABEL}.", "",
              "| Iteration | Design | Decision | Z on its rung | Z mean | Z p95 | Z max | Rung (#84) |",
@@ -518,6 +535,7 @@ def run_summary(state, target, ledger_path, spent_usd, cap_usd):
                                       + (f"; {tune['refused']}" if tune.get("refused") else "")
                                       + (", gate and ring re-checked" if tune.get("gate") and not tune.get("refused")
                                          else "")), ""]
+    lines += model_lines(ledger_rows)
     lines += [f"API spend: ${spent_usd:.4f} of ${cap_usd:.2f} (`{ledger_path}`).",
               f"Wall-clock: {state.get('elapsed_s', 0.0) / 60:.1f} min.", "", "![progress](progress.png)", ""]
     return "\n".join(lines)

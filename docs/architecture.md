@@ -80,6 +80,8 @@ Issue #106. In the last real run every design was a 14–18 line subclass of A/B
 
 `--concepts 1` turns explore rounds off.
 
+**The concept step** (issue #111). Explore calls, and repairs of a design that came from one, run on `concept_model` (`claude-opus-5-5`, maintainer, 2026-11-13); reshapes and the critic stay on `model` (`claude-sonnet-5-5`). Before writing code, an explore call lists three mechanisms in `design_note.json` (`concepts`: name, the failure it targets, why it should work with rule ids, its cost), says which it built (`picked`) and why, and probes its draft (#107). A note without three concepts is refused as `no_concepts` and a call that never probed as `no_probe`; the design log keeps the three concepts, so a later round can try the others. The run summary has a table of calls, spend, turns and wall-clock per model and call, from the spend ledger (which now records each call's seconds).
+
 ### Capture first, provisional designs and repairs
 
 Issue #109. A design that failed the structure gate or the ring used to be discarded, which pushed every design back towards A/B, the one brick known to build (in `ab4iter2-20261114-mean` iteration 1 raised Z mean to +0.539 and was dropped for its ring). The requirement is unchanged: a kept design builds the tower, the wall, the bridge, the overhang and the ring.
