@@ -8,6 +8,9 @@ The agent runs on the Claude Agent SDK (agents/runner.py). Its prompt holds the 
 - **Write, Edit** inside its own package only (``<attempt>/pkg/<module>/``);
 - **check_family**: the family contract and the rule margins, run in a separate process with a
   time limit (agents/check_family.py). The agent keeps fixing the family until it passes.
+- **probe_drops** (issue #107, when the loop gives a prober): the draft dropped at up to 30 poses,
+  the parent's failures inside the target box, a few of its seats and the aim (engine/probe.py),
+  at most ``PROBE_CALLS`` times per call. Each call's wall-clock is logged.
 
 The output is a package whose ``family.py`` exports ``FAMILY``. It lives in the loop's run
 directory, not in ``src/``, and is imported by path (check_family.load_family).
@@ -19,10 +22,11 @@ with no reason to give. **No copying from papers or other groups**
 (CLAUDE.md): papers are for mechanics. The maintainer's own designs (A/B) may be reused (#85).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import re
 from pathlib import Path
+import time
 
 from brixzle.agents import check_family as CF
 from brixzle.agents.runner import AgentCall, ToolSpec
@@ -42,6 +46,8 @@ READ_ROOTS = (REPO / "docs", _SRC / "engine", _SRC / "rules", _SRC / "requiremen
                                                 "capture.py", "registry.py", "ab")))
 DUMMIES = re.compile(r"\b(wedge|pyramid)\b", re.I)
 CHECK_TOOL = "check_family"
+PROBE_TOOL = "probe_drops"
+PROBE_CALLS = 5  # probe calls per design call (issue #107)
 
 
 @dataclass(frozen=True)
@@ -126,10 +132,16 @@ Rules:
 - X and Y guides that engage at once can jam each other. A guide in Y must carry the X interlock across it (a shear of
   the section does), or engage only after X has seated. Simulated: wings with no X ridges on them left every
   Y-offset drop 3 mm off in X; skirts that met the brick far below its centre of mass rolled it 13 degrees (tests/fixtures/yfunnel/family.py).
+- When the tools offer probe_drops, probe before you finish: it drops your draft at up to 30 poses, the
+  parent's jammed and wrong-valley drops inside the target box, a few of its seats as a control and the aim
+  (or, with no parent map, a spread over the error disc), and returns each pose's outcome and rest error
+  (simulated, uncalibrated contact). Use it to test whether a change fixes the failure you were asked to fix,
+  and try another idea if it does not. At most a few calls per design, so change the package between calls.
 - When the check passes, write design_note.json in your package:
   {{"name": ..., "summary": "<one paragraph: the idea and how it captures and seats>",
     "changes": "<what you changed from the parent design and why, or 'first design'>",
-    "geometry": "Prismatic" | "Solid3D"}}
+    "geometry": "Prismatic" | "Solid3D",
+    "probe": "<what probe_drops showed: parent failures now seated, seats now failing; or 'not offered'>"}}
   and stop. Keep your final message to one short paragraph.
 
 Base requirements (R1-R13):
@@ -188,12 +200,34 @@ def check_tool(ws):
                     "Returns JSON with ok, violations, broken rules, margins and mass.", {}, handler)
 
 
+def probe_tool(ws, prober, log, cap=PROBE_CALLS):
+    """The probe_drops tool (issue #107): ``prober(root, module)`` drops the package at the loop's
+    probe poses. Every call is appended to ``log`` (its number, wall-clock and outcomes); after
+    ``cap`` calls the tool answers with an error and runs nothing."""
+    def handler(_args):
+        if len(log) >= cap:
+            return json.dumps({"error": f"probe limit reached: {cap} calls per design; finish the design"})
+        t = time.time()
+        out = prober(ws.root, ws.module)
+        entry = {"call": len(log) + 1, "seconds": round(time.time() - t, 2), "outcomes": out.get("outcomes"),
+                 "parent_failures_now_seated": out.get("parent_failures_now_seated"),
+                 "parent_seated_now_failing": out.get("parent_seated_now_failing"), "error": out.get("error")}
+        log.append(entry)
+        return json.dumps({**out, "calls_left": cap - len(log)}, indent=1)
+
+    return ToolSpec(PROBE_TOOL, "Drop the draft in your package at up to 30 poses: the parent's failures inside the "
+                    "target box, a few of its seats and the aim (or a spread over the error disc). Returns each "
+                    "pose's outcome and rest error. Simulated, uncalibrated contact. Limited calls per design.",
+                    {}, handler)
+
+
 @dataclass
 class DesignOutcome:
     workspace: Workspace
     result: object        # AgentResult
     check: dict           # the final check (run by the loop, not trusted from the agent)
     note: dict
+    probes: list = field(default_factory=list)  # one entry per probe_drops call (issue #107)
 
     @property
     def ok(self):
@@ -201,16 +235,20 @@ class DesignOutcome:
 
 
 def design(runner, intake, attempt_dir, module, brief=None, parent=None, failures=None, log_text="",
-           budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text=""):
+           budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text="", prober=None,
+           probe_calls=PROBE_CALLS):
     """Run the design agent once; returns a DesignOutcome. The loop checks the package itself
-    afterwards, whatever the agent said."""
+    afterwards, whatever the agent said. ``prober(root, module)``, if given, is served as the
+    probe_drops tool, at most ``probe_calls`` times (issue #107)."""
     ws = Workspace.make(attempt_dir, module)
+    probes = []
+    tools = (check_tool(ws),) + ((probe_tool(ws, prober, probes, probe_calls),) if prober is not None else ())
     call = AgentCall(name="design", system=system_prompt(lessons_text),
                      prompt=task_prompt(ws, intake, brief, parent, failures, log_text, intake.get("fixed")),
                      max_budget_usd=budget_usd, tools=("Read", "Glob", "Grep", "Write", "Edit"), cwd=ws.pkg,
                      write_root=ws.pkg, read_roots=(*READ_ROOTS, Path(attempt_dir).parent.parent,
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
-                     mcp_tools=(check_tool(ws),), max_turns=max_turns)
+                     mcp_tools=tools, max_turns=max_turns)
     result = runner.run(call)
     final = CF.check_in_subprocess(ws.root, ws.module)
     note_path = ws.pkg / NOTE_FILE
@@ -218,4 +256,4 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
         note = json.loads(note_path.read_text(encoding="utf-8")) if note_path.exists() else {}
     except json.JSONDecodeError:
         note = {"error": "design_note.json is not valid JSON"}
-    return DesignOutcome(ws, result, final, note)
+    return DesignOutcome(ws, result, final, note, probes)

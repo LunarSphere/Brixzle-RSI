@@ -190,3 +190,31 @@ def test_the_design_prompt_asks_for_a_ring_kit():
     for want in ("ring kit", "kit_from_cell", "hooks=False", "one voxel", "closer"):
         assert want in text, want
     assert "RingKit" in text  # the interface doc describes it
+
+
+# --- the drop probe (issue #107) ---
+
+
+def test_the_probe_tool_runs_the_prober_logs_each_call_and_stops_at_the_cap(tmp_path):
+    ws = DA.Workspace.make(tmp_path / "attempt-1", "capped")
+    seen = []
+
+    def prober(root, module):
+        seen.append((root, module))
+        return {"drops": 2, "outcomes": {"seated": 2}, "seconds": 0.5, "rows": []}
+
+    log = []
+    tool = DA.probe_tool(ws, prober, log, cap=2)
+    assert tool.name == DA.PROBE_TOOL
+    first = json.loads(tool.handler({}))
+    assert first["outcomes"] == {"seated": 2} and first["calls_left"] == 1
+    tool.handler({})
+    third = json.loads(tool.handler({}))
+    assert "limit" in third["error"] and len(seen) == 2
+    assert [c["call"] for c in log] == [1, 2] and all(c["seconds"] >= 0 for c in log)
+    assert log[0]["outcomes"] == {"seated": 2}
+
+
+def test_the_design_prompt_asks_for_a_probe_before_finishing_and_its_finding_in_the_note():
+    text = DA.system_prompt()
+    assert "probe_drops" in text and '"probe"' in text

@@ -9,7 +9,9 @@ Each outer iteration:
 
 1. **Design:** the design agent (#18) writes a family package, from the concept, the critic's
    last brief and the current best design. The loop checks the package itself (contract and
-   rules); a package that fails goes straight back to the agent with the check's output.
+   rules); a package that fails goes straight back to the agent with the check's output. Inside
+   its call the agent may probe its draft (#107): up to ``probe_calls`` times, 30 drops at the best
+   design's map failures on the current target (never the held-out poses).
 2. **Quick check** (#47): 40 drops in the target box. Below 32 seated, the design goes straight
    back to the agent with the failing drops. Up to ``design_attempts`` tries per iteration.
 3. **Full sim map** (#48), covering the mean, p95 and worst boxes, and **Z** per target (#61).
@@ -53,6 +55,7 @@ from brixzle.agents import design as DA
 from brixzle.agents.runner import BudgetExceeded, ClaudeRunner, SpendLedger
 from brixzle.engine import boxes as BX
 from brixzle.engine import jam_analysis as JA
+from brixzle.engine import probe as PB
 from brixzle.engine import quick_check as QC
 from brixzle.engine import report as RP
 from brixzle.engine import structure_gate as SG
@@ -129,6 +132,16 @@ class SimEngine:
     def drop_videos(self, family, p, sim_map, map_dir, out_dir, n, seed):
         """``n`` drops of the map, picked at random with ``seed``, recorded to ``out_dir`` (#77)."""
         return VD.drop_videos(family, p, sim_map, SM.read_drops(map_dir), out_dir, n=n, seed=seed)
+
+    def probe_poses(self, map_dir, target, seed):
+        """The drop probe's poses (#107) on ``target``'s box: the failures, some seats and the aim of
+        the map in ``map_dir``, or a spread over the box's X-Y disc without one."""
+        drops = SM.read_drops(map_dir) if map_dir else None
+        return PB.probe_poses(self.boxes[target], drops, seed=seed, n=self.cfg.probe_drops)
+
+    def probe(self, root, module, poses_path):
+        """The package ``<root>/<module>`` dropped at the poses in ``poses_path``, in a subprocess (#107)."""
+        return PB.probe_in_subprocess(root, module, poses_path)
 
     def tune(self, family, p, fixed=(), target=None):
         s = TU.TuneSettings(statistic=target or self.cfg.target, fixed=tuple(fixed), seed=self.cfg.seed,
@@ -436,6 +449,7 @@ class Loop:
         if last and last.get("decision") == "failed_ring":
             failures = {"ring": last["ring"]["failure"]}  # the last design closed no ring (#89)
         last_err, repeated = None, None
+        prober = self._prober(iter_dir, i, best)
         for a in range(1, cfg.design_attempts + 1):
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
@@ -443,7 +457,7 @@ class Loop:
                 outcome = DA.design(self.runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
                                     parent=parent, failures=failures, log_text=self.log.text(),
                                     budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
-                                    lessons_text=self.lessons_text())
+                                    lessons_text=self.lessons_text(), prober=prober, probe_calls=cfg.probe_calls)
             except BudgetExceeded:
                 raise
             except Exception as e:  # noqa: BLE001 - an SDK or API error: log it and try again
@@ -459,12 +473,17 @@ class Loop:
                     break
                 last_err = err
                 continue
+            probe_s = sum(float(q.get("seconds") or 0.0) for q in outcome.probes)
             att = {"attempt": a, "module": module, "root": str(outcome.workspace.root),
                    "design_cost_usd": outcome.result.cost_usd, "design_s": time.time() - t,
-                   "family": outcome.check.get("family") or module, "note": outcome.note}
+                   "family": outcome.check.get("family") or module, "note": outcome.note,
+                   "probes": list(outcome.probes), "probe_s": probe_s}
             rec["attempts"].append(att)
+            if outcome.probes:
+                rec["seconds"]["probe"] = rec["seconds"].get("probe", 0.0) + probe_s
             entry = {"iteration": i, "attempt": a, "family": att["family"], "module": module,
-                     "note": outcome.note, "brief_followed": (brief or {}).get("reason")}
+                     "note": outcome.note, "brief_followed": (brief or {}).get("reason"),
+                     "probes": len(outcome.probes), "probe_s": round(probe_s, 2)}
             if not outcome.ok:
                 problems = outcome.check.get("violations") or []
                 broken = [f"{part}: {', '.join(info['broken'])}" for part, info in outcome.check.get("parts", {}).items()
@@ -579,8 +598,10 @@ class Loop:
                                   "mass_g": rec.get("mass_g"), "overhang_n": rec.get("overhang_n"),
                                   "gate": (rec.get("runs") or {}).get("gate")}
         sim_map = self.engine.read_map(map_dir)
+        last_att = rec["attempts"][-1] if rec["attempts"] else {}
         self.log.append({"iteration": i, "attempt": len(rec["attempts"]), "family": rec["family"],
                          "module": rec["module"], "decision": rec["decision"], "reason": why, "note": rec["note"],
+                         "probes": len(last_att.get("probes") or []), "probe_s": round(last_att.get("probe_s", 0.0), 2),
                          "z": rec["z"], "held_out": held, "overrides": sim_map.get("overrides", []),
                          "overhang_n": rec.get("overhang_n"),
                          "brief_followed": (brief or {}).get("reason"), "runs": dict(rec["runs"])})
@@ -619,6 +640,20 @@ class Loop:
         rec["seconds"]["total"] = time.time() - t_iter
         self.write_iteration_summary(rec, res_dir)
         return rec
+
+    def _prober(self, iter_dir, i, best):
+        """The design agent's probe (#107): ``prober(root, module)`` drops a package at this
+        iteration's poses, the best design's map failures on the current target (or a spread over
+        the box's disc without a best), seeded with the run's seed and the iteration. None with
+        ``probe_calls`` 0."""
+        if not self.cfg.probe_calls:
+            return None
+        target = current_target(self.state, self.cfg)
+        poses = self.engine.probe_poses((best or {}).get("map"), target, self.cfg.seed * 1000 + i)
+        Path(iter_dir).mkdir(parents=True, exist_ok=True)
+        path = PB.write_poses(poses, Path(iter_dir) / "probe_poses.json")
+        engine = self.engine
+        return lambda root, module: engine.probe(root, module, path)
 
     RING_MIN_LEFT_S = 120.0  # no ring is started with less of the run's wall-clock left (#89)
 
@@ -716,6 +751,8 @@ def parser():
     ap.add_argument("--ledger", help="spend ledger to share with other runs (default: the run's own)")
     ap.add_argument("--max-minutes", type=float, default=d.max_minutes)
     ap.add_argument("--design-attempts", type=int, default=d.design_attempts)
+    ap.add_argument("--probe-calls", type=int, default=d.probe_calls,
+                    help="probe_drops calls per design call (#107; 0: no probe tool)")
     ap.add_argument("--seed", type=int, default=d.seed)
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--no-tune", action="store_true", help="skip the end tune")
@@ -743,7 +780,7 @@ def config_from_args(args):
                       baseline_only=args.baseline_only,
                       max_iterations=args.max_iterations, patience=args.patience,
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
-                      design_attempts=args.design_attempts, seed=args.seed, workers=args.workers,
+                      design_attempts=args.design_attempts, probe_calls=args.probe_calls, seed=args.seed, workers=args.workers,
                       tune=not args.no_tune, videos=args.videos, runs=args.runs, results=args.results).validate()
 
 
