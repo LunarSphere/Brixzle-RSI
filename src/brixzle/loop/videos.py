@@ -1,5 +1,5 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/render.py @ a649663
-# Changed: the renderer (render) is kept and adapted (fixed side camera on the bricks, pulled back, a caption on every frame, slow motion with the last frame held, MP4 written by the ffmpeg binary or a GIF by Pillow, no imageio); picking drops from a map, re-recording them and exporting STL are new (issue #77).
+# Changed: the renderer (render) is kept and adapted (fixed side camera on the bricks, pulled back, a caption on every frame, slow motion with the last frame held, MP4 written by the ffmpeg binary or a GIF by Pillow, no imageio); picking drops from a map, re-recording them and exporting STL are new (issue #77); picks keep and replay the Y offset of X-Y slice drops (issue #103).
 """Drop videos and STL for the per-iteration results (issue #77).
 
 Each iteration of the loop picks a few drops of its full sim map at random (seeded, so a run can be
@@ -34,7 +34,8 @@ HOLD_S = 0.75       # the last frame is held this long, to show where the brick 
 def pick_drops(drops, n=N_VIDEOS, seed=0, clearance0=5.0):
     """``n`` distinct drops of a map (not zoom drops), picked at random with ``seed``, numbered
     1..n. Each pick keeps its slice, course, cell and outcome, and gets its pose about the aim:
-    x (mm), z (release height above the minimum, mm) and t (pitch, deg)."""
+    x and y (mm), z (release height above the minimum, mm) and t (pitch, deg). Y is the drop's
+    ``dy_mm`` (0 off the X-Y slice, issue #103)."""
     pool = sorted((d for d in drops if not d.get("zoom")),
                   key=lambda d: (d["slice"], d["course"], tuple(d["cell"])))
     rng = np.random.default_rng(seed)
@@ -43,24 +44,24 @@ def pick_drops(drops, n=N_VIDEOS, seed=0, clearance0=5.0):
     for k, i in enumerate(idx, start=1):
         d = pool[i]
         out.append({"k": k, "slice": d["slice"], "course": d["course"], "cell": list(d["cell"]),
-                    "dx_mm": float(d["dx_mm"]), "clear_mm": float(d["clear_mm"]), "pitch_deg": float(d["pitch_deg"]),
-                    "outcome": d["outcome"],
-                    "pose": {"x": float(d["dx_mm"]), "z": float(d["clear_mm"]) - clearance0,
-                             "t": float(d["pitch_deg"])}})
+                    "dx_mm": float(d["dx_mm"]), "dy_mm": float(d.get("dy_mm", 0.0)), "clear_mm": float(d["clear_mm"]),
+                    "pitch_deg": float(d["pitch_deg"]), "outcome": d["outcome"],
+                    "pose": {"x": float(d["dx_mm"]), "y": float(d.get("dy_mm", 0.0)),
+                             "z": float(d["clear_mm"]) - clearance0, "t": float(d["pitch_deg"])}})
     return out
 
 
 def drop_sample(pick, cfg):
     """The trial sample (ErrorModel.sample keys) of a picked drop."""
     aim = cfg.error.aim_bias
-    return {"dx": aim + pick["dx_mm"], "dy": 0.0, "aim": aim, "yaw": 0.0, "roll": 0.0, "pitch": pick["pitch_deg"],
+    return {"dx": aim + pick["dx_mm"], "dy": float(pick.get("dy_mm", 0.0)), "aim": aim, "yaw": 0.0, "roll": 0.0, "pitch": pick["pitch_deg"],
             "clear": pick["clear_mm"], "vel": [0.0, 0.0, 0.0]}
 
 
 def caption(pick, outcome):
     q = pick["pose"]
     return (f"drop {pick['k']}: {pick['slice']} slice, course {pick['course']}; x {q['x']:+.1f} mm, "
-            f"z {q['z']:.1f} mm, pitch {q['t']:+.1f} deg -> {outcome} ({LABEL})")
+            f"y {q.get('y', 0.0):+.1f} mm, z {q['z']:.1f} mm, pitch {q['t']:+.1f} deg -> {outcome} ({LABEL})")
 
 
 # --- rendering (from aerial-assembly) ---

@@ -392,7 +392,7 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
                   "| # | Video | Slice, course | Pose | Outcome in the map |", "|---|---|---|---|---|"]
         for q in rec["videos"]:
             v = q.get("video") or f"not rendered: {q.get('error', '?')}"
-            pose = f"x {q['pose']['x']:+.1f} mm, z {q['pose']['z']:.1f} mm, pitch {q['pose']['t']:+.1f} deg"
+            pose = f"x {q['pose']['x']:+.1f} mm, y {q['pose'].get('y', 0.0):+.1f} mm, z {q['pose']['z']:.1f} mm, pitch {q['pose']['t']:+.1f} deg"
             again = q.get("rerun_outcome")
             note = f" (re-run: {again})" if again and again != q["outcome"] else ""
             lines.append(f"| {q['k']} | `{v}` | {q['slice']}, course {q['course']} | {pose} | {q['outcome']}{note} |")

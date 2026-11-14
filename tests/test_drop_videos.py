@@ -34,7 +34,7 @@ def test_five_drops_are_picked_at_random_repeatably_and_never_from_a_zoom():
     assert a != V.pick_drops(_drops(), n=5, seed=4, clearance0=C0)
     assert len({(p["slice"], p["course"], tuple(p["cell"])) for p in a}) == 5
     assert all(p["pose"]["x"] != 99.0 for p in a)
-    assert a[0]["pose"] == {"x": a[0]["dx_mm"], "z": a[0]["clear_mm"] - C0, "t": a[0]["pitch_deg"]}
+    assert a[0]["pose"] == {"x": a[0]["dx_mm"], "y": 0.0, "z": a[0]["clear_mm"] - C0, "t": a[0]["pitch_deg"]}
 
 
 def test_with_fewer_drops_than_asked_all_are_picked():
@@ -46,6 +46,19 @@ def test_a_picked_drop_becomes_the_same_trial_sample():
     s = V.drop_sample(p, CFG)
     assert s["dx"] - s["aim"] == pytest.approx(p["dx_mm"]) and s["clear"] == p["clear_mm"]
     assert s["pitch"] == p["pitch_deg"] and s["dy"] == s["yaw"] == s["roll"] == 0.0
+
+
+def _xy_drop():
+    return {"slice": "xy", "course": 0, "cell": [2, -3], "dx_mm": 2.0, "dy_mm": -3.0, "clear_mm": C0,
+            "pitch_deg": 0.0, "outcome": "jammed"}
+
+
+def test_an_xy_drop_keeps_its_y_offset_and_is_replayed_there():
+    # Issue #103: drops on the X-Y slice (#86) lost their Y offset and crashed the jam map.
+    p = V.pick_drops([_xy_drop()], n=1, seed=0, clearance0=C0)[0]
+    assert p["dy_mm"] == -3.0 and p["pose"] == {"x": 2.0, "y": -3.0, "z": 0.0, "t": 0.0}
+    assert V.drop_sample(p, CFG)["dy"] == -3.0
+    assert "y -3.0 mm" in V.caption(p, "jammed")
 
 
 def test_the_caption_names_the_pose_the_outcome_and_the_label():
