@@ -57,6 +57,22 @@ def counts(outcomes):
             "passed": s == n}
 
 
+def z_band(c):
+    """The noise band of Z (#110): one standard error of Z for the counts ``c`` ({'Z', 'S', 'J', 'N'}).
+    Each drop scores +1, 0 or -1, so its variance is (S + J) / N - Z^2, and the band is
+    sqrt(variance / N). A change in Z smaller than the band is not a change."""
+    n = c.get("N") or 0
+    if n <= 0:
+        raise ValueError("no drops: the band of Z is undefined")
+    var = (c["S"] + c["J"]) / n - c["Z"] ** 2
+    return math.sqrt(max(var, 0.0) / n)
+
+
+def within_band(z_new, z_ref, band):
+    """True if ``z_new`` differs from ``z_ref`` by no more than ``band`` (#110)."""
+    return abs(z_new - z_ref) <= band + EPS
+
+
 def inside(pose, box):
     """Whether a pose {x, y, z, t} (mm, mm, mm above the minimum clearance, deg; y defaults to 0)
     lies inside a placement box: the X-Y disc of a disc box (#86), and the box's height and pitch."""

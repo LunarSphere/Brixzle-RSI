@@ -216,6 +216,30 @@ def test_a_redesign_is_kept_only_if_z_improves_and_held_out_is_not_worse():
     assert not kept and "held-out" in why
 
 
+def test_a_held_out_drop_inside_the_noise_band_keeps_the_design():
+    # #110: held-out counts as worse only when lower by more than one standard error of Z
+    best = {"z_target": 0.5, "held_out": {"a": counts(0.4)}}
+    band = OR.ZS.z_band(counts(0.4))
+    kept, why = OR.accept(0.6, {"a": counts(0.38)}, best)
+    assert 0.02 < band and kept and "inside the band" in why
+    kept, why = OR.accept(0.6, {"a": counts(0.2)}, best)
+    assert not kept and "held-out Z got worse" in why and f"band {band:.3f}" in why
+
+
+def test_iteration_4_of_ab4iter2_would_now_be_kept():
+    # runs/loop/ab4iter2-20261114-mean/state.json: iteration 3 was the best, iteration 4 was rejected
+    # on two held-out drops at friction 0.2 (277 against 279 seated, 31 jams each, N 356)
+    def c(s, j, n=356):
+        return {"Z": (s - j) / n, "S": s, "J": j, "N": n}
+
+    best = {"z_target": 0.5365, "overhang_n": 5,
+            "held_out": {"seed 1, friction 0.2": c(279, 31), "seed 1, friction 0.5": c(240, 74)}}
+    held = {"seed 1, friction 0.2": c(277, 31), "seed 1, friction 0.5": c(242, 69)}
+    kept, why = OR.accept(0.5730, held, best, overhang=5)
+    assert kept, why
+    assert "-0.006" in why and "inside the band of 0.033" in why
+
+
 def test_the_loop_stops_at_z_one_or_on_the_budgets():
     cfg = LoopConfig(max_iterations=5, patience=2, ladder=False)
     state = {"best": None, "iterations": []}

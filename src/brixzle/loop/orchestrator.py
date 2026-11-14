@@ -16,7 +16,8 @@ Each outer iteration:
 4. **Jam analysis** (#49, #56).
 5. **Acceptance:** the design replaces the current best only if Z on the current target improves,
    Z on no lower rung of the ladder falls below the best's, and held-out Z on the current target
-   (its poses shifted by another seed, at friction 0.2 and 0.5) is not worse on either. Without a
+   (its poses shifted by another seed, at friction 0.2 and 0.5) is not worse on either by more than
+   the noise band, one standard error of Z (#110). Without a
    parent, the first design that is scored becomes the best. The critic never sees the held-out
    results.
 6. **Critic** (#19): a redesign brief that cites the design rules; back to 1.
@@ -195,10 +196,20 @@ def accept(z, held, best, lower=(), overhang=None):
     down = [f"{s} {zn:+.3f} < {zb:+.3f}" for s, zn, zb in lower if zn < zb]
     if down:
         return False, "Z on a lower rung got worse: " + "; ".join(down)
-    worse = [f"{k} {held[k]['Z']:+.3f} < {v['Z']:+.3f}" for k, v in best["held_out"].items()
-             if k in held and held[k]["Z"] < v["Z"]]
+    # Held-out Z is worse only when it falls by more than one standard error of the best's Z (#110).
+    worse, noise = [], []
+    for k, v in best["held_out"].items():
+        if k not in held or not held[k]["Z"] < v["Z"]:
+            continue
+        band, d = ZS.z_band(v), held[k]["Z"] - v["Z"]
+        if ZS.within_band(held[k]["Z"], v["Z"], band):
+            noise.append(f"{k} {d:+.3f}, inside the band of {band:.3f}")
+        else:
+            worse.append(f"{k} {held[k]['Z']:+.3f} < {v['Z']:+.3f} ({d:+.3f}, band {band:.3f})")
     if worse:
         return False, "held-out Z got worse: " + "; ".join(worse)
+    if noise:
+        return True, f"{better}, held-out not worse (held-out " + "; ".join(noise) + ")"
     return True, f"{better}, held-out not worse"
 
 
