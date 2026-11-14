@@ -27,6 +27,8 @@ class LoopConfig:
     design_budget_usd: float = 1.5   # per design-agent call
     critic_budget_usd: float = 0.4   # per critic call
     design_max_turns: int = 40
+    probe_calls: int = 5             # probe_drops calls per design call (#107); 0: no probe tool
+    probe_drops: int = 30            # poses per probe, the aim included (#107)
     seed: int = 0                    # quick-check seed; held-out Z uses seed + 1
     workers: int | None = None       # sim drop processes
     held_out: bool = True
@@ -47,6 +49,10 @@ class LoopConfig:
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
                 raise ValueError(f"{name} must be a finite number > 0, got {v!r}")
+        for name, lo in (("probe_calls", 0), ("probe_drops", 2)):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, int) or v < lo:
+                raise ValueError(f"{name} must be an integer >= {lo}, got {v!r}")
         if isinstance(self.videos, bool) or not isinstance(self.videos, int) or self.videos < 0:
             raise ValueError(f"videos must be an integer >= 0, got {self.videos!r}")
         if self.parent is not None:

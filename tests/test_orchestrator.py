@@ -149,6 +149,16 @@ class FakeEngine:
         return {"structure": "ring6x2", "status": status, "seated": 16 if ok else 15, "placed": 16, "total": 16,
                 "stages": [stage], "seconds": 3.0, "run": str(d), "label": "simulated, uncalibrated contact"}, d
 
+    def probe_poses(self, map_dir, target, seed):
+        """The probe's poses (#107): records which map and box they came from."""
+        self.calls.append(("probe_poses", None if map_dir is None else Path(map_dir).name, target, seed))
+        return [{"source": "aim", "course": 0, "x_mm": 0.0, "y_mm": 0.0, "sample": {}}]
+
+    def probe(self, root, module, poses_path):
+        self.calls.append(("probe", module))
+        return {"drops": 1, "outcomes": {"seated": 1}, "parent_failures_now_seated": 0,
+                "parent_seated_now_failing": 0, "seconds": 0.1, "rows": []}
+
     def tune(self, family, p, fixed=(), target=None):
         self.calls.append(("tune", tuple(fixed)))
         self.tune_targets.append(target)
@@ -163,6 +173,18 @@ def design_step(name="loopwedge"):
         (pkg / "design_note.json").write_text(json.dumps({"summary": f"{name} chevron", "changes": "x",
                                                           "geometry": "Prismatic"}), encoding="utf-8")
         return RN.AgentResult(text="done", cost_usd=0.10, turns=5)
+    return step
+
+
+def probing_design_step(name="probewedge", calls=2):
+    """A design step that calls the probe_drops tool ``calls`` times before it writes its family."""
+    inner = design_step(name)
+
+    def step(call):
+        tool = next(t for t in call.mcp_tools if t.name == "probe_drops")
+        for _ in range(calls):
+            tool.handler({})
+        return inner(call)
     return step
 
 
@@ -799,3 +821,41 @@ def test_no_ring_is_started_with_less_than_two_minutes_left(tmp_path, intake):
     assert rec["ring"]["status"] == "not_run" and "two minutes" in rec["ring"]["reason"]
     text = (tmp_path / "RSI_RESULTS" / "t" / "iter-01" / "summary.md").read_text(encoding="utf-8")
     assert "ring was not run" in text
+
+
+# --- the drop probe (#107) ---
+
+
+def test_the_design_agent_probes_the_parents_failures_and_the_probes_are_logged_with_their_time(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4, 0.6], held=[0.5, 0.5])
+    loop, runner = _loop(tmp_path, intake, [critic_step(), probing_design_step("probewedge", calls=2)], engine,
+                         parent="ab", max_iterations=1)
+    state = loop.run()
+    it = state["iterations"][1]
+    base_map = Path(state["iterations"][0]["runs"]["map"]).name
+    assert ("probe_poses", base_map, "mean", 1) in engine.calls  # the parent's map, the target, seed*1000 + i
+    assert [c for c in engine.calls if c[0] == "probe"] == [("probe", it["attempts"][0]["module"])] * 2
+    att = it["attempts"][0]
+    assert [p["call"] for p in att["probes"]] == [1, 2] and att["probe_s"] >= 0
+    assert it["seconds"]["probe"] == pytest.approx(att["probe_s"])
+    entry = [e for e in loop.log.entries() if e["iteration"] == 1][-1]
+    assert entry["probes"] == 2 and entry["probe_s"] >= 0
+
+
+def test_without_a_parent_the_probe_spreads_over_the_disc_and_the_cap_is_a_setting(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, runner = _loop(tmp_path, intake, [probing_design_step("probewedge", calls=3)], engine,
+                         max_iterations=1, probe_calls=2)
+    state = loop.run()
+    assert ("probe_poses", None, "mean", 1) in engine.calls
+    att = state["iterations"][0]["attempts"][0]
+    assert len(att["probes"]) == 2  # the third call hit the cap
+    assert len([c for c in engine.calls if c[0] == "probe"]) == 2
+
+
+def test_the_probe_can_be_turned_off(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6], held=[0.5])
+    loop, runner = _loop(tmp_path, intake, [design_step("plain")], engine, max_iterations=1, probe_calls=0)
+    loop.run()
+    assert not [c for c in engine.calls if c[0] in ("probe_poses", "probe")]
+
