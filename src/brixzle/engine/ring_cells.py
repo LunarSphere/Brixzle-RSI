@@ -32,7 +32,7 @@ import numpy as np
 from shapely import affinity
 
 from brixzle.families import builders as B
-from brixzle.families.interface import Placement, Prismatic, RingBrick, RingKit
+from brixzle.families.interface import Placement, Prismatic, RingBrick, RingKit, Section
 
 DIRS = [(1, 0), (0, 1), (-1, 0), (0, -1)]
 KINDS = ("L3", "I3", "K2")
@@ -216,8 +216,8 @@ class CellKit:
     """The RingKit's callables for one family and cell (kit_from_cell). A class, not closures, so a
     family with a kit can be pickled into worker processes; the cache of built parts is not pickled."""
 
-    def __init__(self, family, cell, stroke_mm=None):
-        self.family, self.cell, self.stroke_mm = family, cell, stroke_mm
+    def __init__(self, family, cell, stroke_mm=None, base=None):
+        self.family, self.cell, self.stroke_mm, self.base_fn = family, cell, stroke_mm, base
         self.names = tuple(f"{kind}{part}" for kind in KINDS for part in family.parts)
         self._cache = {}
 
@@ -230,11 +230,11 @@ class CellKit:
 
     def __eq__(self, other):
         # Equal kits after a round trip to a worker: same family, cell and stroke.
-        return (isinstance(other, CellKit) and (self.family, self.cell, self.stroke_mm)
-                == (other.family, other.cell, other.stroke_mm))
+        return (isinstance(other, CellKit) and (self.family, self.cell, self.stroke_mm, self.base_fn)
+                == (other.family, other.cell, other.stroke_mm, other.base_fn))
 
     def __hash__(self):
-        return hash((self.family.name, self.cell, self.stroke_mm))
+        return hash((self.family.name, self.cell, self.stroke_mm, self.base_fn))
 
     def travel(self, p):
         return stroke_travel(self.family, p, None if self.stroke_mm is None else self.stroke_mm(p))
@@ -248,7 +248,7 @@ class CellKit:
         kind, part = name[:2], name[2:]
         fam = self.family
         U = fam.lattice(p).U_mm
-        ext = fam.geometry.extrusion(p)
+        ext = interlock_extrusion(fam)(p)
         cells = part_cells(kind, self.travel(p))
         pieces, shape = [], None
         for c in cells:
@@ -282,9 +282,12 @@ class CellKit:
 
     def base(self, p, n):
         lat = self.family.lattice(p)
-        sec = self.family.base(p, 1, 1)
-        outer = affinity.translate(sec.outer, -lat.U_mm / 2, 0.)
-        piece = B._pieces(outer, self.family.geometry.extrusion(p))
+        sec = (self.base_fn or self.family.base)(p, 1, 1)
+        if isinstance(sec, Section):
+            outer = affinity.translate(sec.outer, -lat.U_mm / 2, 0.)
+            piece = B._pieces(outer, interlock_extrusion(self.family)(p))
+        else:  # exact convex pieces (base frame, x = 0 at the voxel's left edge): centre the voxel on x = 0
+            piece = [np.asarray(v, dtype=float) - np.array([lat.U_mm / 2, 0., 0.]) for v in sec]
         out = []
         for (ci, cj), yaw in course0_yaws(ring(n, 1)).items():
             R = _yaw_matrix(yaw)
@@ -310,18 +313,34 @@ class _Call:
         return hash((self.kit, self.name))
 
 
-def kit_from_cell(family, cell, stroke_mm=None):
-    """A RingKit for a Prismatic family from one cell.
+def interlock_extrusion(family):
+    """The extrusion function of the family's prismatic interlock: a Prismatic family's own, or the
+    core of a Solid3D made with families.capture.with_capture_features (issue #105); else None."""
+    from brixzle.families import capture
+
+    if isinstance(family.geometry, Prismatic):
+        return family.geometry.extrusion
+    return capture.core_extrusion(family.geometry)
+
+
+def kit_from_cell(family, cell, stroke_mm=None, base=None):
+    """A RingKit from one cell, for a family with a prismatic interlock: a Prismatic family, or a
+    Solid3D made with families.capture.with_capture_features (issue #105), whose ring parts are its
+    interlock only, without the capture features.
 
     ``cell(p, part, hooks=True, exposed_lo=False, exposed_hi=False, cut_hi=0.0) -> Section`` is one
     voxel of ``part``'s profile centred on x = 0: ``hooks=False`` leaves out any feature that seats
     along a slanted stroke (the turn piece's side arm nests by its keel only); ``exposed_lo`` and
     ``exposed_hi`` say which ends face no sibling in the same part (trim them as the straight
     brick's ends are); ``cut_hi`` cuts that much more off the +x end (the closer). ``stroke_mm(p)``
-    is the slanted stroke's length for the closer's cut (default: the release lift). ``cell`` and
-    ``stroke_mm`` must be module-level functions, so the family can be pickled."""
-    if not isinstance(family.geometry, Prismatic):
-        raise ValueError("kit_from_cell needs a Prismatic family")
-    k = CellKit(family, cell, stroke_mm)
+    is the slanted stroke's length for the closer's cut (default: the release lift). ``base(p,
+    voxels, direction)`` is the ring base's voxel (default: the family's base); a family whose base
+    carries capture features that reach past its depth gives its interlock's base here, since the
+    ring's corners would run into them (issue #105). ``cell``, ``stroke_mm`` and ``base`` must be
+    module-level functions, so the family can be pickled."""
+    if interlock_extrusion(family) is None:
+        raise ValueError("kit_from_cell needs a family with a prismatic interlock: a Prismatic family, or a Solid3D "
+                         "made with families.capture.with_capture_features")
+    k = CellKit(family, cell, stroke_mm, base)
     return RingKit(parts=k.names, solid=_Call(k, "solid"), plan=_Call(k, "plan"), base=_Call(k, "base"),
                    collision=_Call(k, "collision"))
