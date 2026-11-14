@@ -390,3 +390,11 @@ The maintainer chose three concepts per explore round (2026-11-13).
 - **A package name reused under another root is imported from that root** (`check_family.load_family`). The explore tests reuse module names across tests and got the first test's module back.
 - **First real explore round** (`runs/loop/explore1-20261114-mean`, `RSI_RESULTS/explore1-20261114-mean`; Sonnet, `--max-iterations 1 --no-tune`). All three concepts were A/B variants and were refused as near copies after their calls: CP1 2 % (its note: "a small parametric variant, not a new tooth profile"), CP2 16 % (one key per brick instead of one per voxel: arguably a real change of mechanism), CP3 13 %. Design calls took 199 s side by side (the longest call: 31 turns), spent $0.713 and the critic $0.071; only one call used the probe. So the check now tells the agent inside its call (`check_family --reference`). The 20 % threshold stays: one round is too few to retune it on, but CP2 suggests a real concept can be smaller than 20 % in area.
 
+## Capture first and repairs (issue #109)
+
+The maintainer chose up to two repair attempts (2026-11-13).
+
+- **Ring failures are provisional, not rejected.** #89 rejected a design that would be kept but closed no ring (`failed_ring`). Now it is provisional and repaired, with the ring's failure in the repair call. A resumed run from before #109 keeps the old path.
+- **Repairs skip the critic.** The repair's task is the failing builds, so a brief would only compete with it, and the call is saved.
+- **The end tune re-checks the gate and the ring.** In `ab4iter2-20261114-mean` the tune took Z mean +0.537 to +0.596 with neither checked (`runs/tune-20261114T004530116358Z-rsi_ab4iter2_20261114_mean_i03_a2-mean`). The extra stages cost about one gate and one ring: 25 s and 5–14 s in that run (`RSI_RESULTS/ab4iter2-20261114-mean/iter-0*/summary.md`).
+
