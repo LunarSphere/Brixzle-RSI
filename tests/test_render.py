@@ -98,6 +98,17 @@ PICKS = [{"k": 1, "slice": "xz", "course": 0, "pose": {"x": 2.0, "z": 5.0, "t": 
           "video": "drop-2.mp4", "rerun_outcome": "jammed"}]
 
 
+def test_a_drop_from_the_xy_slice_is_marked_and_listed(tmp_path):
+    # Issue #103: an X-Y pick has a y in its pose; the map marks it on the xy panel.
+    pick = {"k": 3, "slice": "xy", "course": 0, "pose": {"x": 2.0, "y": -3.0, "z": 0.0, "t": 0.0},
+            "outcome": "jammed", "video": "drop-3.mp4", "rerun_outcome": "jammed"}
+    xy_map = {**MAP, "grids": MAP["grids"] + [{**MAP["grids"][0], "slice": "xy", "axes": ["x", "y"]}]}
+    assert RD.pick_marks(xy_map, [pick]) == [("xy", 0, 2.0, -3.0, 3)]
+    rec = {"iteration": 1, "dir": str(tmp_path / "runs/loop/r/iter-01"), "decision": "kept", "z": Z, "attempts": [],
+           "runs": {}, "videos": [pick]}
+    assert "y -3.0 mm" in RD.iteration_summary(rec, "r", "mean", "spend.jsonl", 0.1, 5.0)
+
+
 def test_the_picked_drops_are_marked_on_their_panels(tmp_path):
     marks = RD.pick_marks(MAP, PICKS)
     assert marks == [("xz", 0, 2.0, 5.0, 1), ("xt", 0, -1.0, -2.0, 2)]
