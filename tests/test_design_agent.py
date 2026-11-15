@@ -265,3 +265,21 @@ def test_in_an_explore_call_the_check_refuses_a_near_copy_of_the_reference(tmp_p
     out = cached_check(tmp_path, "abcopy", reference="ab", share=0.2)
     assert out["ok"] is False and out["novelty"]["near_copy"] is True and "near copy" in out["novelty"]["reason"]
     assert not out["violations"] and not out["error"]  # only the novelty makes it not ok
+
+
+# --- cost trims (#125) ---
+
+
+def test_the_designer_gets_a_b_s_source_up_front_so_it_spends_no_turns_reading_it():
+    text = DA.system_prompt()
+    assert "def section(p: BrickParams, part)" in text and "class BrickParams(FamilyParams)" in text
+
+
+def test_the_probe_tool_returns_counts_and_only_the_drops_that_did_not_seat(tmp_path):
+    ws = DA.Workspace.make(tmp_path / "attempt-1", "trimmed")
+    rows = [{"source": "jammed", "outcome": "seated"}] * 25 + [{"source": "jammed", "outcome": "jammed"}] * 5
+    tool = DA.probe_tool(ws, lambda root, module: {"drops": 30, "outcomes": {"seated": 25, "jammed": 5},
+                                                   "seconds": 1.0, "rows": rows}, [], cap=2)
+    out = json.loads(tool.handler({}))
+    assert len(out["rows"]) == 5 and all(r["outcome"] != "seated" for r in out["rows"])
+    assert out["rows_seated_omitted"] == 25 and out["outcomes"] == {"seated": 25, "jammed": 5}

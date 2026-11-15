@@ -141,3 +141,13 @@ def test_the_critic_reads_the_rest_pictures_and_the_contact_table(tmp_path):
     assert "rest-1-xz.png" in call.prompt and "B: tooth tip" in call.prompt and "A: slot mouth" in call.prompt
     assert "faces" in call.system and "shape_change" in call.system
 
+
+
+def test_the_critic_sees_the_map_grids_cropped_to_the_target_box():
+    """#125: the grids span the worst box; the critic judges the target box, so the rest is trimmed."""
+    g = {"slice": "xz", "course": 0, "axes": ["x", "z"], "step": {"x": 4.0, "z": 5.0},
+         "index_extent": {"x": [-10, 10], "z": [0, 4]}, "extent": {"x": [-40.0, 40.0], "z": [0.0, 20.0]},
+         "rows": ["F" * 21] * 5, "fixed": {"t": 0.0}}
+    out = CR.crop_grid(g, {"x": (-8.0, 8.0), "z": (0.0, 5.0)}, margin=1)
+    assert out["index_extent"] == {"x": [-3, 3], "z": [0, 2]} and all(len(r) == 7 for r in out["rows"])
+    assert len(out["rows"]) == 3

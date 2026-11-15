@@ -136,12 +136,24 @@ For each conflict or unclear item, the person chooses: keep the base requirement
 
 Every Claude call goes through `agents/runner.py`:
 
-- **Model:** set once, by the caller (the loop's config); Claude Sonnet 5.5 by default.
+- **Model:** set once, by the caller (the loop's config); Claude Opus 5.5 by default since #125.
 - **Credentials:** `ANTHROPIC_API_KEY` if it is set, otherwise the active `ant` CLI profile's access token, handed to the Agent SDK's Claude Code process. The token is never printed. A call fails if Claude Code reports using any other credential, such as a claude.ai login.
 - **Spend:** each call reserves its own cap against a spend ledger (a JSON-lines file with a cap in dollars) before it starts. It gets the Agent SDK's per-call cap and is recorded with the cost the SDK reports.
 - **Tools:** each call lists the built-in tools it may use, and a guard refuses writes outside the call's own folder and reads outside its read roots. No settings files or CLAUDE.md are loaded.
 - **Message buffer:** the SDK's 1 MB limit on a Claude Code message is raised to 16 MB, because an image the agent reads comes back as one message (issue #79).
 - **Tests** use a scripted runner. The Agent SDK is an optional extra (`uv sync --extra agents`), so CI never installs or imports it.
+
+### Persistent sessions
+
+Issue #125 (maintainer's choices, 2026-11-15: stay on the Agent SDK with the API key; Opus for the designer, repairs and the critic). Each call used to be a fresh Claude Code session that re-read the requirements, the interface, the rules and A/B, and forgot the last call; an Opus explore call cost $1.21–1.33 over 21–26 turns (`runs/loop/overhaul2-20261114-mean/api-spend.jsonl`).
+
+- **Sessions by role** (`orchestrator.Sessions`, `runner.ClaudeSession`): `designer` (reshapes and repairs of the best), `critic`, one `concept:<module>` per explore concept, and `concept` (the concept track, #126). A session connects on its first message and keeps that message's options (model, system prompt, tools, per-message turn and budget limits); each later message brings its own write root, read roots and loop tools, which the tool guard and the tool handlers look up at call time. The SDK reports cost per message, so the ledger gets one row per message, marked with the session.
+- **After an explore round** the session of the concept that goes on (kept, provisional, or chosen for the concept track) carries on as `designer` or `concept`; the others close. So the agent that wrote a brick keeps developing it.
+- **Replacement.** A session is closed after `session_messages` (4) messages or once its context reaches `session_max_tokens` (100,000); the next message opens a fresh one with a handover note pointing at the design log, files and pictures. Each iteration records its sessions' ids, message counts, context sizes and replacements.
+- **Resume.** Session ids go in `state.json`; `--resume` reopens them. `--no-sessions` goes back to a fresh call each time.
+- **Cost trims.** A/B's `family.py` and `params.py` are in the designer's system prompt, so it spends no turns reading them; `probe_drops` returns the counts and only the drops that did not seat; the critic's map grids are cut to its target box and one cell round it. In a session the critic always has Read, limited each message to that message's rest pictures.
+
+A first test of the SDK's client (`ClaudeSDKClient`, Haiku, three messages in one session; spend in `runs/api-spend-overhaul2-20261115.jsonl`) showed cost and turns reported per message ($0.0021, $0.0028, $0.0030), and the cache carried between messages (13,779 tokens read from cache on the second); a fresh session first writes about 17,000 tokens of Claude Code's own prompt to the cache.
 
 ## Design log
 

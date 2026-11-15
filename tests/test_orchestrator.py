@@ -1095,14 +1095,16 @@ def test_explore_calls_go_to_the_concept_model_and_the_critic_to_the_other(tmp_p
     engine = FakeEngine(tmp_path / "eng", zs=[0.6, 0.55, 0.5], held=[0.5, 0.5, 0.5])
     cfg = _cfg(tmp_path, max_iterations=2, concepts=2)
     led = RN.SpendLedger(tmp_path / "spend.jsonl", cfg.budget_usd)
-    runner = RN.ScriptedRunner([critic_step(), design_step("reshape")], ledger=led, model="sonnet-like")
-    concept = RN.ScriptedRunner([concept_step("cx"), concept_step("cx")], ledger=led, model="opus-like")
+    runner = RN.ScriptedRunner([critic_step()], ledger=led, model="sonnet-like")
+    concept = RN.ScriptedRunner([concept_step("cx"), concept_step("cx"), design_step("reshape")], ledger=led,
+                                model="opus-like")
     loop = OR.Loop(intake, cfg, runner=runner, concept_runner=concept, engine=engine, name="t")
     loop.ledger = led
     state = loop.run()
-    assert [c.name for c in concept.calls] == ["design", "design"]
-    assert [c.name for c in runner.calls] == ["critic", "design"]
-    assert LoopConfig().concept_model == "claude-opus-5-5" and LoopConfig().model == "claude-sonnet-5-5"
+    # The kept concept's session carries on as the designer (#125), so the reshape goes to it as well.
+    assert [c.name for c in concept.calls] == ["design", "design", "design"]
+    assert [c.name for c in runner.calls] == ["critic"]
+    assert LoopConfig().concept_model == "claude-opus-5-5" and LoopConfig().model == "claude-opus-5-5"  # #125
     summary = (Path(loop.results) / "summary.md").read_text(encoding="utf-8")
     assert "opus-like" in summary and "sonnet-like" in summary  # spend, turns and wall-clock per model
     assert state["iterations"][0]["concepts"][0]["model"] == "opus-like"
@@ -1249,4 +1251,63 @@ def test_the_run_stops_in_time_for_the_end_tune():
     assert OR.stop_reason(state, cfg, 5.0, 15 * 60, iteration_s=240.0) is None
     why = OR.stop_reason(state, cfg, 5.0, 20 * 60, iteration_s=240.0)
     assert why and "end tune" in why
+
+
+# --- persistent sessions (#125) ---
+
+
+def test_reshapes_share_one_designer_session_and_the_critic_keeps_its_own(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4, 0.5, 0.6], held=[0.5] * 6)
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2"), critic_step(),
+                                            design_step("w3")], engine, max_iterations=3, sessions=True)
+    state = loop.run()
+    designs = [c for c in runner.calls if c.name == "design"]
+    critics = [c for c in runner.calls if c.name == "critic"]
+    assert {c.session for c in designs} == {"designer"} and len({c.session_id for c in designs}) == 1
+    assert {c.session for c in critics} == {"critic"} and len({c.session_id for c in critics}) == 1
+    assert set(state["sessions"]) == {"designer", "critic"}
+    assert all("seed 1, friction" not in c.prompt for c in critics)  # the critic never sees held-out results
+
+
+def test_each_explore_concept_has_its_own_session(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.6, 0.5], held=[0.5] * 4)
+    loop, runner = _loop(tmp_path, intake, [concept_step("cx"), concept_step("cx")], engine, max_iterations=1,
+                         concepts=2, sessions=True)
+    loop.run()
+    names = sorted(c.session for c in runner.calls if c.name == "design")
+    assert len(names) == 2 and all(n.startswith("concept:") for n in names) and names[0] != names[1]
+
+
+def test_a_session_past_its_message_limit_is_replaced_with_a_handover(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4, 0.5], held=[0.5] * 4)
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2")], engine,
+                         max_iterations=2, sessions=True, session_messages=1)
+    state = loop.run()
+    designs = [c for c in runner.calls if c.name == "design"]
+    assert designs[0].session_id != designs[1].session_id
+    assert "fresh session" in designs[1].prompt and "fresh session" not in designs[0].prompt
+    assert state["iterations"][1]["sessions"]["designer"]["replaced"]
+
+
+def test_resume_reopens_the_saved_sessions(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4, 0.5], held=[0.5] * 4)
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step()], engine, max_iterations=1,
+                         sessions=True)
+    state = loop.run()
+    saved = dict(state["sessions"])
+    cfg = _cfg(tmp_path, max_iterations=2, sessions=True)
+    runner2 = RN.ScriptedRunner([design_step("w2")], ledger=loop.ledger)
+    state2 = json.loads((loop.run_dir / OR.STATE).read_text())
+    state2["stop"] = None
+    (loop.run_dir / OR.STATE).write_text(json.dumps(state2))
+    loop2 = OR.Loop(intake, cfg, runner=runner2, engine=engine, name=loop.name, resume=True)
+    loop2.run()
+    assert runner2.calls[0].session_id == saved["designer"]
+
+
+def test_sessions_can_be_turned_off(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.4], held=[0.5])
+    loop, runner = _loop(tmp_path, intake, [design_step("w1")], engine, max_iterations=1, sessions=False)
+    loop.run()
+    assert all(c.session is None for c in runner.calls)
 

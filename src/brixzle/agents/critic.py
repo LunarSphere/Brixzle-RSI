@@ -127,6 +127,42 @@ def _gate_lines(gate):
             f"{gate['overhang_floor']}; simulated, uncalibrated contact):\n" + SG.failures_text(gate))
 
 
+def crop_grid(g, ranges, margin=1):
+    """A map grid cut to the cells within ``ranges`` ({axis: (lo, hi)}, about the aim) plus ``margin``
+    cells each way (#125: the grids span the worst box; the critic judges its target box)."""
+    axes = g["axes"]
+    (i0, i1), (j0, j1) = g["index_extent"][axes[0]], g["index_extent"][axes[1]]
+
+    def window(axis, lo_i, hi_i):
+        if axis not in ranges:
+            return lo_i, hi_i
+        lo, hi = ranges[axis]
+        step = g["step"][axis]
+        return max(lo_i, int(lo // step) - margin), min(hi_i, -int(-hi // step) + margin)
+
+    a0, a1 = window(axes[0], i0, i1)
+    b0, b1 = window(axes[1], j0, j1)
+    rows = [r[a0 - i0:a1 - i0 + 1] for r in g["rows"][b0 - j0:b1 - j0 + 1]]
+    return {**g, "rows": rows, "index_extent": {axes[0]: [a0, a1], axes[1]: [b0, b1]},
+            "extent": {axes[0]: [a0 * g["step"][axes[0]], a1 * g["step"][axes[0]]],
+                       axes[1]: [b0 * g["step"][axes[1]], b1 * g["step"][axes[1]]]}}
+
+
+def _target_ranges(sim_map, target):
+    box = next((b for b in sim_map.get("cover_boxes") or [] if b.get("statistic") == target), sim_map.get("box"))
+    w = (box or {}).get("half_widths") or {}
+    out = {}
+    if "x_mm" in w:
+        out["x"] = (-w["x_mm"], w["x_mm"])
+    if "y_mm" in w:
+        out["y"] = (-w["y_mm"], w["y_mm"])
+    if "z_mm" in w:
+        out["z"] = (0.0, 2 * w["z_mm"])  # as sim_map.box_ranges
+    if "theta_deg" in w:
+        out["t"] = (-w["theta_deg"], w["theta_deg"])
+    return out
+
+
 def rest_text(rest):
     """The rest pictures and the contacts at rest of a few failures (#112), as prompt text."""
     if not rest or not rest.get("drops"):
@@ -144,14 +180,16 @@ def rest_text(rest):
 
 
 def task_prompt(report, sim_map, jam, family_source, log_text, target, gate=None, rest=None, stalled=False):
-    grids = "\n\n".join(SM.ascii_grid(g) for g in sim_map["grids"])
+    ranges = _target_ranges(sim_map, target)
+    grids = "\n\n".join(SM.ascii_grid(crop_grid(g, ranges) if ranges else g) for g in sim_map["grids"])
     stall = ("Z stalled: the last design changed parameter values only and Z moved by no more than its noise band "
              "(#110). A brief whose change is again only parameter values will be refused." if stalled else "")
     return "\n\n".join(x for x in [
         f"Target box: {target}. Z per target box (simulated, uncalibrated contact):\n{_z_lines(report)}"
         + _y_lines(report),
         _gate_lines(gate),
-        "Fitted sim map (S seated, J jammed, W wrong valley, F fell, ? other; the target box is "
+        "Fitted sim map, cut to the target box and one cell round it (S seated, J jammed, W wrong valley, F fell, "
+        "? other; the target box is "
         f"{json.dumps(sim_map['box']['half_widths'])} about the aim):\n{grids}",
         "Jam analysis (sim: simulated, uncalibrated contact; mechanism: predicted, quasi-static 2D):\n"
         + (JA.summary(jam) if jam else "not run"),
@@ -211,18 +249,23 @@ def validate_brief(brief, stalled=False):
 
 
 def critique(runner, report, sim_map, jam, family_source, log_text, target, budget_usd=CRITIC_BUDGET_USD,
-             lessons_text="", gate=None, rest=None, stalled=False, retry_note=""):
+             lessons_text="", gate=None, rest=None, stalled=False, retry_note="", session=None, preface=""):
     """Run the critic once; returns (brief, AgentResult). Raises ValueError on a malformed brief.
     ``lessons_text`` (loop/lessons.py, #88) goes into its system prompt; ``gate`` is the design's
     structure gate (#83)."""
     pictures = bool(rest and rest.get("dir"))
+    # A persistent session's tools and turn limit are fixed when it connects (#125): it always has
+    # Read, limited each message to that message's picture directory (none: every read is refused).
     prompt = task_prompt(report, sim_map, jam, family_source, log_text, target, gate, rest, stalled)
     if retry_note:
         prompt += "\n\n" + retry_note
+    if preface:
+        prompt = preface + "\n\n" + prompt
     call = AgentCall(name="critic", system=system_prompt(lessons_text), prompt=prompt,
                      max_budget_usd=budget_usd, output_schema=BRIEF_SCHEMA,
-                     max_turns=MAX_TURNS_WITH_PICTURES if pictures else MAX_TURNS,
-                     tools=("Read",) if pictures else (), read_roots=(Path(rest["dir"]),) if pictures else ())
-    result = runner.run(call)
+                     max_turns=MAX_TURNS_WITH_PICTURES if (pictures or session is not None) else MAX_TURNS,
+                     tools=("Read",) if (pictures or session is not None) else (),
+                     read_roots=(Path(rest["dir"]),) if pictures else ())
+    result = session.send(call) if session is not None else runner.run(call)
     brief = result.structured if result.structured is not None else json.loads(result.text)
     return validate_brief(brief, stalled=stalled), result

@@ -383,6 +383,96 @@ def _free(path):
     return out
 
 
+HANDOVER = ("This is a fresh session: the loop's earlier session for this role reached its limit ({why}). What it "
+            "learned that matters is in the design log below and in the files and pictures named; read them before you "
+            "change anything.")
+
+
+class _LazySession:
+    """A persistent session (#125) opened on its first message, so it takes that message's call as its base."""
+
+    def __init__(self, runner, name, resume=None):
+        self.runner, self.name, self.resume, self.inner = runner, name, resume, None
+
+    def send(self, call):
+        if self.inner is None:
+            self.inner = self.runner.session(self.name, call, resume=self.resume)
+        return self.inner.send(call)
+
+    @property
+    def messages(self):
+        return self.inner.messages if self.inner else 0
+
+    @property
+    def context_tokens(self):
+        return self.inner.context_tokens if self.inner else 0
+
+    @property
+    def session_id(self):
+        return self.inner.session_id if self.inner else self.resume
+
+    def close(self):
+        if self.inner is not None:
+            self.inner.close()
+
+
+class Sessions:
+    """The run's persistent sessions by role (#125): 'designer', 'critic', 'concept' and one
+    'concept:<module>' per explore concept. A session past ``session_messages`` messages or
+    ``session_max_tokens`` tokens of context is closed, and the next message opens a fresh one with
+    a handover note. ``saved`` holds session ids from state.json, so a resumed run reopens them."""
+
+    def __init__(self, cfg, saved=None):
+        self.cfg, self.open, self.saved = cfg, {}, dict(saved or {})
+
+    def get(self, name, runner, rec=None):
+        """(session, preface) for the next message in role ``name``; (None, '') with sessions off."""
+        if not self.cfg.sessions:
+            return None, ""
+        s, preface = self.open.get(name), ""
+        if s is not None and (s.messages >= self.cfg.session_messages or s.context_tokens >= self.cfg.session_max_tokens):
+            why = (f"{s.messages} messages" if s.messages >= self.cfg.session_messages
+                   else f"{s.context_tokens} tokens of context")
+            s.close()
+            self.open.pop(name)
+            self.saved.pop(name, None)
+            preface = HANDOVER.format(why=why)
+            if rec is not None:
+                rec.setdefault("sessions", {})[name] = {"replaced": True, "why": why}
+            s = None
+        if s is None:
+            s = self.open[name] = _LazySession(runner, name, resume=self.saved.pop(name, None))
+        return s, preface
+
+    def rename(self, old, new):
+        if old in self.open:
+            if new in self.open:
+                self.open[new].close()
+            self.open[new] = self.open.pop(old)
+            self.open[new].name = new
+
+    def close(self, name):
+        s = self.open.pop(name, None)
+        if s is not None:
+            s.close()
+
+    def note(self, rec, name):
+        """Record a session's id, messages and context size in an iteration's record."""
+        s = self.open.get(name)
+        if s is not None:
+            rec.setdefault("sessions", {}).setdefault(name, {}).update(
+                id=s.session_id, messages=s.messages, context_tokens=s.context_tokens)
+
+    def ids(self):
+        out = dict(self.saved)
+        out.update({n: s.session_id for n, s in self.open.items() if s.session_id})
+        return out
+
+    def close_all(self):
+        for name in list(self.open):
+            self.close(name)
+
+
 class Loop:
     """One loop run. ``runner`` talks to Claude (default: ClaudeRunner with the config's model and
     a ledger capped at ``budget_usd``); ``engine`` runs the sim stages (default: SimEngine)."""
@@ -418,11 +508,18 @@ class Loop:
                                                  ClaudeRunner(cfg.concept_model, self.ledger))
         self.engine = engine or SimEngine(cfg)
         self.log = DesignLog.in_dir(self.run_dir)
+        self.sessions = Sessions(self.cfg, self.state.get("sessions"))
         _save(self.run_dir, self.state)
 
     # --- the run ---
 
     def run(self):
+        try:
+            return self._run()
+        finally:
+            self.sessions.close_all()
+
+    def _run(self):
         t0 = self._t0 = time.time() - self.state.get("elapsed_s", 0.0)
         stop = self.state.get("stop")
         while stop is None:
@@ -440,6 +537,7 @@ class Loop:
             if rec.get("mode") == "concept":
                 self._after_concept(rec)
             self.record_lessons()
+            self.state["sessions"] = self.sessions.ids()
             self.state["elapsed_s"] = time.time() - t0
             _save(self.run_dir, self.state)
             self.render_progress()
@@ -564,13 +662,16 @@ class Loop:
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
             try:
-                runner = self.concept_runner if ((prov or {}).get("new_concept") or rec.get("mode") == "concept") \
-                    else self.runner
+                concept = (prov or {}).get("new_concept") or rec.get("mode") == "concept"
+                runner = self.concept_runner if concept else self.runner
+                role = "concept" if concept else "designer"
+                session, preface = self.sessions.get(role, runner, rec)
                 outcome = DA.design(runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
                                     parent=parent, failures=failures, log_text=self.log.text(),
                                     budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
                                     lessons_text=self.lessons_text(), prober=prober, probe_calls=cfg.probe_calls,
-                                    repair=repair, pictures=pictures)
+                                    repair=repair, pictures=pictures, session=session, preface=preface)
+                self.sessions.note(rec, role)
             except BudgetExceeded:
                 raise
             except Exception as e:  # noqa: BLE001 - an SDK or API error: log it and try again
@@ -782,11 +883,13 @@ class Loop:
             t = time.time()
             note = ""
             for _ in range(2):  # one retry, with the reason, when a brief is refused after a stall (#112)
+                session, preface = self.sessions.get("critic", self.runner, rec)
                 try:
                     brief, result = CR.critique(self.runner, report, sim_map, jam, family_source, self.log.text(),
                                                 rec["critic_target"], budget_usd=cfg.critic_budget_usd,
                                                 lessons_text=self.lessons_text(), gate=rec.get("gate"), rest=rest,
-                                                stalled=stalled, retry_note=note)
+                                                stalled=stalled, retry_note=note, session=session, preface=preface)
+                    self.sessions.note(rec, "critic")
                     rec["brief"], rec["critic_cost_usd"] = brief, result.cost_usd
                     rec.pop("critic_error", None)
                     break
@@ -849,9 +952,10 @@ class Loop:
             t = time.time()
             c = {"id": f"c{k}", "attempt": k, "concept": principle["id"], "principle": principle["title"],
                  "module": module, "root": str(iter_dir / f"concept-{k}" / "pkg")}
+            session, _ = self.sessions.get(f"concept:{module}", self.concept_runner)
             try:
                 out = DA.design(self.concept_runner, self.intake, iter_dir / f"concept-{k}", module, brief=brief,
-                                parent=None,
+                                parent=None, session=session,
                                 log_text=self.log.text(), budget_usd=cfg.design_budget_usd,
                                 max_turns=cfg.design_max_turns, lessons_text=self.lessons_text(), prober=prober,
                                 probe_calls=cfg.probe_calls,
@@ -937,6 +1041,7 @@ class Loop:
             rec["reason"] = "no concept of the round passed the contract, the novelty check and the screen"
             rec["spent_usd"] = self.ledger.spent() - spent0
             rec["seconds"]["total"] = time.time() - t_iter
+            self._close_explore_sessions(rec)
             self.write_iteration_summary(rec, res_dir)
             return rec
         top = max(scored, key=lambda s_: (s_[0]["z"][target]["Z"], s_[0].get("screen", {}).get("Z", 0.0)))
@@ -960,7 +1065,23 @@ class Loop:
         if out["decision"] not in ("kept", "provisional") and self.state.get("best"):
             self._start_concept_track(out, scored, i)
             self.write_iteration_summary(out, res_dir)
+        self._close_explore_sessions(out)
         return out
+
+    def _close_explore_sessions(self, rec):
+        """After an explore round (#125): the session of the concept that goes on (kept, provisional or the
+        concept track) becomes 'concept' or 'designer'; the others close."""
+        go_on = None
+        if rec.get("decision") in ("kept", "provisional"):
+            go_on = (rec.get("module"), "designer" if rec["decision"] == "kept" else "concept")
+        elif self.state.get("concept"):
+            go_on = (self.state["concept"]["module"], "concept")
+        for name in [n for n in self.sessions.open if n.startswith("concept:")]:
+            self.sessions.note(rec, name)
+            if go_on and name == f"concept:{go_on[0]}":
+                self.sessions.rename(name, go_on[1])
+            else:
+                self.sessions.close(name)
 
     @staticmethod
     def _pictures(src, iterations):
@@ -1336,6 +1457,8 @@ def parser():
     ap.add_argument("--seed", type=int, default=d.seed)
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--no-tune", action="store_true", help="skip the end tune")
+    ap.add_argument("--no-sessions", action="store_true",
+                    help="a fresh Claude Code session for every call, as before #125")
     ap.add_argument("--no-pickup", action="store_true", help="skip the pickup check on the final design (#113)")
     ap.add_argument("--videos", type=int, default=d.videos, help="drop videos per iteration (0: none)")
     ap.add_argument("--runs", default=d.runs)
@@ -1363,7 +1486,7 @@ def config_from_args(args):
                       budget_usd=args.budget_usd, ledger=args.ledger, max_minutes=args.max_minutes,
                       design_attempts=args.design_attempts, probe_calls=args.probe_calls,
                       screen_max_maps=args.screen_max_maps, concepts=args.concepts,
-                      stall_iterations=args.stall_iterations, seed=args.seed, workers=args.workers,
+                      stall_iterations=args.stall_iterations, sessions=not args.no_sessions, seed=args.seed, workers=args.workers,
                       tune=not args.no_tune, pickup=not args.no_pickup, videos=args.videos, runs=args.runs, results=args.results).validate()
 
 

@@ -90,6 +90,8 @@ class AgentCall:
     output_schema: dict | None = None  # JSON schema of a structured answer
     max_turns: int = 10
     effort: str | None = None
+    session: str | None = None      # the persistent session that answered it (#125), if any
+    session_id: str | None = None
 
 
 @dataclass
@@ -147,7 +149,7 @@ class SpendLedger:
         with self._lock:
             self._held = max(0.0, self._held - float(budget_usd or 0.0))
 
-    def record(self, name, model, result: AgentResult, budget_usd=None):
+    def record(self, name, model, result: AgentResult, budget_usd=None, session=None):
         """Add a finished call. A call whose cost the SDK did not report counts as its whole budget."""
         cost = result.cost_usd
         if cost is None or not math.isfinite(cost):
@@ -156,7 +158,8 @@ class SpendLedger:
                "cost_usd": float(cost), "reported": result.cost_usd is not None, "turns": result.turns,
                "usage": {k: v for k, v in (result.usage or {}).items() if isinstance(v, (int, float))},
                "api_key_source": result.api_key_source, "is_error": result.is_error,
-               "seconds": float(result.seconds or 0.0) if math.isfinite(float(result.seconds or 0.0)) else 0.0}
+               "seconds": float(result.seconds or 0.0) if math.isfinite(float(result.seconds or 0.0)) else 0.0,
+               "session": session}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             with open(self.path, "a", encoding="utf-8") as f:
@@ -293,6 +296,10 @@ class ClaudeRunner:
         of three calls side by side only $0.42)."""
         return min(call.max_budget_usd, self.ledger.remaining() + call.max_budget_usd)
 
+    def session(self, name, base: AgentCall, resume=None):
+        """A persistent session (#125) on this runner's model and ledger."""
+        return ClaudeSession(self.model, self.ledger, name, base, resume=resume, environ=self.environ)
+
     def run(self, call: AgentCall) -> AgentResult:
         self.ledger.reserve(call.max_budget_usd)
         env = credential_env(self.environ)
@@ -355,12 +362,198 @@ class ClaudeRunner:
         return out
 
 
+class ClaudeSession:
+    """One persistent Claude Code session (#125): connected once, then one message per task.
+
+    The SDK's client must stay in the async context it connected in, so the session owns an event
+    loop in its own thread, and ``send`` hands each message to it. The options (model, system
+    prompt, tools, per-message turn and budget limits) come from the first call, ``base``; each
+    message's own write root, read roots and loop tools replace the previous ones, because the tool
+    guard and the tool handlers are looked up at call time. Each message is charged to the ledger
+    with the session's name; the SDK reports cost per message. ``resume`` reopens a saved session."""
+
+    def __init__(self, model, ledger: SpendLedger, name, base: AgentCall, resume=None, environ=None,
+                 client_factory=None):
+        self.model, self.ledger, self.name, self.base = model, ledger, name, base
+        self.environ, self.resume, self._factory = environ, resume, client_factory
+        self.guard = ToolGuard(base.write_root, tuple(base.read_roots), tuple(base.tools))
+        self.handlers = {t.name: t for t in base.mcp_tools}
+        self.session_id, self.messages, self.context_tokens = resume, 0, 0
+        self._loop = self._thread = self._queue = None
+        self._token = False
+
+    # --- the owner thread ---
+
+    def _options(self, env):
+        kw = option_kwargs(self.base, self.model, self.base.max_budget_usd, env)
+        if self.resume:
+            kw["resume"] = self.resume
+        if self._factory is not None:
+            return kw
+        from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, create_sdk_mcp_server, tool
+
+        session = self
+
+        async def pre_tool_use(hook_input, _tool_use_id, _context):
+            return hook_decision(session.guard, hook_input)
+
+        if self.base.mcp_tools:
+            def serve(spec):
+                async def run(args):
+                    current = session.handlers.get(spec.name)
+                    if current is None:
+                        return {"content": [{"type": "text", "text": f"{spec.name} is not offered for this task"}],
+                                "is_error": True}
+                    return await asyncio.to_thread(current.respond, args)
+                return tool(spec.name, spec.description, spec.input_schema)(run)
+
+            kw["mcp_servers"] = {"brixzle": create_sdk_mcp_server("brixzle", tools=[serve(t) for t in self.base.mcp_tools])}
+        return ClaudeAgentOptions(**kw, permission_mode="default",
+                                  hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])]})
+
+    def _client(self, opts):
+        if self._factory is not None:
+            return self._factory(opts)
+        from claude_agent_sdk import ClaudeSDKClient
+
+        return ClaudeSDKClient(options=opts)
+
+    async def _owner(self, ready):
+        try:
+            env = credential_env(self.environ)
+            environ = os.environ if self.environ is None else self.environ
+            self._token = bool(env.get("ANTHROPIC_AUTH_TOKEN") or (environ.get("ANTHROPIC_AUTH_TOKEN")
+                                                                  and not environ.get("ANTHROPIC_API_KEY")))
+            client = self._client(self._options(env))
+            self._queue = asyncio.Queue()
+            async with client as c:
+                ready.set_result(True)
+                while True:
+                    item = await self._queue.get()
+                    if item is None:
+                        break
+                    prompt, fut = item
+                    try:
+                        fut.set_result(await self._ask(c, prompt))
+                    except BaseException as e:  # noqa: BLE001 - handed to the caller
+                        fut.set_exception(e)
+        except BaseException as e:  # noqa: BLE001 - a failed connect is the first send's error
+            if not ready.done():
+                ready.set_exception(e)
+
+    async def _ask(self, c, prompt):
+        import time
+
+        out, texts, t0 = AgentResult(cost_usd=None), [], time.time()
+        await c.query(prompt)
+        async for msg in c.receive_response():
+            kind = type(msg).__name__
+            if kind == "SystemMessage" and getattr(msg, "subtype", None) == "init":
+                out.api_key_source = (getattr(msg, "data", None) or {}).get("apiKeySource")
+            elif kind == "AssistantMessage":
+                texts += [b.text for b in msg.content if type(b).__name__ == "TextBlock"]
+            elif kind == "ResultMessage":
+                out.cost_usd, out.turns, out.usage = msg.total_cost_usd, msg.num_turns, msg.usage or {}
+                out.session_id, out.is_error = msg.session_id, bool(msg.is_error)
+                out.structured, out.errors = msg.structured_output, list(msg.errors or [])
+                if msg.result:
+                    texts.append(msg.result)
+        out.text, out.seconds = (texts[-1] if texts else ""), time.time() - t0
+        return out
+
+    def _start(self):
+        import concurrent.futures as cf
+        import threading as th
+
+        self._loop = asyncio.new_event_loop()
+        self._thread = th.Thread(target=self._loop.run_forever, name=f"session-{self.name}", daemon=True)
+        self._thread.start()
+        ready = cf.Future()
+        asyncio.run_coroutine_threadsafe(self._owner(ready), self._loop)
+        ready.result()
+
+    # --- the public side ---
+
+    def send(self, call: AgentCall) -> AgentResult:
+        import concurrent.futures as cf
+
+        self.ledger.reserve(call.max_budget_usd)
+        self.guard = ToolGuard(call.write_root, tuple(call.read_roots), tuple(self.base.tools))
+        self.handlers = {t.name: t for t in call.mcp_tools}
+        try:
+            if self._loop is None:
+                self._start()
+            fut = cf.Future()
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, (call.prompt, fut))
+            result = fut.result()
+            if result.is_error and result.errors:
+                raise RuntimeError("; ".join(map(str, result.errors)))
+        except BaseException as e:
+            err = f"{type(e).__name__}: {e}"
+            self.ledger.record(call.name, self.model, AgentResult(cost_usd=budget_stop_cost(err), is_error=True,
+                                                                  errors=[err]),
+                               budget_usd=call.max_budget_usd, session=self.name)
+            raise
+        self.ledger.record(call.name, self.model, result, budget_usd=call.max_budget_usd, session=self.name)
+        if result.api_key_source is not None:  # reported on a session's first message only
+            check_source(result.api_key_source, auth_token=self._token)
+        self.session_id = result.session_id or self.session_id
+        self.messages += 1
+        u = result.usage or {}
+        self.context_tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                              "cache_creation_input_tokens"))
+        return result
+
+    def close(self):
+        if self._loop is None:
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
+            import time
+
+            for _ in range(100):  # let the client disconnect, up to 10 s
+                if not any(not t.done() for t in asyncio.all_tasks(self._loop)):
+                    break
+                time.sleep(0.1)
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=10)
+            self._loop = None
+
+
+class ScriptedSession:
+    """A session for tests (#125): answers from its runner's script and marks each call with the
+    session's name and id."""
+
+    count = 0
+
+    def __init__(self, runner, name, base, resume=None):
+        ScriptedSession.count += 1
+        self.runner, self.name, self.base, self.resume = runner, name, base, resume
+        self.session_id = resume or f"{name}-{ScriptedSession.count}"
+        self.messages, self.context_tokens, self.closed = 0, 0, False
+
+    def send(self, call):
+        from dataclasses import replace as _replace
+
+        out = self.runner.run(_replace(call, session=self.name, session_id=self.session_id))
+        self.messages += 1
+        self.context_tokens = int(getattr(out, "context_tokens", 0) or 0)
+        return out
+
+    def close(self):
+        self.closed = True
+
+
 class ScriptedRunner:
     """A runner for tests: answers calls in order from ``script``, each an AgentResult or a
     function call -> AgentResult (to act like the agent, for example by writing files)."""
 
     def __init__(self, script, ledger: SpendLedger | None = None, model="scripted"):
         self.script, self.ledger, self.model, self.calls = list(script), ledger, model, []
+
+    def session(self, name, base, resume=None):
+        return ScriptedSession(self, name, base, resume)
 
     def run(self, call: AgentCall) -> AgentResult:
         assert self.script, f"no scripted answer left for the {call.name} call"
