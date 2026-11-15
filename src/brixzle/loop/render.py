@@ -394,6 +394,12 @@ def iteration_summary(rec, run, target, ledger_path, spent_usd, cap_usd):
                   f"Changes: {note.get('changes', '')}", "",
                   f"Geometry: {note.get('geometry', '?')}" + (f" ({note['solid3d_reason']})"
                                                               if note.get("solid3d_reason") else ""), ""]
+    if rec.get("mode") == "concept":
+        lines += [f"This iteration developed the promising concept from iteration {rec.get('concept_of')} (#126)."
+                  + (f" {rec['concept_track_end']}." if rec.get("concept_track_end") else ""), ""]
+    if rec.get("concept_track"):
+        ct = rec["concept_track"]
+        lines += [f"**Concept track (#126):** {ct['why']}; it is developed for the next {ct['runs']} iterations.", ""]
     if rec.get("concepts"):
         lines += [f"This was an explore round (#106): {rec.get('explore_reason', '')}.", ""]
         lines += concept_lines(rec["concepts"], target) + [""]
@@ -508,7 +514,8 @@ def run_summary(state, target, ledger_path, spent_usd, cap_usd, ledger_rows=None
             return f"{z[s]['Z']:+.3f}" if s in z else "–"
 
         rung = it.get("target") or target
-        lines.append(f"| {it['iteration']} | {it.get('family', '–')} | {it['decision']} | {zz(rung)} | "
+        mode = {"concept": " (concept)", "repair": " (repair)", "explore": " (explore)"}.get(it.get("mode"), "")
+        lines.append(f"| {it['iteration']}{mode} | {it.get('family', '–')} | {it['decision']} | {zz(rung)} | "
                      f"{zz('mean')} | {zz('p95')} | {zz('max')} | {rung if z else '–'} |")
         for c in it.get("concepts") or []:  # every concept of an explore round (#106)
             cz = c.get("z") or {}

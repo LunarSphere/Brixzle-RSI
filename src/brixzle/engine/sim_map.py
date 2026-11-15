@@ -544,19 +544,33 @@ def y_capture(m):
     """Y capture, measured (issue #86): on each course's ``xy`` grid, in the column through the aim
     (X offset 0), the largest |Y| on each side reached by an unbroken run of seated cells from
     Y = 0. {course: {'-y': mm, '+y': mm}} (0 if the aim itself does not seat); {} without the slice."""
+    return _y_capture(m, span=0)
+
+
+def y_capture_near(m, span=1):
+    """Y capture near the aim (#126): as ``y_capture``, but on each side the widest unbroken seated
+    run over the columns within ``span`` X cells of the aim. A/B has a jam stripe in the X = 0 column,
+    so ``y_capture`` read +-4 mm where the columns beside it seat to about +-8 mm. Reported alongside."""
+    return _y_capture(m, span=span)
+
+
+def _y_capture(m, span):
     out = {}
     for g in m["grids"]:
         if g["slice"] != "xy":
             continue
-        (i0, _), (j0, j1) = g["index_extent"]["x"], g["index_extent"]["y"]
-        col = {j: g["rows"][j - j0][-i0] for j in range(j0, j1 + 1)}  # the X = 0 column
-        side = {}
-        for name, sign in (("-y", -1), ("+y", 1)):
-            reach, j = 0.0, 0
-            while col.get(j) == CODES["seated"]:
-                reach = abs(j) * g["step"]["y"]
-                j += sign
-            side[name] = reach if col.get(0) == CODES["seated"] else 0.0
+        (i0, i1), (j0, j1) = g["index_extent"]["x"], g["index_extent"]["y"]
+        side = {"-y": 0.0, "+y": 0.0}
+        for i in range(max(i0, -span), min(i1, span) + 1):
+            col = {j: g["rows"][j - j0][i - i0] for j in range(j0, j1 + 1)}
+            if col.get(0) != CODES["seated"]:
+                continue
+            for name, sign in (("-y", -1), ("+y", 1)):
+                reach, j = 0.0, 0
+                while col.get(j) == CODES["seated"]:
+                    reach = abs(j) * g["step"]["y"]
+                    j += sign
+                side[name] = max(side[name], reach)
         out[str(g["course"])] = side
     return out
 

@@ -36,6 +36,7 @@ class LoopConfig:
     stall_iterations: int = 2        # explore again after this many iterations in a row with Z inside the noise band
     near_copy_share: float = 0.2     # an explore design's section must differ from A/B's by at least this share (#106)
     repair_attempts: int = 2         # repairs of a provisional design before it is rejected (#109; maintainer)
+    concept_runs: int = 2            # iterations in a row a promising concept is developed for (#126; maintainer)
     seed: int = 0                    # quick-check seed; held-out Z uses seed + 1
     workers: int | None = None       # sim drop processes
     held_out: bool = True
@@ -50,7 +51,7 @@ class LoopConfig:
         if self.target not in BX.STATISTICS:
             raise ValueError(f"target must be one of {BX.STATISTICS}, got {self.target!r}")
         for name in ("max_iterations", "patience", "design_attempts", "design_max_turns", "screen_max_maps",
-                     "concepts", "stall_iterations", "repair_attempts"):
+                     "concepts", "stall_iterations", "repair_attempts", "concept_runs"):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, int) or v < 1:
                 raise ValueError(f"{name} must be an integer >= 1, got {v!r}")

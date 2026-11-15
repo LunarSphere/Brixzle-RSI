@@ -68,6 +68,7 @@ def build_report(sim_map, drops, boxes, timing, map_dir=None):
         "statistic": sim_map["box"]["statistic"], "statistics": stats,
         "boxes": {s: boxes[s].to_dict() for s in stats},
         "z": z, "z_x_only": z_x, "y_capture_mm": SM.y_capture(sim_map),
+        "y_capture_near_mm": SM.y_capture_near(sim_map),
         "covers_all_targets": all(z[s]["passed"] for s in stats),
         "check": sim_map.get("check"),
         "map": {"dir": map_dir, "drops": sim_map["drops"], "seconds": sim_map["seconds"],

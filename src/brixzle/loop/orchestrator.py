@@ -256,9 +256,10 @@ def accept(z, held, best, lower=(), overhang=None):
     return True, f"{better}, held-out not worse"
 
 
-def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
+def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s, iteration_s=None):
     """Why the loop stops now, or None. Iteration 0, the parent's baseline (#85), is not one of the
-    ``max_iterations`` design iterations."""
+    ``max_iterations`` design iterations. ``iteration_s`` (#126): the next iteration's estimated
+    wall-clock; the run stops if it and the end tune would not fit in ``max_minutes``."""
     best = state.get("best")
     its = state["iterations"]
     if cfg.baseline_only:
@@ -271,12 +272,21 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s):
     if len(designs) >= cfg.max_iterations:
         return f"{cfg.max_iterations} iterations run"
     last_kept = max((i["iteration"] for i in its if i.get("decision") in ("kept", BASELINE)), default=0)
-    if designs and its[-1]["iteration"] - last_kept >= cfg.patience and not state.get("provisional"):
+    # Iterations spent developing a concept (#126) do not count against patience, and nothing stops
+    # the run while a provisional design (#109) or a concept still has iterations to come.
+    idle = [i for i in its if i["iteration"] > last_kept and i.get("mode") != "concept"]
+    if (designs and len(idle) >= cfg.patience and not state.get("provisional")
+            and not (state.get("concept") or {}).get("runs_left")):
         return f"no kept design for {cfg.patience} iterations"
     if remaining_usd < cfg.design_budget_usd + cfg.critic_budget_usd:
         return f"API budget spent (${remaining_usd:.2f} left of ${cfg.budget_usd:.2f})"
     if elapsed_s > cfg.max_minutes * 60:
         return f"wall-clock budget spent ({elapsed_s / 60:.1f} of {cfg.max_minutes:g} min)"
+    if iteration_s and designs:
+        tune_s = cfg.tune_seconds if cfg.tune else 0.0
+        if elapsed_s + iteration_s + tune_s > cfg.max_minutes * 60:
+            return (f"wall-clock: another iteration (about {iteration_s / 60:.1f} min) and the end tune "
+                    f"({tune_s / 60:.1f} min) would pass {cfg.max_minutes:g} min ({elapsed_s / 60:.1f} min gone)")
     return None
 
 
@@ -306,7 +316,7 @@ def explore_reason(state, cfg: LoopConfig):
     brief = state["iterations"][-1].get("brief") or {}
     if any(c.get("scope") == "new_family" for c in brief.get("clusters") or []):
         return "the critic's brief asks for a new family"
-    recent = designs[-cfg.stall_iterations:]
+    recent = [it for it in designs if it.get("mode") != "concept"][-cfg.stall_iterations:]
     if (len(recent) == cfg.stall_iterations and not any(it.get("mode") == "explore" for it in recent)
             and all(_stalled(it) for it in recent)):
         return f"Z moved by no more than the noise band for {cfg.stall_iterations} iterations"
@@ -416,7 +426,8 @@ class Loop:
         t0 = self._t0 = time.time() - self.state.get("elapsed_s", 0.0)
         stop = self.state.get("stop")
         while stop is None:
-            stop = stop_reason(self.state, self.cfg, self.ledger.remaining(), time.time() - t0)
+            stop = stop_reason(self.state, self.cfg, self.ledger.remaining(), time.time() - t0,
+                               iteration_s=self.iteration_estimate())
             if stop:
                 break
             its = self.state["iterations"]
@@ -426,6 +437,8 @@ class Loop:
                 stop = f"API budget spent: {e}"
                 break
             self.state["iterations"].append(rec)
+            if rec.get("mode") == "concept":
+                self._after_concept(rec)
             self.record_lessons()
             self.state["elapsed_s"] = time.time() - t0
             _save(self.run_dir, self.state)
@@ -519,7 +532,22 @@ class Loop:
         failures, fam, outcome, check = None, None, None, None
         last = self.state["iterations"][-1] if self.state["iterations"] else None
         repair = None
-        if prov:
+        con = None if prov else self.state.get("concept")
+        if con and con.get("runs_left"):
+            # Develop the promising concept (#126): its own file, its failing builds if any, a brief only
+            # if the critic's last brief was about it.
+            rec.update(mode="concept", concept_of=con["iteration"], concept=con.get("concept"))
+            parent, failures = Path(con["family_py"]), (dict(con["failures"]) if con.get("failures") else None)
+            if not (last and last.get("module") == con["module"]):
+                brief = None
+            rec["brief_in"] = brief
+            if failures:
+                z = con.get("z_target")
+                repair = {"family_py": con["family_py"], "attempt": cfg.concept_runs - con["runs_left"] + 1,
+                          "of": cfg.concept_runs,
+                          "z_text": f" ({con['why']})" if con.get("why") else (f" ({z:+.3f})" if z is not None else "")}
+            prov = None
+        elif prov:
             # A repair of the provisional design (#109): its own file, its failing builds, no brief.
             rec.update(mode="repair", repair_of=prov["iteration"])
             parent, failures, brief = Path(prov["family_py"]), dict(prov["failures"]), None
@@ -536,7 +564,8 @@ class Loop:
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
             try:
-                runner = self.concept_runner if (prov or {}).get("new_concept") else self.runner
+                runner = self.concept_runner if ((prov or {}).get("new_concept") or rec.get("mode") == "concept") \
+                    else self.runner
                 outcome = DA.design(runner, self.intake, iter_dir / f"attempt-{a}", module, brief=brief,
                                     parent=parent, failures=failures, log_text=self.log.text(),
                                     budget_usd=cfg.design_budget_usd, max_turns=cfg.design_max_turns,
@@ -633,6 +662,7 @@ class Loop:
         rec["z"], rec["runs"]["map"] = objective_z(report, self.cfg), str(map_dir)
         rec["z_with_y"], rec["z_x_only"] = report["z"], report.get("z_x_only")
         rec["y_capture_mm"] = report.get("y_capture_mm")
+        rec["y_capture_near_mm"] = report.get("y_capture_near_mm")
         t = time.time()
         jam = self.engine.jam(fam, p, map_dir)
         rec["seconds"]["jam"] = time.time() - t
@@ -923,10 +953,13 @@ class Loop:
         rec.update(module=c["module"], root=c["root"], family=c["family"], note=c["note"], concept=c["concept"])
         rec["runs"].update(crec["runs"], gate=str(gate_dir))
         rec["gate"], rec["overhang_n"], rec["gate_failures"] = c["gate"], gate["overhang_n"], c["gate_failures"]
-        for k in ("z", "z_with_y", "z_x_only", "y_capture_mm"):
+        for k in ("z", "z_with_y", "z_x_only", "y_capture_mm", "y_capture_near_mm"):
             rec[k] = crec.get(k)
         out = self._score(rec, fam, check, res_dir, brief, spent0, t_iter, measured=measured)
         c["decision"], c["reason"] = out["decision"], out.get("reason")
+        if out["decision"] not in ("kept", "provisional") and self.state.get("best"):
+            self._start_concept_track(out, scored, i)
+            self.write_iteration_summary(out, res_dir)
         return out
 
     @staticmethod
@@ -945,6 +978,88 @@ class Loop:
         for d in rest.get("drops") or []:
             out += [Path(rest["dir"]) / f for f in d.get("pictures") or []]
         return tuple(q for q in out if q.exists())
+
+    # --- the concept track (#126) ---
+
+    def promising(self, z):
+        """(margin, box) by which ``z`` (Z per box) beats the best on its best box, in units of the
+        noise band of the best's Z there (#110); promising if the margin is above 1."""
+        best = self.state.get("best") or {}
+        out = (0.0, None)
+        for s_ in BX.STATISTICS:
+            b = (best.get("z") or {}).get(s_)
+            if not b or s_ not in (z or {}):
+                continue
+            band = max(ZS.z_band(b), 1e-6)
+            m = (z[s_]["Z"] - b["Z"]) / band
+            if m > out[0]:
+                out = (m, s_)
+        return out
+
+    def _start_concept_track(self, rec, scored, i):
+        """After an explore round that kept nothing (#126): the most promising concept, if any beats the
+        best on some box by more than its noise band, is developed for ``concept_runs`` iterations, as
+        a repair if it does not build yet."""
+        best = self.state["best"]
+        ranked = sorted(((self.promising(c["z"]), c, fam) for c, fam, *_ in scored), key=lambda t: -t[0][0])
+        if not ranked or ranked[0][0][0] <= 1.0:
+            return
+        (margin, box), c, fam = ranked[0]
+        failures = {}
+        if not c["gate"]["passed"]:
+            failures["structure_gate"] = c.get("gate_failures")
+        else:
+            t = time.time()
+            ring, ring_dir = self.engine.ring(fam, fam.defaults)
+            rec["seconds"]["ring_concept"] = time.time() - t
+            c["ring"] = {"status": ring["status"], "seated": ring["seated"], "total": ring["total"], "run": str(ring_dir)}
+            if ring["status"] != "complete":
+                failures["ring"] = RB.failure_for_agent(ring)
+        zc, zb = c["z"][box]["Z"], best["z"][box]["Z"]
+        why = (f"{c['module']} beats the best on {box} ({zc:+.3f} against {zb:+.3f}, {margin:.1f} noise bands)"
+               + (f"; it does not build yet ({', '.join(failures)})" if failures else ""))
+        self.state["concept"] = {"iteration": i, "id": c["id"], "concept": c.get("concept"), "module": c["module"],
+                                 "root": c["root"], "family": c.get("family"),
+                                 "family_py": str(Path(c["root"]) / c["module"] / "family.py"), "z": c["z"],
+                                 "z_target": zc, "box": box, "failures": failures or None,
+                                 "runs_left": self.cfg.concept_runs, "why": why}
+        rec["concept_track"] = {"module": c["module"], "concept": c.get("concept"), "box": box, "why": why,
+                                "runs": self.cfg.concept_runs}
+        self.log.append({"iteration": i, "attempt": c["attempt"], "family": c.get("family") or c["module"],
+                         "module": c["module"], "concept": c.get("concept"), "decision": "concept_track",
+                         "reason": why, "z": c["z"]})
+
+    def _after_concept(self, rec):
+        """After an iteration that developed the concept (#126): kept ends the track; a design that is
+        still promising becomes the concept to develop next; the track ends after ``concept_runs``."""
+        con = self.state.get("concept")
+        if not con:
+            return
+        con["runs_left"] -= 1
+        if rec.get("decision") == "kept":
+            self.state["concept"] = None
+            return
+        if rec.get("z") and rec.get("module") and self.promising(rec["z"])[0] > 1.0:
+            m, box = self.promising(rec["z"])
+            fails = {}
+            if rec.get("gate") and not rec["gate"].get("passed", True):
+                fails["structure_gate"] = rec.get("gate_failures")
+            if (rec.get("ring") or {}).get("status") not in (None, "complete", "not_run"):
+                fails["ring"] = rec["ring"].get("failure")
+            con.update(iteration=rec["iteration"], module=rec["module"], root=rec["root"], family=rec.get("family"),
+                       family_py=str(family_py(rec)), z=rec["z"], z_target=rec["z"][box]["Z"], box=box,
+                       failures=fails or None,
+                       why=f"{rec['module']} beats the best on {box} by {m:.1f} noise bands")
+        if con["runs_left"] <= 0:
+            rec["concept_track_end"] = f"the concept was developed for {self.cfg.concept_runs} iterations; back to the best"
+            self.state["concept"] = None
+
+    def iteration_estimate(self):
+        """Seconds the next design iteration may take (#126): the mean of this run's iterations other
+        than explore rounds (their maps are capped by the clock in screen_round), or 300 s."""
+        done = [it["seconds"].get("total", 0.0) for it in self.state["iterations"] if it["iteration"] >= 1
+                and it.get("seconds") and it.get("mode") != "explore"]
+        return sum(done) / len(done) if done else 300.0
 
     def _reference(self):
         """The family an explore design must not copy (#106): the run's parent, else A/B."""
