@@ -242,6 +242,12 @@ class ResultMessage:  # named like the SDK's, which the session reads by duck ty
         self.structured_output, self.errors, self.result = None, [], f"answer {k}"
 
 
+class AssistantMessage:  # one turn, with its own usage, as the SDK's
+    def __init__(self, cached):
+        self.content, self.usage = [], {"input_tokens": 5, "cache_read_input_tokens": cached,
+                                        "cache_creation_input_tokens": 20}
+
+
 class FakeClient:
     """Stands in for ClaudeSDKClient: one connect, many queries, one disconnect."""
     made = []
@@ -260,7 +266,10 @@ class FakeClient:
         self.prompts.append(prompt)
 
     async def receive_response(self):
-        yield ResultMessage(len(self.prompts) - 1)
+        k = len(self.prompts) - 1
+        yield AssistantMessage(300 * (k + 1))   # the context grows turn by turn
+        yield AssistantMessage(500 * (k + 1))
+        yield ResultMessage(k)
 
 
 def test_a_session_connects_once_answers_every_message_and_records_each_in_the_ledger(tmp_path):
@@ -274,7 +283,10 @@ def test_a_session_connects_once_answers_every_message_and_records_each_in_the_l
     assert len(FakeClient.made) == 1 and FakeClient.made[0].prompts == ["hi", "again"] and FakeClient.made[0].closed
     assert (r1.text, r2.text) == ("answer 0", "answer 1") and s.session_id == "sess-1" and s.messages == 2
     assert s.guard.write_root == tmp_path / "b"  # the second message's package, not the first's
-    assert s.context_tokens == 10 + 2000 + 50
+    # The context is the last turn's input, not the message's usage summed over its turns
+    # (sessions-20261115-mean: summed, a 19-turn message read as 1.57 million tokens and the session
+    # was replaced before its second message).
+    assert s.context_tokens == 5 + 1000 + 20
     rows = led.rows()
     assert [r["session"] for r in rows] == ["designer", "designer"] and [r["cost_usd"] for r in rows] == [0.01, 0.02]
     assert rows[1]["usage"]["cache_read_input_tokens"] == 2000

@@ -409,3 +409,12 @@ The maintainer chose `claude-opus-5-5` for explore calls and repairs of a new co
 
 The first run with all nine overhaul issues (`runs/loop/overhaul-20261114-mean`, 2026-11-14) lost its first explore round: the three Opus design calls each stopped at `Reached maximum budget ($0.418)`. #106's in-flight holds made `remaining()` subtract every call's hold, and the runner gave each call `remaining()` as its SDK cap after its own reserve. Now the cap is the call's own budget (its hold already keeps the calls under the run's cap together). The ledger charged each stopped call its whole $1.50, its rule for a call whose cost the SDK does not report, so it shows $4.58 for that run where about 3 × $0.418 + $0.082 ≈ $1.34 was spent. A call the SDK stops at its budget is now charged the amount the SDK reports.
 
+## Persistent sessions on Opus (issue #125)
+
+The maintainer chose the Agent SDK with the API key and Opus for every role (2026-11-15). First real run: `sessions-20261115-mean` (`runs/loop/sessions-20261115-mean/`, results `RSI_RESULTS/sessions-20261115-mean/`, `--budget-usd 8`). Simulated, uncalibrated contact.
+
+- **A new brick that captures far better than A/B, but does not build yet.** The explore round's CP1 concept (an open V funnel on top, leaning pegs below, a deep V across Y) scored Z mean +0.848, p95 +0.343, max +0.181, against A/B's +0.506, +0.139, +0.045. It failed the structure gate and its ring jammed at the closer (7 of 16), so it became provisional (#109). CP3 also beat A/B (+0.654) and failed its gate; CP2 failed the quick check.
+- **The repair failed and overran the clock.** Three repair attempts, each an Opus design call of $1.04–1.26 and 329–377 s, failed the gate, the quick check and the gate. The iteration took 1092 s and the run 41.9 min; it stopped on the budget ($7.38 of $8). The loop checks the clock only before an iteration.
+- **Per message:** the Opus critic cost $0.24 (Sonnet's was about $0.08); explore calls $1.05 at 19 turns against $1.30–1.38 at 22–27 before (`concept-track-20261115-mean`).
+- **A bug in this issue's first version, fixed before merging:** a session's context was measured as the message's usage summed over its turns (1.57 million tokens for one 19-turn message), so the concept's session was replaced before its first repair, which then started without its memory. Context is now the last turn's input.
+

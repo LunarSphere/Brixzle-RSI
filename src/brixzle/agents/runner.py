@@ -106,6 +106,7 @@ class AgentResult:
     is_error: bool = False
     errors: list = field(default_factory=list)
     seconds: float = 0.0
+    context_tokens: int = 0        # the last turn's input, cached or not: a session's context size (#125)
 
 
 # --- the spend ledger ---
@@ -452,6 +453,10 @@ class ClaudeSession:
                 out.api_key_source = (getattr(msg, "data", None) or {}).get("apiKeySource")
             elif kind == "AssistantMessage":
                 texts += [b.text for b in msg.content if type(b).__name__ == "TextBlock"]
+                u = getattr(msg, "usage", None) or {}
+                if u:  # the context the model saw on this turn; the last turn's is the session's size
+                    out.context_tokens = sum(int(u.get(k) or 0) for k in
+                                             ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
             elif kind == "ResultMessage":
                 out.cost_usd, out.turns, out.usage = msg.total_cost_usd, msg.num_turns, msg.usage or {}
                 out.session_id, out.is_error = msg.session_id, bool(msg.is_error)
@@ -499,9 +504,12 @@ class ClaudeSession:
             check_source(result.api_key_source, auth_token=self._token)
         self.session_id = result.session_id or self.session_id
         self.messages += 1
-        u = result.usage or {}
-        self.context_tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
-                                                              "cache_creation_input_tokens"))
+        ctx = getattr(result, "context_tokens", None)
+        if not ctx:  # no per-turn usage: the message's usage over its turns, per turn
+            u = result.usage or {}
+            ctx = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                     "cache_creation_input_tokens")) // max(1, result.turns or 1)
+        self.context_tokens = int(ctx)
         return result
 
     def close(self):
