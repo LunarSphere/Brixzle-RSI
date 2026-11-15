@@ -91,6 +91,18 @@ Issue #109. A design that failed the structure gate or the ring used to be disca
 - **Limit.** Up to `repair_attempts` (2, maintainer) repairs; a repair that again does not build, or is not kept for another reason, uses one. After the last the design is `rejected` and the log says why. Patience does not stop the run while repairs are left.
 - **The end tune checks the structures too.** A tuned design that scores higher is built again: the structure gate and the ring at the tuned parameters. If either fails it is refused and the untuned design stands (`tune.refused`; their wall-clock in `tune.seconds_checks`).
 
+### The concept track
+
+Issue #126 (maintainer's choices, 2026-11-15). In `overhaul2-20261114-mean` the explore round produced two new bricks; neither beat A/B on the mean box, so both were dropped undeveloped, although the chevron key beat A/B on p95 and max (+0.156 / +0.078 against +0.139 / +0.045; simulated, uncalibrated contact).
+
+- **Promising.** After an explore round that keeps nothing, a mapped concept is promising if it beats the best on any box (mean, p95 or max) by more than the noise band of the best's Z there (#110). The most promising one (largest margin in bands) is the **concept**: one at a time. Its ring is built then (a concept that passed its gate), so the track knows whether it builds.
+- **Developed.** The next `concept_runs` (2) iterations reshape the concept, not the best: the design call (on the concept model) gets the concept's `family.py`, and, if it does not build yet, its failing builds as a repair (#109). A brief is passed only if the critic's last brief was about the concept. Each iteration is judged by the usual acceptance rule against the best: kept ends the track; a result that is still promising becomes the concept to develop next. After `concept_runs` the loop returns to the best.
+- Concept iterations do not count against patience or towards a stall (#106), and patience does not stop the run while the track has iterations left.
+
+**Stop in time for the end.** Before each iteration the run stops if the next iteration (estimated as the mean of this run's non-explore iterations, 300 s before any) and the end tune would pass `max_minutes`.
+
+**Y capture near the aim.** Reports and the critic give `y_capture_near_mm` beside `y_capture_mm`: the widest unbroken seated run in Y over the X-Y slice's columns within one X cell of the aim. A/B has a jam stripe in the X = 0 column, so `y_capture_mm` reads ±4 mm where the columns beside it seat to about ±8 mm.
+
 ### Cheap screen of a round's candidates
 
 Issue #108. A full score costs about 3 to 5 minutes, so when a round has several candidates (#106) they are screened first, side by side, each in its own process (`engine/screen.py`, `Loop.screen_round`): the quick check (40 drops along X, the candidate's pass/fail filter) and 20 seeded drops on the target box's X-Y disc. The screen score is (S − J) / N over both, the form of Z.

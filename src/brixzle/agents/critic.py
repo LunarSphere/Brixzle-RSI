@@ -108,9 +108,13 @@ def _y_lines(report):
     if report.get("z_x_only"):
         out.append("Z with X offsets only (y = 0): " + ", ".join(f"{s} {report['z_x_only'][s]['Z']:+.3f}"
                                                                 for s in report["statistics"]))
+    near = report.get("y_capture_near_mm") or {}
     for course, side in (report.get("y_capture_mm") or {}).items():
+        n = near.get(course)
         out.append(f"Y capture, course {course} (largest |y| still seated in the column through the aim): "
-                   f"-y {side['-y']:.1f} mm, +y {side['+y']:.1f} mm")
+                   f"-y {side['-y']:.1f} mm, +y {side['+y']:.1f} mm"
+                   + (f"; widest over the columns beside the aim (#126): -y {n['-y']:.1f} mm, +y {n['+y']:.1f} mm"
+                      if n else ""))
     return ("\n" + "\n".join(out)) if out else ""
 
 

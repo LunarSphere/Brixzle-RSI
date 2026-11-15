@@ -1186,3 +1186,67 @@ def test_the_final_design_gets_a_pickup_report_after_the_tune_not_a_gate(tmp_pat
     summary = (Path(loop.results) / "summary.md").read_text(encoding="utf-8")
     assert "## Pickup" in summary and "picked" in summary and "not a gate" in summary
 
+
+# --- the concept track (#126) ---
+
+
+def _track_loop(tmp_path, intake, engine, n_after=2, **kw):
+    """A/B baseline, an explore round of two concepts, then ``n_after`` more design iterations."""
+    script = [critic_step(), concept_step("cx"), concept_step("cx"), critic_step()]
+    for k in range(n_after):
+        script += [design_step(f"w{k}"), critic_step()]
+    script.pop()  # the last iteration gets no critic
+    return _loop(tmp_path, intake, script, engine, parent="ab", ladder=False, concepts=2,
+                 max_iterations=1 + n_after, **kw)
+
+
+def test_a_promising_concept_below_the_best_gets_two_iterations_then_the_loop_returns_to_the_best(tmp_path, intake):
+    # c1 is the round's best on mean but no better than A/B anywhere; c2 is worse on mean and far
+    # better on p95: promising (#126), so it is developed even though it is below the best.
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(0.5, 0.14, 0.05), z3(0.47, 0.04, -0.03), z3(0.46, 0.4, 0.08),
+                                             z3(0.48, 0.4, 0.08), z3(0.49, 0.42, 0.1), z3(0.45, 0.1, 0.0)],
+                        held=[0.5] * 12)
+    loop, runner = _track_loop(tmp_path, intake, engine, n_after=3)
+    state = loop.run()
+    its = state["iterations"]
+    assert [it.get("mode", "reshape") for it in its[1:]] == ["explore", "concept", "concept", "reshape"]
+    c2 = next(c for c in its[1]["concepts"] if c["id"] == "c2")
+    assert its[1]["concept_track"]["module"] == c2["module"] and "p95" in its[1]["concept_track"]["why"]
+    assert its[1].get("ring_of_concept") or c2.get("ring")  # its ring is built, so the track knows
+    designs = [c for c in runner.calls if c.name == "design"]
+    concept_py = str(Path(c2["root"]) / c2["module"] / "family.py")
+    assert concept_py in designs[2].prompt and its[2]["concept_of"] == 1
+    assert str(Path(its[3]["root"]).parent) != str(Path(c2["root"]).parent)
+    assert "families/ab/family.py" in designs[4].prompt  # back to the best (A/B)
+    assert state.get("concept") is None and state["best"]["iteration"] == 0
+    assert len(its) == 5  # patience did not stop the run while the track ran
+
+
+def test_a_concept_better_on_p95_alone_that_fails_the_gate_is_developed_as_a_repair(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(0.5, 0.14, 0.05), z3(0.47, 0.04, -0.03), z3(0.46, 0.4, 0.08),
+                                             z3(0.48, 0.4, 0.08)], held=[0.5] * 8)
+    engine.gates = [(True, 5), (True, 5), (False, 2)]  # baseline, c1, c2
+    loop, runner = _track_loop(tmp_path, intake, engine, n_after=1)
+    state = loop.run()
+    it = state["iterations"][2]
+    assert it["mode"] == "concept"
+    prompt = [c for c in runner.calls if c.name == "design"][2].prompt
+    assert "repair" in prompt and "structure gate" in prompt.lower()
+
+
+def test_a_concept_no_better_than_the_best_on_any_box_is_not_developed(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[z3(0.5, 0.14, 0.05), z3(0.47, 0.1, 0.03), z3(0.46, 0.12, 0.04),
+                                             z3(0.45, 0.1, 0.0)], held=[0.5] * 8)
+    loop, _ = _track_loop(tmp_path, intake, engine, n_after=1)
+    state = loop.run()
+    assert state["iterations"][1].get("concept_track") is None and state["iterations"][2].get("mode") != "concept"
+
+
+def test_the_run_stops_in_time_for_the_end_tune():
+    cfg = LoopConfig(max_minutes=30.0, tune_seconds=420.0, ladder=False)
+    state = {"best": _best(0.5, 0.2, 0.1), "iterations": [{"iteration": 0, "decision": "baseline"},
+                                                          {"iteration": 1, "decision": "kept"}]}
+    assert OR.stop_reason(state, cfg, 5.0, 15 * 60, iteration_s=240.0) is None
+    why = OR.stop_reason(state, cfg, 5.0, 20 * 60, iteration_s=240.0)
+    assert why and "end tune" in why
+

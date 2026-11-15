@@ -322,3 +322,13 @@ def test_y_capture_is_read_from_the_column_through_the_aim():
          "index_extent": {"x": [-1, 1], "y": [-3, 3]},
          "rows": ["FWF", "SJS", "SSS", "SSS", "SSS", "JSS", "FFF"]}  # y = -6 ... +6 mm; the aim column is the middle
     assert SM.y_capture({"grids": [g]}) == {"0": {"-y": 2.0, "+y": 4.0}}  # -4 mm jams, +6 mm falls
+
+
+def test_y_capture_near_the_aim_takes_the_widest_seated_run_over_the_columns_beside_it():
+    """#126: A/B has a jam stripe in the X = 0 column, so the X = 0 reading (+-4 mm) understated its
+    capture (about +-8 mm in the columns beside it). The near-aim reading is reported alongside."""
+    g = {"slice": "xy", "course": 0, "axes": ["x", "y"], "step": {"x": 4.0, "y": 2.0},
+         "index_extent": {"x": [-1, 1], "y": [-3, 3]},
+         "rows": ["FWF", "SJS", "SSS", "SSS", "SSS", "JSS", "FFF"]}
+    assert SM.y_capture({"grids": [g]}) == {"0": {"-y": 2.0, "+y": 4.0}}  # unchanged
+    assert SM.y_capture_near({"grids": [g]}) == {"0": {"-y": 4.0, "+y": 4.0}}

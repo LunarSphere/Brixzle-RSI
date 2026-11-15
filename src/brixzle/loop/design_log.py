@@ -29,7 +29,8 @@ DECISIONS = ("baseline", "kept", "rejected", "failed_contract", "failed_quick_ch
              "screened_out", "failed_screen",  # a round's candidate the cheap screen did not map (#108)
              "near_copy",  # an explore design too close to A/B's section (#106)
              "provisional",  # kept on Z but does not build yet: repaired next (#109)
-             "no_concepts", "no_probe")  # an explore call without its three concepts or a probe (#111)
+             "no_concepts", "no_probe",  # an explore call without its three concepts or a probe (#111)
+             "concept_track")  # a promising concept chosen to be developed (#126)
 REQUIRED = ("iteration", "attempt", "family", "decision")
 
 
