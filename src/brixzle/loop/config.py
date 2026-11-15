@@ -5,7 +5,7 @@ import math
 
 from brixzle.engine import boxes as BX
 
-MODEL = "claude-sonnet-5-5"  # reshapes and the critic (maintainer, 2026-11-12)
+MODEL = "claude-opus-5-5"  # reshapes, repairs and the critic (#125; maintainer, 2026-11-15; was Sonnet)
 CONCEPT_MODEL = "claude-opus-5-5"  # explore calls and repairs of a new concept (#111; maintainer, 2026-11-13)
 
 
@@ -37,6 +37,9 @@ class LoopConfig:
     near_copy_share: float = 0.2     # an explore design's section must differ from A/B's by at least this share (#106)
     repair_attempts: int = 2         # repairs of a provisional design before it is rejected (#109; maintainer)
     concept_runs: int = 2            # iterations in a row a promising concept is developed for (#126; maintainer)
+    sessions: bool = True            # persistent designer and critic sessions (#125); False: a fresh call each time
+    session_messages: int = 4        # a session is replaced, with a handover, after this many messages (#125)
+    session_max_tokens: int = 100_000  # ... or once its context reaches this many tokens (about half the window)
     seed: int = 0                    # quick-check seed; held-out Z uses seed + 1
     workers: int | None = None       # sim drop processes
     held_out: bool = True
@@ -51,7 +54,8 @@ class LoopConfig:
         if self.target not in BX.STATISTICS:
             raise ValueError(f"target must be one of {BX.STATISTICS}, got {self.target!r}")
         for name in ("max_iterations", "patience", "design_attempts", "design_max_turns", "screen_max_maps",
-                     "concepts", "stall_iterations", "repair_attempts", "concept_runs"):
+                     "concepts", "stall_iterations", "repair_attempts", "concept_runs", "session_messages",
+                     "session_max_tokens"):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, int) or v < 1:
                 raise ValueError(f"{name} must be an integer >= 1, got {v!r}")

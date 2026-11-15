@@ -22,7 +22,7 @@ with no reason to give. **No copying from papers or other groups**
 (CLAUDE.md): papers are for mechanics. The maintainer's own designs (A/B) may be reused (#85).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import re
 from pathlib import Path
@@ -152,6 +152,19 @@ Family interface (docs/family-interface.md):
 
 Design rules (rules/design_rules.md; the critic cites them by id):
 {RL.rules_text()}
+
+A/B's family module and parameters, so you need not spend turns reading them (#125); the profile is in
+src/brixzle/families/ab/profile.py if you need it.
+
+src/brixzle/families/ab/family.py:
+```python
+{AB_FAMILY_SRC}
+```
+
+src/brixzle/families/ab/params.py:
+```python
+{AB_PARAMS_SRC}
+```
 {lessons}"""
 
 
@@ -214,6 +227,8 @@ def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="",
 
 
 PRINCIPLES = REPO / "src" / "brixzle" / "rules" / "capture_principles.md"
+AB_FAMILY_SRC = (_SRC / "families" / "ab" / "family.py").read_text(encoding="utf-8").strip()
+AB_PARAMS_SRC = (_SRC / "families" / "ab" / "params.py").read_text(encoding="utf-8").strip()
 
 
 def principles():
@@ -285,7 +300,11 @@ def probe_tool(ws, prober, log, cap=PROBE_CALLS):
                  "parent_failures_now_seated": out.get("parent_failures_now_seated"),
                  "parent_seated_now_failing": out.get("parent_seated_now_failing"), "error": out.get("error")}
         log.append(entry)
-        return json.dumps({**out, "calls_left": cap - len(log)}, indent=1)
+        # Only the drops that did not seat, in full (#125): the seated ones are counted, not listed.
+        rows = out.get("rows") or []
+        short = {**out, "rows": [r for r in rows if r.get("outcome") != "seated"],
+                 "rows_seated_omitted": sum(1 for r in rows if r.get("outcome") == "seated")}
+        return json.dumps({**short, "calls_left": cap - len(log)}, indent=1)
 
     return ToolSpec(PROBE_TOOL, "Drop the draft in your package at up to 30 poses: the parent's failures inside the "
                     "target box, a few of its seats and the aim (or a spread over the error disc). Returns each "
@@ -308,7 +327,7 @@ class DesignOutcome:
 
 def design(runner, intake, attempt_dir, module, brief=None, parent=None, failures=None, log_text="",
            budget_usd=DESIGN_BUDGET_USD, max_turns=MAX_TURNS, lessons_text="", prober=None,
-           probe_calls=PROBE_CALLS, explore=None, repair=None, pictures=()):
+           probe_calls=PROBE_CALLS, explore=None, repair=None, pictures=(), session=None, preface=""):
     """Run the design agent once; returns a DesignOutcome. The loop checks the package itself
     afterwards, whatever the agent said. ``prober(root, module)``, if given, is served as the
     probe_drops tool, at most ``probe_calls`` times (issue #107)."""
@@ -324,7 +343,9 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
                                                     *dict.fromkeys(Path(q).parent for q in pictures),
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
                      mcp_tools=tools, max_turns=max_turns)
-    result = runner.run(call)
+    if preface:
+        call = replace(call, prompt=preface + "\n\n" + call.prompt)
+    result = session.send(call) if session is not None else runner.run(call)
     final = CF.check_in_subprocess(ws.root, ws.module, reference=ref, share=share)
     note_path = ws.pkg / NOTE_FILE
     try:

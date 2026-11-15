@@ -230,3 +230,82 @@ def test_a_call_stopped_at_its_budget_is_charged_what_the_sdk_reported():
     err = "ResultError: Claude Code returned an error result: Reached maximum budget ($0.41813520000000004) (exit code: 1)"
     assert RN.budget_stop_cost(err) == pytest.approx(0.4181352)
     assert RN.budget_stop_cost("RuntimeError: something else") is None
+
+
+# --- persistent sessions (#125) ---
+
+
+class ResultMessage:  # named like the SDK's, which the session reads by duck typing
+    def __init__(self, k, sid="sess-1"):
+        self.total_cost_usd, self.num_turns, self.session_id, self.is_error = 0.01 * (k + 1), 2, sid, False
+        self.usage = {"input_tokens": 10, "cache_read_input_tokens": 1000 * (k + 1), "cache_creation_input_tokens": 50}
+        self.structured_output, self.errors, self.result = None, [], f"answer {k}"
+
+
+class AssistantMessage:  # one turn, with its own usage, as the SDK's
+    def __init__(self, cached):
+        self.content, self.usage = [], {"input_tokens": 5, "cache_read_input_tokens": cached,
+                                        "cache_creation_input_tokens": 20}
+
+
+class FakeClient:
+    """Stands in for ClaudeSDKClient: one connect, many queries, one disconnect."""
+    made = []
+
+    def __init__(self, opts):
+        self.opts, self.prompts, self.closed = opts, [], False
+        FakeClient.made.append(self)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self.closed = True
+
+    async def query(self, prompt):
+        self.prompts.append(prompt)
+
+    async def receive_response(self):
+        k = len(self.prompts) - 1
+        yield AssistantMessage(300 * (k + 1))   # the context grows turn by turn
+        yield AssistantMessage(500 * (k + 1))
+        yield ResultMessage(k)
+
+
+def test_a_session_connects_once_answers_every_message_and_records_each_in_the_ledger(tmp_path):
+    FakeClient.made.clear()
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 5.0)
+    base = _call(tools=("Read", "Write"), write_root=tmp_path / "a", max_budget_usd=1.0)
+    s = RN.ClaudeSession("m", led, "designer", base, environ={"ANTHROPIC_API_KEY": "k"}, client_factory=FakeClient)
+    r1 = s.send(base)
+    r2 = s.send(_call(prompt="again", tools=("Read", "Write"), write_root=tmp_path / "b", max_budget_usd=1.0))
+    s.close()
+    assert len(FakeClient.made) == 1 and FakeClient.made[0].prompts == ["hi", "again"] and FakeClient.made[0].closed
+    assert (r1.text, r2.text) == ("answer 0", "answer 1") and s.session_id == "sess-1" and s.messages == 2
+    assert s.guard.write_root == tmp_path / "b"  # the second message's package, not the first's
+    # The context is the last turn's input, not the message's usage summed over its turns
+    # (sessions-20261115-mean: summed, a 19-turn message read as 1.57 million tokens and the session
+    # was replaced before its second message).
+    assert s.context_tokens == 5 + 1000 + 20
+    rows = led.rows()
+    assert [r["session"] for r in rows] == ["designer", "designer"] and [r["cost_usd"] for r in rows] == [0.01, 0.02]
+    assert rows[1]["usage"]["cache_read_input_tokens"] == 2000
+
+
+def test_a_session_reopens_a_saved_session_by_its_id(tmp_path):
+    FakeClient.made.clear()
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 5.0)
+    s = RN.ClaudeSession("m", led, "critic", _call(), resume="sess-old", environ={"ANTHROPIC_API_KEY": "k"},
+                         client_factory=FakeClient)
+    s.send(_call())
+    s.close()
+    assert FakeClient.made[0].opts["resume"] == "sess-old"
+
+
+def test_a_scripted_session_marks_its_calls_with_the_session():
+    runner = RN.ScriptedRunner([RN.AgentResult(text="a"), RN.AgentResult(text="b")])
+    s = runner.session("designer", _call())
+    s.send(_call())
+    s.send(_call(prompt="again"))
+    assert [c.session for c in runner.calls] == ["designer", "designer"] and s.messages == 2
+    assert len({c.session_id for c in runner.calls}) == 1
