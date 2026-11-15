@@ -159,6 +159,24 @@ class SimEngine:
         """The pickup check on the final design (#113): R10 and today's fork, a report."""
         return PU.pickup_check(family, p, seed=self.cfg.seed, runs=self.cfg.runs)
 
+    def ring_pictures(self, family, p, out_dir):
+        """The ring rebuilt with recording, pictured at its failing brick: side on and from above at an
+        angle (#129). {'pictures': [paths], 'seconds'}."""
+        from PIL import Image
+
+        t0 = time.time()
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        frames, keep = [], {}
+        r = RB.build_ring(family, p, runs=self.cfg.runs, seed=self.cfg.seed, record=frames, keep=keep)
+        paths = []
+        for name, az, el in (("ring-side.png", 90, -12), ("ring-above.png", 45, -40)):
+            img = VD.render_frames(keep["model"], frames[-1:], size=(640, 480), azimuth=az, elevation=el,
+                                   text=f"ring {r['status']}, {r['seated']} of {r['total']} seated ({VD.LABEL})")[0]
+            Image.fromarray(img).save(out_dir / name)
+            paths.append(str(out_dir / name))
+        return {"pictures": paths, "seconds": time.time() - t0, "run": r["run"]}
+
     def rest_pictures(self, family, p, map_dir, target, out_dir, seed):
         """Pictures and contact tables of a few failed rests inside ``target``'s box (#112)."""
         return RS.rest_pictures(family, p, SM.read_drops(map_dir), self.boxes[target], out_dir, seed=seed)
@@ -534,6 +552,8 @@ class Loop:
                 stop = f"API budget spent: {e}"
                 break
             self.state["iterations"].append(rec)
+            if rec.get("clock_stop"):
+                stop = rec["reason"]
             if rec.get("mode") == "concept":
                 self._after_concept(rec)
             self.record_lessons()
@@ -541,6 +561,8 @@ class Loop:
             self.state["elapsed_s"] = time.time() - t0
             _save(self.run_dir, self.state)
             self.render_progress()
+            if stop:
+                break
         self.state["stop"] = stop
         _save(self.run_dir, self.state)
         if self.cfg.tune and self.state["best"] and self.state.get("tune") is None and not self.cfg.baseline_only:
@@ -652,13 +674,20 @@ class Loop:
             rec["brief_in"] = None
             z = prov.get("z_target")
             repair = {"family_py": prov["family_py"], "attempt": prov["repairs"] + 1, "of": cfg.repair_attempts,
-                      "z_text": f" ({prov['target']} {z:+.3f}, simulated, uncalibrated contact)" if z is not None else ""}
+                      "z_text": f" ({prov['target']} {z:+.3f}, simulated, uncalibrated contact)" if z is not None else "",
+                      "last": prov.get("last_repair")}
         elif last and last.get("decision") == "failed_ring":
             failures = {"ring": last["ring"]["failure"]}  # the last design closed no ring (#89)
         last_err, repeated = None, None
         prober = self._prober(iter_dir, i, best)
         pictures = self._pictures(prov or best, self.state["iterations"])
-        for a in range(1, cfg.design_attempts + 1):
+        tries = cfg.repair_tries if repair is not None else cfg.design_attempts
+        for a in range(1, tries + 1):
+            if not self.clock_allows(self.attempt_estimate()):
+                rec["clock_stop"] = True
+                rec["clock_reason"] = (f"wall-clock: another design attempt (about {self.attempt_estimate() / 60:.1f} "
+                                       f"min) and the end tune would pass {cfg.max_minutes:g} min")
+                break
             module = f"rsi_{self.name.replace('-', '_').lower()}_i{i:02d}_a{a}"
             t = time.time()
             try:
@@ -739,11 +768,15 @@ class Loop:
             rec["gate"], rec["runs"]["gate"], rec["overhang_n"] = att["gate"], str(gate_dir), gate["overhang_n"]
             break
         if fam is None:
-            rec["reason"] = (f"the design call failed twice with the same error, so it was not tried again: "
+            rec["reason"] = (rec["clock_reason"] if rec.get("clock_stop") else
+                             f"the design call failed twice with the same error, so it was not tried again: "
                              f"{repeated[:300]}" if repeated else
                              f"no design passed the contract, the quick check and the structure gate in "
-                             f"{cfg.design_attempts} attempts")
-            if prov:
+                             f"{len(rec['attempts'])} attempt(s)")
+            if prov and rec["attempts"]:
+                last_att = rec["attempts"][-1]
+                summary = ((last_att.get("note") or {}).get("summary") or last_att.get("error") or "")[:400]
+                prov["last_repair"] = f"{summary} ({last_att.get('decision')})"
                 self._failed_repair(rec, rec["reason"])
             rec["spent_usd"] = self.ledger.spent() - spent0
             rec["seconds"]["total"] = time.time() - t_iter
@@ -830,6 +863,7 @@ class Loop:
                 if builds:
                     kept = False
                     why = "; ".join(builds) + f"; otherwise: {why}"
+                    self._repair_pictures(rec, fam, p, map_dir, res_dir, "ring" in fails)
                     self._make_provisional(rec, fails, why, z_t, target)
                     why = rec["reason"]
                 elif rec.get("mode") == "repair":
@@ -941,6 +975,13 @@ class Loop:
         rec = {"iteration": i, "mode": "explore", "explore_reason": why, "dir": str(iter_dir), "results": str(res_dir),
                "brief_in": brief, "attempts": [], "concepts": [], "decision": "no_design", "z": None, "runs": {},
                "seconds": {}}
+        need = self.attempt_estimate() + self.score_estimate()
+        if not self.clock_allows(need):  # #129: a round needs its design calls and at least one full score
+            rec.update(clock_stop=True, reason=f"wall-clock: an explore round (about {need / 60:.1f} min) and the end "
+                                               f"tune would pass {cfg.max_minutes:g} min")
+            rec["seconds"]["total"] = time.time() - t_iter
+            self.write_iteration_summary(rec, res_dir)
+            return rec
         chosen, tried = self._principles(self._concept_count())
         beat = (f"{best['family']}, Z {target} {z_on(best, target):+.3f} (simulated, uncalibrated contact)"
                 if best else "A/B")
@@ -1098,6 +1139,7 @@ class Loop:
                                        None) or {}
         for d in rest.get("drops") or []:
             out += [Path(rest["dir"]) / f for f in d.get("pictures") or []]
+        out += [Path(q) for q in src.get("ring_pictures") or []]  # a failed ring (#129)
         return tuple(q for q in out if q.exists())
 
     # --- the concept track (#126) ---
@@ -1285,6 +1327,38 @@ class Loop:
                                                       for d in rest.get("drops", [])]}
         return rest
 
+    def _repair_pictures(self, rec, fam, p, map_dir, res_dir, ring_failed):
+        """Pictures a repair will read (#129): the rest pictures of the design's failures, and, if its
+        ring failed, the ring at its failing brick. The module and jam map are rendered as usual."""
+        if not rec.get("rest"):
+            self._rest(rec, fam, p, map_dir, res_dir)
+        if ring_failed:
+            t = time.time()
+            try:
+                rp = self.engine.ring_pictures(fam, p, Path(res_dir) / "ring")
+                rec["ring_pictures"] = rp["pictures"]
+            except Exception as e:  # noqa: BLE001 - pictures must not stop the loop
+                rec["ring_pictures_error"] = f"{type(e).__name__}: {e}"[:300]
+            rec["seconds"]["ring_pictures"] = time.time() - t
+
+    def clock_allows(self, seconds):
+        """Whether ``seconds`` more, and the end tune, fit in the run's ``max_minutes`` (#129)."""
+        elapsed = time.time() - getattr(self, "_t0", time.time())
+        tune_s = self.cfg.tune_seconds if self.cfg.tune else 0.0
+        return elapsed + seconds + tune_s <= self.cfg.max_minutes * 60
+
+    ATTEMPT_S = 420.0  # one design attempt before any was measured: an Opus call and its checks
+
+    def attempt_estimate(self):
+        """Seconds one design attempt takes in this run: the mean design call plus the mean checks."""
+        calls = [a["design_s"] for it in self.state["iterations"] for a in it.get("attempts") or []
+                 if a.get("design_s")]
+        if not calls:
+            return self.ATTEMPT_S
+        checks = [it["seconds"].get("quick_check", 0.0) + it["seconds"].get("gate", 0.0)
+                  for it in self.state["iterations"] if it["iteration"] >= 1 and it.get("seconds")]
+        return sum(calls) / len(calls) + (sum(checks) / len(checks) if checks else 0.0)
+
     def _make_provisional(self, rec, failures, why, z_t, target):
         """A design kept on Z that does not build yet (#109): provisional, repaired next; a repair that
         still does not build counts against ``repair_attempts``."""
@@ -1298,6 +1372,7 @@ class Loop:
         rec["decision"], rec["reason"] = "provisional", f"provisional: {why}"
         self.state["provisional"] = {"iteration": rec["iteration"], "module": rec["module"], "root": rec["root"],
                                      "results": rec.get("results"), "rest": rec.get("rest"),
+                                     "ring_pictures": rec.get("ring_pictures"),
                                      "family": rec["family"], "family_py": str(family_py(rec)), "failures": failures,
                                      "repairs": repairs, "z_target": z_t, "target": target,
                                      "first": (prov or {}).get("first", rec["iteration"]),

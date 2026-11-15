@@ -176,7 +176,9 @@ def repair_text(repair):
             f"(the guide faces, funnels and seats that gave it its Z) and fix the interlock or the ring kit so it "
             f"builds the tower, the wall, the bridge, the overhang and the ring. This is repair "
             f"{repair.get('attempt', 1)} of {repair.get('of', 2)}; after that it is rejected.\n"
-            f"Design to repair: {repair['family_py']}")
+            f"Design to repair: {repair['family_py']}"
+            + (f"\nThe last repair tried: {repair['last']}. It did not build either; do something different."
+               if repair.get("last") else ""))
 
 
 def task_prompt(ws, intake, brief=None, parent=None, failures=None, log_text="", fixed=None, explore=None,

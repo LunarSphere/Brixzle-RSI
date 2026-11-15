@@ -171,6 +171,16 @@ class FakeEngine:
                 "picked": 1, "n": 1, "release": {"passed": True, "drift_mm": 0.1}, "seconds": 3.0,
                 "run": str(self._dir("pickup"))}
 
+    def ring_pictures(self, family, p, out_dir):
+        """Pictures of a failed ring at its failing brick (#129), canned."""
+        self.calls.append("ring_pictures")
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        out = []
+        for name in ("ring-side.png", "ring-above.png"):
+            (Path(out_dir) / name).write_bytes(b"png")
+            out.append(str(Path(out_dir) / name))
+        return {"pictures": out, "seconds": 1.0}
+
     def probe_poses(self, map_dir, target, seed):
         """The probe's poses (#107): records which map and box they came from."""
         self.calls.append(("probe_poses", None if map_dir is None else Path(map_dir).name, target, seed))
@@ -860,6 +870,7 @@ def test_no_ring_is_started_with_less_than_two_minutes_left(tmp_path, intake):
     engine = FakeEngine(tmp_path / "eng", zs=[0.5])
     loop, _ = _loop(tmp_path, intake, [design_step(), critic_step()], engine, max_iterations=1, max_minutes=30.0)
     loop._t0 = __import__("time").time() - (30 * 60 - 60)  # one minute left
+    loop.clock_allows = lambda seconds: True  # since #129 no attempt would start this late; this tests the ring's own guard
     rec = loop.iterate(1)
     assert rec["decision"] == "kept" and "ring" not in engine.calls
     assert rec["ring"]["status"] == "not_run" and "two minutes" in rec["ring"]["reason"]
@@ -1311,3 +1322,54 @@ def test_sessions_can_be_turned_off(tmp_path, intake):
     loop.run()
     assert all(c.session is None for c in runner.calls)
 
+
+# --- the clock at every attempt, and focused repairs (#129) ---
+
+
+def test_no_design_attempt_starts_when_it_would_not_fit_the_clock(tmp_path, intake):
+    import time as _time
+
+    engine = FakeEngine(tmp_path / "eng", zs=[])
+    loop, runner = _loop(tmp_path, intake, [], engine, max_iterations=2, max_minutes=30.0, tune_seconds=420.0)
+    loop._t0 = _time.time() - 25 * 60  # 25 min gone: one attempt (420 s) and the tune (420 s) do not fit
+    rec = loop.iterate(1)
+    assert rec["decision"] == "no_design" and rec.get("clock_stop") and "wall-clock" in rec["reason"]
+    assert not runner.calls
+
+
+def test_a_repair_iteration_makes_one_design_call_and_the_next_repair_is_told_what_it_tried(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7], held=[0.5] * 6)
+    engine.rings = ["complete", "placement_jammed"]
+    engine.gates = [(True, 5), (True, 5), (False, 2), (False, 2)]  # it1, it2, then both repairs fail their gate
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2"), design_step("r1"),
+                                            design_step("r2")], engine, max_iterations=4, patience=4)
+    state = loop.run()
+    its = state["iterations"]
+    assert [len(it["attempts"]) for it in its[2:]] == [1, 1]  # one call per repair iteration
+    assert its[3]["decision"] == "rejected" and "2 repairs" in its[3]["reason"]
+    second = [c for c in runner.calls if c.name == "design"][3].prompt
+    assert "last repair" in second.lower() and "r1 chevron" in second
+
+
+def test_a_repair_is_shown_the_provisional_design_s_pictures_and_its_failed_ring(tmp_path, intake):
+    engine = FakeEngine(tmp_path / "eng", zs=[0.5, 0.7, 0.75], held=[0.5] * 6)
+    engine.rings = ["complete", "placement_jammed", "complete"]
+    loop, runner = _loop(tmp_path, intake, [design_step("w1"), critic_step(), design_step("w2"), design_step("w3")],
+                         engine, max_iterations=3)
+    state = loop.run()
+    it2 = state["iterations"][1]
+    assert it2["decision"] == "provisional" and it2["rest"]["drops"] and len(it2["ring_pictures"]) == 2
+    repair = [c for c in runner.calls if c.name == "design"][2].prompt
+    assert "module.png" in repair and "rest-1-xz.png" in repair and "ring-side.png" in repair
+    assert "ring_pictures" in engine.calls and it2["seconds"]["ring_pictures"] >= 0
+
+
+
+def test_no_explore_round_starts_when_it_would_not_fit_the_clock(tmp_path, intake):
+    import time as _time
+
+    engine = FakeEngine(tmp_path / "eng", zs=[])
+    loop, runner = _loop(tmp_path, intake, [], engine, max_iterations=2, concepts=3, max_minutes=30.0)
+    loop._t0 = _time.time() - 20 * 60  # an attempt (420 s), a full score (240 s) and the tune (420 s) pass 30 min
+    rec = loop.iterate(1)
+    assert rec["mode"] == "explore" and rec.get("clock_stop") and "wall-clock" in rec["reason"] and not runner.calls

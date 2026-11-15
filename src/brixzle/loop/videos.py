@@ -67,7 +67,7 @@ def caption(pick, outcome):
 # --- rendering (from aerial-assembly) ---
 
 
-def _camera(model, frames, active, azimuth=90):
+def _camera(model, frames, active, azimuth=90, elevation=-12):
     cam = mujoco.MjvCamera()
     data = mujoco.MjData(model)
     pts = []
@@ -79,11 +79,11 @@ def _camera(model, frames, active, azimuth=90):
     lo, hi = pts.min(0), pts.max(0)
     cam.lookat[:] = (lo + hi) / 2
     cam.distance = max(0.2, float(np.max(hi - lo)) * 2.6)
-    cam.azimuth, cam.elevation = azimuth, -12  # 90: looking along +Y at the X-Z profile; 0: end-on, along X
+    cam.azimuth, cam.elevation = azimuth, elevation  # 90: along +Y at the X-Z profile; 0: end-on, along X
     return cam
 
 
-def render_frames(model, frames, size=SIZE, text=None, azimuth=90):
+def render_frames(model, frames, size=SIZE, text=None, azimuth=90, elevation=-12):
     """RGB images of recorded qpos frames, from the side (``azimuth`` 90) or end-on (0), with
     ``text`` drawn on each."""
     from PIL import Image, ImageDraw
@@ -93,7 +93,7 @@ def render_frames(model, frames, size=SIZE, text=None, azimuth=90):
     data.qpos[:] = frames[-1]
     mujoco.mj_kinematics(model, data)
     active = [b for b in range(1, model.nbody) if data.xpos[b][2] < 1.5]
-    cam = _camera(model, frames, active, azimuth)
+    cam = _camera(model, frames, active, azimuth, elevation)
     opt = mujoco.MjvOption()
     opt.geomgroup[:] = [1, 1, 1, 0, 0, 0]
     images = []
