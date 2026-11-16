@@ -107,6 +107,8 @@ class AgentResult:
     errors: list = field(default_factory=list)
     seconds: float = 0.0
     context_tokens: int = 0        # the last turn's input, cached or not: a session's context size (#125)
+    interrupted: bool = False      # stopped by the session's per-message limits (#139)
+    interrupt_reason: str | None = None
 
 
 # --- the spend ledger ---
@@ -160,7 +162,7 @@ class SpendLedger:
                "usage": {k: v for k, v in (result.usage or {}).items() if isinstance(v, (int, float))},
                "api_key_source": result.api_key_source, "is_error": result.is_error,
                "seconds": float(result.seconds or 0.0) if math.isfinite(float(result.seconds or 0.0)) else 0.0,
-               "session": session}
+               "session": session, "interrupted": bool(getattr(result, "interrupted", False))}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             with open(self.path, "a", encoding="utf-8") as f:
@@ -297,10 +299,11 @@ class ClaudeRunner:
         of three calls side by side only $0.42)."""
         return min(call.max_budget_usd, self.ledger.remaining() + call.max_budget_usd)
 
-    def session(self, name, base: AgentCall, resume=None, messages=4):
-        """A persistent session (#125) on this runner's model and ledger, budgeted for ``messages``."""
+    def session(self, name, base: AgentCall, resume=None, messages=4, message_seconds=600.0):
+        """A persistent session (#125) on this runner's model and ledger, budgeted for ``messages``,
+        each message limited to its call's turns and ``message_seconds`` (#139)."""
         return ClaudeSession(self.model, self.ledger, name, base, resume=resume, environ=self.environ,
-                             messages=messages)
+                             messages=messages, message_seconds=message_seconds)
 
     def run(self, call: AgentCall) -> AgentResult:
         self.ledger.reserve(call.max_budget_usd)
@@ -375,10 +378,13 @@ class ClaudeSession:
     with the session's name; the SDK reports cost per message. ``resume`` reopens a saved session."""
 
     def __init__(self, model, ledger: SpendLedger, name, base: AgentCall, resume=None, environ=None,
-                 client_factory=None, messages=4):
+                 client_factory=None, messages=4, message_seconds=600.0):
         self.model, self.ledger, self.name, self.base = model, ledger, name, base
         # The SDK's budget caps the whole session, and its cost is the session's running total (#131).
         self.session_budget_usd, self.total_usd = base.max_budget_usd * max(1, int(messages)), 0.0
+        # The SDK's turn and budget limits apply to the whole session, so each message's own limits
+        # (its call's max_turns, and message_seconds) are enforced here by interrupting it (#139).
+        self.message_seconds = float(message_seconds)
         self.environ, self.resume, self._factory = environ, resume, client_factory
         self.guard = ToolGuard(base.write_root, tuple(base.read_roots), tuple(base.tools))
         self.handlers = {t.name: t for t in base.mcp_tools}
@@ -437,22 +443,31 @@ class ClaudeSession:
                     item = await self._queue.get()
                     if item is None:
                         break
-                    prompt, fut = item
+                    prompt, fut, max_turns = item
                     try:
-                        fut.set_result(await self._ask(c, prompt))
+                        fut.set_result(await self._ask(c, prompt, max_turns))
                     except BaseException as e:  # noqa: BLE001 - handed to the caller
                         fut.set_exception(e)
         except BaseException as e:  # noqa: BLE001 - a failed connect is the first send's error
             if not ready.done():
                 ready.set_exception(e)
 
-    async def _ask(self, c, prompt):
+    async def _ask(self, c, prompt, max_turns=None):
         import time
 
-        out, texts, t0 = AgentResult(cost_usd=None), [], time.time()
+        out, texts, t0, turns = AgentResult(cost_usd=None), [], time.time(), 0
         await c.query(prompt)
         async for msg in c.receive_response():
             kind = type(msg).__name__
+            if kind == "AssistantMessage":
+                turns += 1
+                if not out.interrupted:
+                    why = (f"the message passed its {max_turns} turns" if max_turns and turns > max_turns else
+                           f"the message passed its {self.message_seconds:g} s" if time.time() - t0 > self.message_seconds
+                           else None)
+                    if why:
+                        out.interrupted, out.interrupt_reason = True, why
+                        await c.interrupt()
             if kind == "SystemMessage" and getattr(msg, "subtype", None) == "init":
                 out.api_key_source = (getattr(msg, "data", None) or {}).get("apiKeySource")
             elif kind == "AssistantMessage":
@@ -493,9 +508,9 @@ class ClaudeSession:
             if self._loop is None:
                 self._start()
             fut = cf.Future()
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, (call.prompt, fut))
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, (call.prompt, fut, call.max_turns))
             result = fut.result()
-            if result.is_error and result.errors:
+            if result.is_error and result.errors and not result.interrupted:
                 raise RuntimeError("; ".join(map(str, result.errors)))
         except BaseException as e:
             err = f"{type(e).__name__}: {e}"
@@ -569,7 +584,7 @@ class ScriptedRunner:
     def __init__(self, script, ledger: SpendLedger | None = None, model="scripted"):
         self.script, self.ledger, self.model, self.calls = list(script), ledger, model, []
 
-    def session(self, name, base, resume=None, messages=4):
+    def session(self, name, base, resume=None, messages=4, message_seconds=600.0):
         return ScriptedSession(self, name, base, resume)
 
     def run(self, call: AgentCall) -> AgentResult:

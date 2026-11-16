@@ -34,7 +34,7 @@ from brixzle.intake.intake import requirements_text
 
 REPO = Path(__file__).resolve().parents[3]
 DESIGN_BUDGET_USD = 1.50
-MAX_TURNS = 40
+MAX_TURNS = 25  # #139: was 40
 NOTE_FILE = "design_note.json"
 # A/B only: the agent copied the dummy wedge as its brick in #21's smoke runs (issue #73).
 EXAMPLES = ("src/brixzle/families/ab/family.py",)
@@ -349,6 +349,9 @@ def design(runner, intake, attempt_dir, module, brief=None, parent=None, failure
                                                     *dict.fromkeys(Path(q).parent for q in pictures),
                                                     *(Path(i["abs_path"]).parent for i in intake["concept_images"])),
                      mcp_tools=tools, max_turns=max_turns)
+    # The turn budget is enforced (#139): a message past it is interrupted, so say it up front.
+    call = replace(call, prompt=call.prompt + f"\n\nYou have at most {max_turns} turns (tool calls) for this task; "
+                   f"get check_family passing early and keep a passing package, since the call is stopped at the limit.")
     if preface:
         call = replace(call, prompt=preface + "\n\n" + call.prompt)
     result = session.send(call) if session is not None else runner.run(call)

@@ -28,7 +28,8 @@ class LoopConfig:
     design_attempts: int = 3         # design-agent tries per iteration (contract or quick-check failures)
     design_budget_usd: float = 1.5   # per design-agent call
     critic_budget_usd: float = 0.4   # per critic call
-    design_max_turns: int = 40
+    design_max_turns: int = 25      # turns per design message, enforced in a session by interrupting it (#139; was 40)
+    message_seconds: float = 600.0   # wall-clock per message in a session, enforced the same way (#139)
     probe_calls: int = 5             # probe_drops calls per design call (#107); 0: no probe tool
     probe_drops: int = 30            # poses per probe, the aim included (#107)
     screen_max_maps: int = 3         # of a round's candidates, at most this many get a full score (#108)
@@ -60,7 +61,8 @@ class LoopConfig:
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, int) or v < 1:
                 raise ValueError(f"{name} must be an integer >= 1, got {v!r}")
-        for name in ("budget_usd", "max_minutes", "design_budget_usd", "critic_budget_usd", "tune_seconds"):
+        for name in ("budget_usd", "max_minutes", "design_budget_usd", "critic_budget_usd", "tune_seconds",
+                     "message_seconds"):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
                 raise ValueError(f"{name} must be a finite number > 0, got {v!r}")

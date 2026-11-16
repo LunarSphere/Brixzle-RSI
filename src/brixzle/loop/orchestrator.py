@@ -410,12 +410,14 @@ HANDOVER = ("This is a fresh session: the loop's earlier session for this role r
 class _LazySession:
     """A persistent session (#125) opened on its first message, so it takes that message's call as its base."""
 
-    def __init__(self, runner, name, resume=None, messages=4):
+    def __init__(self, runner, name, resume=None, messages=4, message_seconds=600.0):
         self.runner, self.name, self.resume, self.inner, self.n = runner, name, resume, None, messages
+        self.message_seconds = message_seconds
 
     def send(self, call):
         if self.inner is None:
-            self.inner = self.runner.session(self.name, call, resume=self.resume, messages=self.n)
+            self.inner = self.runner.session(self.name, call, resume=self.resume, messages=self.n,
+                                             message_seconds=self.message_seconds)
         return self.inner.send(call)
 
     @property
@@ -461,7 +463,8 @@ class Sessions:
             s = None
         if s is None:
             s = self.open[name] = _LazySession(runner, name, resume=self.saved.pop(name, None),
-                                               messages=self.cfg.session_messages)
+                                               messages=self.cfg.session_messages,
+                                               message_seconds=self.cfg.message_seconds)
         return s, preface
 
     def rename(self, old, new):

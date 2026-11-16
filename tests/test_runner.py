@@ -324,3 +324,65 @@ def test_a_session_s_sdk_budget_covers_all_its_messages(tmp_path):
     s.close()
     assert FakeClient.made[0].opts["max_budget_usd"] == 6.0
 
+
+
+# --- per-message limits (#139) ---
+
+
+class LongClient(FakeClient):
+    """Keeps taking turns until interrupted (as the explore calls of gate2-20261116-mean, 50 to 55 turns)."""
+
+    def __init__(self, opts):
+        super().__init__(opts)
+        self.interrupted = False
+
+    async def interrupt(self):
+        self.interrupted = True
+
+    async def receive_response(self):
+        for k in range(200):
+            if self.interrupted:
+                break
+            yield AssistantMessage(100 * (k + 1))
+        yield ResultMessage(0)
+
+
+def test_a_message_past_its_turns_is_interrupted_and_still_recorded(tmp_path):
+    LongClient.made = []
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 9.0)
+    s = RN.ClaudeSession("m", led, "designer", _call(max_turns=25), environ={"ANTHROPIC_API_KEY": "k"},
+                         client_factory=LongClient, message_seconds=600)
+    r = s.send(_call(max_turns=25))
+    s.close()
+    assert r.interrupted is True and "25 turns" in r.interrupt_reason
+    assert len(led.rows()) == 1 and led.rows()[0]["interrupted"] is True
+
+
+def test_a_message_past_its_time_is_interrupted(tmp_path):
+    import asyncio
+
+    class SlowClient(LongClient):
+        async def receive_response(self):
+            for k in range(200):
+                if self.interrupted:
+                    break
+                await asyncio.sleep(0.02)
+                yield AssistantMessage(100)
+            yield ResultMessage(0)
+
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 9.0)
+    s = RN.ClaudeSession("m", led, "designer", _call(max_turns=1000), environ={"ANTHROPIC_API_KEY": "k"},
+                         client_factory=SlowClient, message_seconds=0.2)
+    r = s.send(_call(max_turns=1000))
+    s.close()
+    assert r.interrupted is True and "s" in r.interrupt_reason
+
+
+def test_a_message_within_its_limits_is_not_interrupted(tmp_path):
+    FakeClient.made.clear()
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 9.0)
+    s = RN.ClaudeSession("m", led, "designer", _call(max_turns=25), environ={"ANTHROPIC_API_KEY": "k"},
+                         client_factory=FakeClient)
+    r = s.send(_call(max_turns=25))
+    s.close()
+    assert r.interrupted is False
