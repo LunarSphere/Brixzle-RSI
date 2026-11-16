@@ -196,7 +196,7 @@ def _assemble(family: Family, p, structure, cfg: T.TrialConfig, seed=0, stop_on_
     owner = T._brick_geoms(model, info)
     rng = np.random.default_rng(seed)
     jitter = np.random.default_rng([seed, 98])  # its own stream, so the error samples do not change
-    stages, placed = [], []
+    stages, placed, refs = [], [], []
     status = 'complete'
     for j, b in enumerate(order):
         before = [body_pose(data, info, i) for i in range(j)]
@@ -214,17 +214,24 @@ def _assemble(family: Family, p, structure, cfg: T.TrialConfig, seed=0, stop_on_
         m = T.run_until_settled(model, data, info, j, cfg.tolerance, owner, watch=range(j), frames=record)
         err, angle = T.pose_error(family, p, data, info, j, b, ref)
         outcome = T.classify(lat, err, angle, cfg.tolerance, m['floor'])
-        moved, sag = 0., 0.
+        moved, sag, off = 0., 0., []
         for i, prev in enumerate(placed):
             pos_i, quat_i = body_pose(data, info, i)
             turn = math.degrees((T._rot(before[i][1]).inv()*T._rot(quat_i)).magnitude())
             moved = max(moved, float(np.linalg.norm(pos_i - before[i][0])), turn*lat.U_mm*math.pi/180)
             sag = max(sag, float(np.linalg.norm(T.pose_error(family, p, data, info, i, prev)[0])))
-        collapsed = moved > cfg.tolerance.drift or sag > lat.H0_mm/2 or m['floor']
+            # Still seated on its supporter, as that supporter now stands (#135)?
+            e_i, a_i = T.pose_error(family, p, data, info, i, prev, refs[i])
+            if T.classify(lat, e_i, a_i, cfg.tolerance, False) != 'seated':
+                off.append(brick_name(prev))
+        # A build collapses when a placed brick leaves its seat or a brick touches the floor (#135).
+        # Sag and stage motion are reported, not judged: a cantilever that droops but holds stands.
+        collapsed = bool(off) or m['floor']
         stages.append({'brick': brick_name(b), 'part': parts[j], 'sample': sample, **m, 'outcome': outcome,
                        'err_mm': err.tolist(), 'angle_deg': angle,
-                       'stage_motion_mm': moved, 'sag_mm': sag, 'collapsed': bool(collapsed)})
+                       'stage_motion_mm': moved, 'sag_mm': sag, 'off_seat': off, 'collapsed': bool(collapsed)})
         placed.append(b)
+        refs.append(ref)
         if collapsed:
             status = 'collapse'
             break
@@ -243,9 +250,10 @@ def assemble(family: Family, p, structure, cfg: T.TrialConfig, seed=0, stop_on_f
              jitter_mm=0.0):
     """Place bricks in planned order with sampled errors; detect failures and collapse.
 
-    A new brick is judged against its seat on its actual supporter. Collapse is
-    motion of already placed bricks while the new one settles (beyond
-    ``tolerance.drift``), floor contact, or cumulative sag beyond half a course.
+    A new brick is judged against its seat on its actual supporter. Collapse is a placed brick
+    leaving its seat on its supporter (judged against the supporter's actual pose), or floor
+    contact (#135; before, any stage motion beyond ``tolerance.drift`` or cumulative sag beyond half
+    a course also counted). Sag and stage motion are reported.
     ``record`` optionally receives qpos frames for every stage. ``jitter_mm`` moves each release by a
     seeded uniform offset in X and Y within that bound (0: none). Returns the result dict:
     structure, status, placed, total, stable_bricks, max_sag_mm, stages and seconds.

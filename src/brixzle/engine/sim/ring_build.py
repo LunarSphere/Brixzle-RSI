@@ -82,7 +82,7 @@ def build_ring(family, p, n=6, courses=2, cfg=None, runs="runs", seed=0, record=
         keep["model"] = model
     owner = T._brick_geoms(model, info)
     rng = np.random.default_rng(seed)
-    where, stages, status = {}, [], "complete"
+    where, stages, status, refs = {}, [], "complete", []
     for j, b in enumerate(order):
         before = [body_pose(data, info, i) for i in range(j)]
         sup = [where[(b.course - 1, c)] for c in b.cells if (b.course - 1, c) in where]
@@ -98,15 +98,24 @@ def build_ring(family, p, n=6, courses=2, cfg=None, runs="runs", seed=0, record=
         err = _rot(equat).inv().apply(apos - epos)        # in the brick frame
         angle = math.degrees((_rot(equat).inv() * _rot(aquat)).magnitude())
         outcome = T.classify(lat, err, angle, cfg.tolerance, m["floor"])
-        moved, sag = 0., 0.
+        moved, sag, off = 0., 0., []
         for i in range(j):
             pi, qi = body_pose(data, info, i)
             turn = math.degrees((_rot(before[i][1]).inv() * _rot(qi)).magnitude())
             moved = max(moved, float(np.linalg.norm(pi - before[i][0])), turn * lat.U_mm * math.pi / 180)
             sag = max(sag, float(np.linalg.norm(pi - np.asarray(order[i].pos_mm))))
-        collapsed = moved > cfg.tolerance.drift or sag > lat.H0_mm / 2 or m["floor"]
+            # Still seated on its supporter, as that supporter now stands (#135)?
+            ep, eq = _expected(data, info, order, i, refs[i])
+            e_i = _rot(eq).inv().apply(pi - ep)
+            a_i = math.degrees((_rot(eq).inv() * _rot(qi)).magnitude())
+            if T.classify(lat, e_i, a_i, cfg.tolerance, False) != "seated":
+                off.append(order[i].name)
+        # Collapse: a placed brick leaves its seat or a brick touches the floor (#135); sag is reported.
+        collapsed = bool(off) or m["floor"]
         stages.append({"brick": b.name, "part": b.part, **m, "outcome": outcome, "err_mm": err.tolist(),
-                       "angle_deg": angle, "stage_motion_mm": moved, "sag_mm": sag, "collapsed": bool(collapsed)})
+                       "angle_deg": angle, "stage_motion_mm": moved, "sag_mm": sag, "off_seat": off,
+                       "collapsed": bool(collapsed)})
+        refs.append(ref)
         for c in b.cells:
             where[(b.course, c)] = j
         if collapsed:

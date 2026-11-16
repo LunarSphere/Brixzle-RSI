@@ -427,3 +427,13 @@ A correction to #125. The SDK reports a session's cost as its running total, not
 - Repair iterations no longer count against patience: `long-20261116-mean` stopped on patience after its two (starved) repairs, at 21.3 min of its 60.
 - `long-20261116-mean`'s explore round found the best capture so far, the V-plate brick CP3: Z +0.939 / +0.466 / +0.287 against A/B's +0.506 / +0.139 / +0.045 (simulated, uncalibrated contact). It failed the structure gate and the ring (the closer K2 jammed, 7 of 16).
 
+## A build collapses only when a brick leaves its seat or falls (issue #135)
+
+The maintainer chose this on 2026-11-16, after lab builds of long overhangs that droop but hold. Before, a build also "collapsed" when any placed brick moved more than 2 mm in one stage or the cumulative sag passed half a course; in the sim cantilevers sag a few millimetres per step (soft, uncalibrated contacts), so standing builds failed. Now a placed brick must stay seated on its supporter, judged against the supporter's actual pose with the seat tolerances, and no brick may touch the floor; sag and stage motion are reported (`off_seat`, `sag_mm`, `max_sag_mm`). The same rule in the ring build.
+
+Re-runs (simulated, uncalibrated contact; ideal placement, one build each):
+
+- A/B staircase overhang, the drop aimed at the brick below (`track_supporter`): 10 steps, sag 41.5 mm (before: "collapse" at step 6 on sag 8.2 mm alone). The maintainer's back-first corbel (a brick behind before each reaching-out brick): reaches voxel 9, 18 of 24 stable, sag 25.2 mm.
+- Aimed at the ideal lattice, as the gate aims, A/B still jams at step 5 in both builds: on a sagging cantilever that aim misses the seat. That aim, not the collapse rule, now limits the gate's overhang.
+- Gate re-runs: A/B passes, overhang 5 (`runs/gate-20261116T020315496492Z-ab`); the `hold-20261116-mean` CP2 brick: tower 5/5, wall 5/5, overhang 6, bridge 0/5 on a real collapse (`runs/gate-20261116T020325713203Z-rsi_hold_20261116_mean_i01_c2`).
+

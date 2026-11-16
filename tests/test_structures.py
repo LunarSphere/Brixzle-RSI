@@ -141,3 +141,33 @@ def test_a_push_test_pushes_the_top_of_an_ideal_build():
     cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
     r = A.push_test(AB, AB.defaults, S.tower(2), cfg, rate=20.0, limit=3.0)
     assert r["status"] in ("moved", "held") and 0.0 < r["break_force_N"] <= 3.0
+
+
+# --- the collapse rule (#135) ---
+
+
+def test_a_sagging_overhang_whose_bricks_stay_seated_is_not_a_collapse():
+    """A/B's staircase, aimed at the brick below: it used to 'collapse' at b6_6 on sag alone (8.2 mm >
+    half a course) with every brick seated. Simulated, uncalibrated contact."""
+    from brixzle.engine import structures as S
+    from brixzle.engine.sim import assemble as A, trials as T
+    from brixzle.families.ab.family import FAMILY as AB
+
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True, track_supporter=True))
+    r = A.assemble(AB, AB.defaults, S.overhang(7, 1), cfg, seed=0)
+    by = {s["brick"]: s for s in r["stages"]}
+    assert by["b6_6"]["outcome"] == "seated" and not by["b6_6"]["collapsed"]
+    assert by["b6_6"]["sag_mm"] > AB.lattice(AB.defaults).H0_mm / 2  # it sags past the old limit
+    assert r["max_sag_mm"] == max(s["sag_mm"] for s in r["stages"])
+
+
+def test_a_brick_that_falls_is_still_a_collapse():
+    from pathlib import Path
+
+    from brixzle.agents import check_family as CF
+    from brixzle.engine import structures as S
+    from brixzle.engine.sim import assemble as A, trials as T
+
+    yf = CF.load_family(Path(__file__).parent / "fixtures", "yfunnel")
+    r = A.assemble(yf, yf.defaults, S.overhang(2, 1), T.TrialConfig(error=T.ErrorModel(ideal=True)), seed=0)
+    assert r["status"] == "collapse" and r["stages"][-1]["outcome"] == "fell"
