@@ -283,3 +283,18 @@ def test_the_probe_tool_returns_counts_and_only_the_drops_that_did_not_seat(tmp_
     out = json.loads(tool.handler({}))
     assert len(out["rows"]) == 5 and all(r["outcome"] != "seated" for r in out["rows"])
     assert out["rows_seated_omitted"] == 25 and out["outcomes"] == {"seated": 25, "jammed": 5}
+
+
+# --- the half-supported step (#133) ---
+
+
+def test_the_check_reports_whether_the_brick_holds_a_half_supported_brick(tmp_path):
+    from conftest import cached_check
+
+    out = cached_check(Path(__file__).parent / "fixtures", "yfunnel")
+    assert out["half_supported"]["passed"] is False and "b1_1" in json.dumps(out["half_supported"])
+
+
+def test_the_principles_and_the_prompt_name_capture_and_hold():
+    assert any("hold" in p["title"].lower() and "R4" in p["text"] for p in DA.principles())
+    assert "half supported" in DA.system_prompt()

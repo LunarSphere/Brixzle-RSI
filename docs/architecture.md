@@ -104,6 +104,12 @@ Issue #126 (maintainer's choices, 2026-11-15). In `overhaul2-20261114-mean` the 
 
 **Y capture near the aim.** Reports and the critic give `y_capture_near_mm` beside `y_capture_mm`: the widest unbroken seated run in Y over the X-Y slice's columns within one X cell of the aim. A/B has a jam stripe in the X = 0 column, so `y_capture_mm` reads ±4 mm where the columns beside it seat to about ±8 mm.
 
+### The half-supported step
+
+Issue #133. Every new concept that beat A/B on capture failed the structure gate at the first brick that sits half over an edge: the wall's end brick on course 2 (`b2_0`) and the first step of the bridge and the overhang (`b1_1`). Deep, smooth V nests centre well but do not hook (R4), and every scored drop lands a brick fully supported, so only the gate found it. Examples (simulated, uncalibrated contact): `long-20261116-mean` CP3, Z mean +0.939, tower 5/5, wall, bridge and overhang 0/5; `sessions-20261115-mean` CP1, +0.848, the same.
+
+`structure_gate.step_check` builds a one-step overhang each way (`structures.overhang(2, ±1)`), once, ideal placement: about 1.5 to 4 s. It is reported inside the design call (`check_family`: `half_supported`, not part of `ok`), recorded by the screen for each candidate, and passed to a repair with the gate's failures. A/B holds both ways; the `long-20261116-mean` CP3 brick jams 5.9 mm and 3.6 mm off its seat. Capture principle CP7, "capture and hold", asks for a hook or key with the capture surface.
+
 ### Cheap screen of a round's candidates
 
 Issue #108. A full score costs about 3 to 5 minutes, so when a round has several candidates (#106) they are screened first, side by side, each in its own process (`engine/screen.py`, `Loop.screen_round`): the quick check (40 drops along X, the candidate's pass/fail filter) and 20 seeded drops on the target box's X-Y disc. The screen score is (S − J) / N over both, the form of Z.

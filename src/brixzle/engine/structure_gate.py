@@ -126,6 +126,45 @@ def run_gate(family, p, settings: GateSettings = GateSettings(), runs="runs", se
     return {**out, "run": str(run), "repeat_results": results}
 
 
+def step_check(family, p):
+    """The half-supported step (#133): a one-step overhang each way, once, ideal placement. In every
+    structure but the tower some brick sits half over an edge (the wall's end brick, the first step
+    of the bridge and the overhang); a brick that cannot hold one cannot build them. About 1.5 to 4 s.
+    {'passed', 'steps': {'+x' | '-x': {'status', 'brick', 'outcome', 'err_mm'}}, 'seconds'}."""
+    t0 = time.time()
+    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    steps = {}
+    for key, d in (("+x", 1), ("-x", -1)):
+        try:
+            r = A.assemble(family, p, S.overhang(2, d, family.lattice(p).span_voxels), cfg, seed=0)
+        except ValueError as e:  # an unsupported span, or no clear insertion path
+            steps[key] = {"status": "error", "brick": None, "outcome": None, "err_mm": None, "error": str(e)[:300]}
+            continue
+        last = r["stages"][-1] if r["stages"] else {}
+        failed = r["status"] != "complete"
+        steps[key] = {"status": r["status"], "brick": last.get("brick") if failed else None,
+                      "outcome": last.get("outcome") if failed else "seated",
+                      "err_mm": [round(float(v), 2) for v in last.get("err_mm", [])] if failed else None}
+    return {"passed": all(s["status"] == "complete" for s in steps.values()), "steps": steps,
+            "seconds": round(time.time() - t0, 2), "label": LABEL}
+
+
+def step_text(step):
+    """The step check in one line, for the agents."""
+    if step is None:
+        return "half-supported step: not checked"
+    parts = []
+    for k, st in step["steps"].items():
+        if st["status"] == "complete":
+            parts.append(f"{k}: holds")
+        elif st.get("error"):
+            parts.append(f"{k}: {st['error']}")
+        else:
+            parts.append(f"{k}: {st['brick']} {st['outcome']}, rest error {st['err_mm']} mm")
+    return ("half-supported step (a brick half over an edge, as the wall's end and the first step of the bridge "
+            "and the overhang): " + ("holds both ways" if step["passed"] else "; ".join(parts)))
+
+
 def write_gate(result, repeat_results, runs="runs"):
     """Write ``runs/gate-<UTC>-<family>/gate.json`` (the verdict) and one ``builds-<name>.json`` per
     structure (every repeat, in full); never reuses a directory. Finite numbers only."""

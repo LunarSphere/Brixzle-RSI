@@ -63,6 +63,12 @@ def screen(family, p, box, seed=0, n_x=QC.N_DROPS, n_xy=N_XY, check=None):
     out["check"] = {"passed": bool(x["passed"]), "seated": x["seated"], "dropped": x["dropped"], "outcomes": x["outcomes"],
                     "need": x.get("need", need)}
     out["check_full"] = x  # the whole quick check, for the full map's ranges (#106)
+    from brixzle.engine import structure_gate as SG
+
+    try:  # the half-supported step (#133): recorded and shown, not a filter
+        out["step"] = SG.step_check(family, p)
+    except Exception as e:  # noqa: BLE001
+        out["step"] = {"passed": False, "error": f"{type(e).__name__}: {e}"[:300]}
     out["label"] = LABEL
     out["seconds"] = round(time.time() - t0, 2)
     return out

@@ -50,3 +50,8 @@ def test_screens_run_side_by_side_in_subprocesses(tmp_path):
     same = lambda r: {k: v for k, v in r.items() if k not in ("seconds", "check_full")}  # noqa: E731
     assert same(one) == same(out["two"]) and one["check_full"]["drops"] == out["two"]["check_full"]["drops"]
     assert "error" in out["bad"]
+
+
+def test_the_screen_records_the_half_supported_step(tmp_path):
+    out = SC.screen_many([("yf", FIXTURES, "yfunnel")], "mean", seed=0, n_x=4, n_xy=4, workers=1)
+    assert out["yf"]["step"]["passed"] is False
