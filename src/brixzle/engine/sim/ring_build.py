@@ -63,7 +63,7 @@ def _result(family, p, n, courses, cfg, seed, status, stages, total, t0):
             "label": LABEL}
 
 
-def build_ring(family, p, n=6, courses=2, cfg=None, runs="runs", seed=0, record=None):
+def build_ring(family, p, n=6, courses=2, cfg=None, runs="runs", seed=0, record=None, keep=None):
     """Build the kit's n x n ring of ``courses`` courses; returns the result with its run directory
     ('run'). Status: 'complete', 'placement_<outcome>', 'collapse' or 'no_ring_kit'."""
     t0 = time.time()
@@ -78,6 +78,8 @@ def build_ring(family, p, n=6, courses=2, cfg=None, runs="runs", seed=0, record=
     model, _, info = build_scene(family, p, bodies, [], len(order), cfg.physics, visual=record is not None,
                                  body_parts=parts, static=family.ring.base(p, n))
     data = mujoco.MjData(model)
+    if keep is not None:  # the scene, for pictures of the build (#129)
+        keep["model"] = model
     owner = T._brick_geoms(model, info)
     rng = np.random.default_rng(seed)
     where, stages, status = {}, [], "complete"
