@@ -47,6 +47,12 @@ def test_screens_run_side_by_side_in_subprocesses(tmp_path):
     # The X part stops early once the quick check has failed (yfunnel fails it); the X-Y part always runs.
     one = out["one"]
     assert one["xy"]["N"] == 4 and one["N"] == one["x"]["N"] + 4 and one["check"]["passed"] is False
-    same = lambda r: {k: v for k, v in r.items() if k not in ("seconds", "check_full")}  # noqa: E731
+    same = lambda r: {k: v for k, v in r.items() if k not in ("seconds", "check_full", "step")}  # noqa: E731
     assert same(one) == same(out["two"]) and one["check_full"]["drops"] == out["two"]["check_full"]["drops"]
+    assert one["step"]["steps"] == out["two"]["step"]["steps"]  # timings differ; outcomes do not
     assert "error" in out["bad"]
+
+
+def test_the_screen_records_the_half_supported_step(tmp_path):
+    out = SC.screen_many([("yf", FIXTURES, "yfunnel")], "mean", seed=0, n_x=4, n_xy=4, workers=1)
+    assert out["yf"]["step"]["passed"] is False

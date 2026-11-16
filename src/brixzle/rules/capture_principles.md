@@ -45,3 +45,12 @@ turn pieces room (DR7, DR11).
 A long smooth lead-in centres the brick before any hook or tooth engages, and the hook engages only
 in the last few millimetres, along a single stroke. Targets: jams where the interlock catches early,
 off centre. Costs: release height and a longer stroke (DR9, DR10).
+
+## CP7. Capture and hold
+
+A V or a funnel captures well but does not hook: a brick that sits half over an edge, as the end of a
+running-bond wall and every step of a bridge or an overhang do, tips off unless something holds its free
+end down. Pair the capture surface with a hook or key that a straight lift cannot free (R4), engaging
+in the last part of the stroke, so the brick both centres and holds when half supported. Targets: the
+structure gate's wall, bridge and overhang. Costs: a hook must not catch early, off centre (DR2, DR9).
+

@@ -129,6 +129,10 @@ Rules:
   on the course below can only centre a brick whose centre of mass is still over that course, so Y capture is at
   most about D / 2 (12.5 mm at A/B's D = 25 mm). To capture more you may trade depth, a wider lower course or mass,
   within R10's 35 g for brick plus gripper.
+- Capture is not enough: in every structure but the tower some brick sits half supported, half over an edge
+  (the end of a running-bond wall, the first step of a bridge or an overhang), and a brick with only a V or a
+  funnel tips off there. check_family reports "half_supported": a one-step overhang each way. If a step does not
+  hold, add a hook or key that holds the free end (R4); the structure gate will fail otherwise (#133).
 - X and Y guides that engage at once can jam each other. A guide in Y must carry the X interlock across it (a shear of
   the section does), or engage only after X has seated. Simulated: wings with no X ridges on them left every
   Y-offset drop 3 mm off in X; skirts that met the brick far below its centre of mass rolled it 13 degrees (tests/fixtures/yfunnel/family.py).

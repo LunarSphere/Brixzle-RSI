@@ -100,6 +100,13 @@ def check(root, module, samples=2, reference=None, share=None):
             out["error"] = f"the aim drop raised {type(e).__name__}: {e}"
             return out
     if not out["violations"] and not out["error"]:
+        try:  # reported, not part of ok (#133): the structure gate judges it
+            from brixzle.engine import structure_gate as SG
+
+            out["half_supported"] = SG.step_check(fam, fam.defaults)
+            out["half_supported"]["text"] = SG.step_text(out["half_supported"])
+        except Exception as e:  # noqa: BLE001 - reported to the agent
+            out["half_supported"] = {"passed": False, "error": f"{type(e).__name__}: {e}"[:300]}
         out["ring"] = ring_report(fam)  # reported, not part of ok: the loop's ring build judges it (#89)
     if reference and not out["violations"] and not out["error"]:
         from brixzle.families import registry

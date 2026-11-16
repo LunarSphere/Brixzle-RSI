@@ -1077,6 +1077,8 @@ class Loop:
             rec["seconds"]["gate"] = rec["seconds"].get("gate", 0.0) + (time.time() - t)
             c["gate"] = gate_record(gate, gate_dir)
             c["gate_failures"] = None if gate["passed"] else SG.failures_for_agent(gate)
+            if c["gate_failures"] is not None and c.get("step"):
+                c["gate_failures"]["half_supported"] = SG.step_text(c["step"])  # what to fix first (#133)
             c["overhang_n"] = gate["overhang_n"]
             c.update(z=crec["z"], runs={**crec["runs"], "gate": str(gate_dir)})
             scored.append((c, fam, crec, measured, gate, gate_dir, check))
@@ -1268,6 +1270,7 @@ class Loop:
             else:
                 c["quick_check"] = {**r["check"], "run": r.get("check_run")}
                 c["check_full"] = r.get("check_full")  # the map reads its seed and drops
+                c["step"] = r.get("step")  # the half-supported step (#133)
                 passing[c["id"]] = rec["screen"][c["id"]]
         est = score_s or self.score_estimate()
         left = cfg.max_minutes * 60 - (time.time() - getattr(self, "_t0", time.time())) - (cfg.tune_seconds if cfg.tune else 0.0)
