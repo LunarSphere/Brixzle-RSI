@@ -23,6 +23,7 @@ class Structure:
     name: str
     bricks: list
     bases: list = field(default_factory=list)  # [(v0, v1[, direction])] voxel ranges, half-open
+    ordered: bool = False  # place the bricks in this order (#137), not assembly_order's greedy one
 
     def course(self, k):
         return [b for b in self.bricks if b.course == k]
@@ -59,6 +60,17 @@ def overhang(n, direction=1, span=SPAN):
     else:
         bricks, base = [Placement(k, -k, -1) for k in range(n)], (0, 3, -1)
     return Structure(f'overhang{"+" if direction > 0 else "-"}{n}', bricks, bases=[base])
+
+
+def corbel(n, span=SPAN):
+    """Back-first overhang (#137; the maintainer's lab builds): in course k a back brick at voxel k-2,
+    then the reaching-out brick at voxel k. Each back brick spans the joint below and holds the last
+    reaching-out brick's tail down before the next one reaches past it. Placed in this order."""
+    _two_voxels(span, 'corbel')
+    bricks = []
+    for k in range(n):
+        bricks += [Placement(k, k - 2), Placement(k, k)]
+    return Structure(f'corbel{n}', bricks, bases=[(-3, 2)], ordered=True)
 
 
 def wall(width_bricks, height, span=SPAN):

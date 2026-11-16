@@ -152,6 +152,10 @@ def assembly_order(family: Family, p, structure: Structure):
     while remaining:
         ready = [b for b in remaining
                  if all(u in placed or u in bases for u in graph.predecessors(brick_name(b)))]
+        if getattr(structure, 'ordered', False):  # the structure's own order (#137), still checked
+            if remaining[0] not in ready:
+                raise ValueError(f'{brick_name(remaining[0])} comes before its supporters in the given order')
+            ready = [remaining[0]]
         # Fill each course from the side the stroke points to, so the approach side stays open;
         # fall back to any clear brick.
         ready.sort(key=lambda b: (b.course, np.sign(family.insertion_axis(p, b)[0])*-b.i0))

@@ -283,6 +283,10 @@ A family that varies along Y (any `Solid3D`, issue #105) gets steps 1 and 2 as u
 
 **Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
 
+### How the gate builds (#137)
+
+Every gate build aims each drop at its supporter's measured pose (`GateSettings.aim_at_supporter`, default on; the drone is assumed to place relative to the brick it builds on), and the overhang is built back-first, as the maintainer's lab builds: in course k a back brick at voxel k − 2, then the reaching-out brick at voxel k (`structures.corbel`, placed in that order). `overhang_n` is the number of reaching-out bricks seated from course 0 up (the majority over repeats). `overhang_build = "staircase"` and `aim_at_supporter = False` give the old gate. A/B's gate overhang went from 5 to 9 and its bridge from 3/5 to 5/5; the gate takes about 60 s for A/B, against about 27 s before.
+
 ### Ring build
 
 Issue #89. `engine/sim/ring_build.py` builds the ring a family's `RingKit` plans (see `docs/family-interface.md`), course by course, with the scene's bodies from `builders.ring_bodies` and the kit's base as static pieces. Each brick is released `release_lift_mm` above its seat, judged against its seat carried on the brick below, and the build stops at the first brick that does not seat or at a collapse (#81's test). A family with no kit gives `no_ring_kit`. `engine/ring_cells.py` ports aerial-assembly's ring (turn piece, corner straight, closer, the column check and the assembly order) as `kit_from_cell`. Output: `runs/ring-<UTC>-<family>/ring.json`, labelled "simulated, uncalibrated contact". `python -m brixzle.engine.sim.ring_build --family ab --courses 2`.

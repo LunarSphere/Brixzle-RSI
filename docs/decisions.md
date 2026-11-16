@@ -437,3 +437,12 @@ Re-runs (simulated, uncalibrated contact; ideal placement, one build each):
 - Aimed at the ideal lattice, as the gate aims, A/B still jams at step 5 in both builds: on a sagging cantilever that aim misses the seat. That aim, not the collapse rule, now limits the gate's overhang.
 - Gate re-runs: A/B passes, overhang 5 (`runs/gate-20261116T020315496492Z-ab`); the `hold-20261116-mean` CP2 brick: tower 5/5, wall 5/5, overhang 6, bridge 0/5 on a real collapse (`runs/gate-20261116T020325713203Z-rsi_hold_20261116_mean_i01_c2`).
 
+## The gate aims at the brick below and builds the overhang back-first (issue #137)
+
+The maintainer agreed on 2026-11-16. Assumption, recorded: the drone places relative to the brick it builds on, from a measured pose (`GateSettings.aim_at_supporter`, which can be switched off). The overhang is built as in the maintainer's lab: in each course a back brick first, then the reaching-out brick (`structures.corbel`, `overhang_build = "corbel"`); `overhang_n` counts the reaching-out bricks seated from course 0 up. Simulated, uncalibrated contact; 5 seeded builds each:
+
+- A/B: passes; overhang **9** (was 5), bridge 5/5 (was 3/5), wall 3/5 (was 4/5), tower 5/5 (`runs/gate-20261116T023830551790Z-ab`). The gate took 59.0 s, against about 27 s before: the corbel places 24 bricks.
+- `hold-20261116-mean` CP2: overhang 6, tower and wall 5/5, bridge 0/5 on a real collapse (`runs/gate-20261116T023845399697Z-rsi_hold_20261116_mean_i01_c2`).
+- Under the gate's conditions the back-first order cut sag by about 40 % (A/B 41.5 → 25.2 mm, CP2 16.9 → 10.2 mm) but did not add reach; aiming at the brick below took A/B from reach 4 to 9.
+- **A/B's bridge is borderline in the sim.** Its brick `b1_5` ends 0.7 to 1.2 mm off its seat against the 1 mm seat tolerance, so numerical noise decides it, as #98 found. With each drop aimed at the brick below it passed 5/5 on macOS arm64 but 1 of 3 on Linux x86_64 CI; with friction moved by ±5 × 10⁻⁵ it completed 12 of 15 builds, the jams all at −5 × 10⁻⁵. Aiming a brick on two supporters at the mean of their implied seats did not change that (12 of 15), so it was left out. The tests check the gate's verdict against its builds rather than requiring A/B's bridge to pass.
+

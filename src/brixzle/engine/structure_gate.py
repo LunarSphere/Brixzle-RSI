@@ -36,6 +36,8 @@ class GateSettings:
     tower: int = 3              # courses
     repeats: int = A.REPEATS    # seeded builds per structure (maintainer, 2026-11-13)
     jitter_mm: float = A.JITTER_MM
+    aim_at_supporter: bool = True     # drops aim at the supporter's measured pose (#137; maintainer, 2026-11-16)
+    overhang_build: str = "corbel"    # 'corbel': back-first, as the maintainer's lab builds (#137); 'staircase'
 
     def __post_init__(self):
         ints = {"overhang_floor": self.overhang_floor, "overhang_ask": self.overhang_ask,
@@ -48,6 +50,8 @@ class GateSettings:
         if (len(self.wall) != 2 or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 1
                                            for v in self.wall)):
             raise ValueError(f"wall must be (bricks wide, courses high), got {self.wall!r}")
+        if self.overhang_build not in ("corbel", "staircase"):
+            raise ValueError(f"overhang_build must be 'corbel' or 'staircase', got {self.overhang_build!r}")
         if not (isinstance(self.jitter_mm, (int, float)) and math.isfinite(self.jitter_mm) and self.jitter_mm >= 0):
             raise ValueError(f"jitter_mm must be finite and >= 0, got {self.jitter_mm!r}")
 
@@ -65,7 +69,8 @@ def _structures(family, p, settings, span):
     builders = {"tower": lambda: S.tower(settings.tower, span),
                 "wall": lambda: S.wall(*settings.wall, span),
                 "bridge": lambda: S.bridge(settings.bridge_arms, span),
-                "overhang": lambda: S.overhang(settings.overhang_ask, 1, span)}
+                "overhang": lambda: (S.corbel(settings.overhang_ask, span) if settings.overhang_build == "corbel"
+                                     else S.overhang(settings.overhang_ask, 1, span))}
     out, errors = {}, {}
     for name in NAMES:
         try:
@@ -75,6 +80,19 @@ def _structures(family, p, settings, span):
         except ValueError as e:
             errors[name] = str(e)
     return out, errors
+
+
+def _corbel_steps(build):
+    """Courses, from 0 up, whose reaching-out brick (b{k}_{k}) seated and nothing collapsed."""
+    ok = {st["brick"] for st in build["stages"] if st["outcome"] == "seated" and not st["collapsed"]}
+    k = 0
+    while f"b{k}_{k}" in ok:
+        k += 1
+    return k
+
+
+def _cfg(settings):
+    return T.TrialConfig(error=T.ErrorModel(ideal=True, track_supporter=settings.aim_at_supporter))
 
 
 def _summary(name, res, settings):
@@ -88,7 +106,13 @@ def _summary(name, res, settings):
            "max_sag_mm": [b["max_sag_mm"] for b in builds], "failed_brick": failed,
            "seconds": [b["seconds"] for b in builds], "error": None}
     if name == "overhang":
-        n = majority_count(res["stable_bricks"])
+        if settings.overhang_build == "corbel":
+            # The reaching-out bricks seated from course 0 up: the overhang's length in steps (#137).
+            steps = [_corbel_steps(b) for b in builds]
+            n = majority_count(steps)
+            out["steps"] = steps
+        else:
+            n = majority_count(res["stable_bricks"])
         out.update(passed=n >= settings.overhang_floor, overhang_n=n)
     return out
 
@@ -101,7 +125,7 @@ def run_gate(family, p, settings: GateSettings = GateSettings(), runs="runs", se
     t0 = time.time()
     span = family.lattice(p).span_voxels
     structures, errors = _structures(family, p, settings, span)
-    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    cfg = _cfg(settings)
     results = {}
     if structures:
         by_name = A.repeat_structures(family, p, list(structures.values()), cfg, n=settings.repeats, seed=seed,
@@ -126,13 +150,13 @@ def run_gate(family, p, settings: GateSettings = GateSettings(), runs="runs", se
     return {**out, "run": str(run), "repeat_results": results}
 
 
-def step_check(family, p):
+def step_check(family, p, settings=None):
     """The half-supported step (#133): a one-step overhang each way, once, ideal placement. In every
     structure but the tower some brick sits half over an edge (the wall's end brick, the first step
     of the bridge and the overhang); a brick that cannot hold one cannot build them. About 1.5 to 4 s.
     {'passed', 'steps': {'+x' | '-x': {'status', 'brick', 'outcome', 'err_mm'}}, 'seconds'}."""
     t0 = time.time()
-    cfg = T.TrialConfig(error=T.ErrorModel(ideal=True))
+    cfg = _cfg(settings or GateSettings())
     steps = {}
     for key, d in (("+x", 1), ("-x", -1)):
         try:
