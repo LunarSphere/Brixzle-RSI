@@ -290,9 +290,10 @@ def stop_reason(state, cfg: LoopConfig, remaining_usd, elapsed_s, iteration_s=No
     if len(designs) >= cfg.max_iterations:
         return f"{cfg.max_iterations} iterations run"
     last_kept = max((i["iteration"] for i in its if i.get("decision") in ("kept", BASELINE)), default=0)
-    # Iterations spent developing a concept (#126) do not count against patience, and nothing stops
+    # Iterations spent developing a concept (#126) or repairing a provisional design (#131) do not count
+    # against patience, and nothing stops
     # the run while a provisional design (#109) or a concept still has iterations to come.
-    idle = [i for i in its if i["iteration"] > last_kept and i.get("mode") != "concept"]
+    idle = [i for i in its if i["iteration"] > last_kept and i.get("mode") not in ("concept", "repair")]
     if (designs and len(idle) >= cfg.patience and not state.get("provisional")
             and not (state.get("concept") or {}).get("runs_left")):
         return f"no kept design for {cfg.patience} iterations"
@@ -409,12 +410,12 @@ HANDOVER = ("This is a fresh session: the loop's earlier session for this role r
 class _LazySession:
     """A persistent session (#125) opened on its first message, so it takes that message's call as its base."""
 
-    def __init__(self, runner, name, resume=None):
-        self.runner, self.name, self.resume, self.inner = runner, name, resume, None
+    def __init__(self, runner, name, resume=None, messages=4):
+        self.runner, self.name, self.resume, self.inner, self.n = runner, name, resume, None, messages
 
     def send(self, call):
         if self.inner is None:
-            self.inner = self.runner.session(self.name, call, resume=self.resume)
+            self.inner = self.runner.session(self.name, call, resume=self.resume, messages=self.n)
         return self.inner.send(call)
 
     @property
@@ -459,7 +460,8 @@ class Sessions:
                 rec.setdefault("sessions", {})[name] = {"replaced": True, "why": why}
             s = None
         if s is None:
-            s = self.open[name] = _LazySession(runner, name, resume=self.saved.pop(name, None))
+            s = self.open[name] = _LazySession(runner, name, resume=self.saved.pop(name, None),
+                                               messages=self.cfg.session_messages)
         return s, preface
 
     def rename(self, old, new):

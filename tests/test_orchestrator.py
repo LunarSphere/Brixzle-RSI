@@ -1373,3 +1373,13 @@ def test_no_explore_round_starts_when_it_would_not_fit_the_clock(tmp_path, intak
     loop._t0 = _time.time() - 20 * 60  # an attempt (420 s), a full score (240 s) and the tune (420 s) pass 30 min
     rec = loop.iterate(1)
     assert rec["mode"] == "explore" and rec.get("clock_stop") and "wall-clock" in rec["reason"] and not runner.calls
+
+
+def test_repair_iterations_do_not_count_against_patience():
+    cfg = LoopConfig(patience=2, ladder=False, concepts=1)
+    its = [{"iteration": 0, "decision": "baseline"}, {"iteration": 1, "decision": "provisional", "mode": "explore"},
+           {"iteration": 2, "decision": "no_design", "mode": "repair"},
+           {"iteration": 3, "decision": "rejected", "mode": "repair"}]
+    state = {"best": _best(0.5, 0.2, 0.1), "iterations": its}
+    assert OR.stop_reason(state, cfg, 5.0, 60.0) is None  # only the explore round counts: 1 of 2
+
