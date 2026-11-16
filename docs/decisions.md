@@ -450,3 +450,7 @@ The maintainer agreed on 2026-11-16. Assumption, recorded: the drone places rela
 
 In `gate2-20261116-mean` (`--budget-usd 15 --max-minutes 60`; simulated, uncalibrated contact) the three Opus explore calls ran 55, 50 and 54 turns, about 20 min and $2.39, $3.45 and $4.24 each, past the 40-turn `design_max_turns`: the SDK's limits apply per session, and #131 gave a session the budget of all its messages. The clock check then estimated a design attempt at 20.5 min, and the provisional CP2 brick (Z +0.761 / +0.345 / +0.217 against A/B's +0.506 / +0.139 / +0.045; tower and wall 5/5, bridge 2/5, overhang 5) got no repair. The run took 40.3 min and $10.29. Now a session interrupts a message past its turns (25) or 600 s, and the design prompt states the budget.
 
+## Counting turns, and a wrap-up at the limit (issue #141)
+
+`limits-20261116-mean` (stopped): #139 counted every `AssistantMessage` event as a turn; one turn can be several events. All three explore calls were interrupted at "25 turns" when the SDK reported 17, 17 and 15, before writing `design_note.json`, and were refused as `no_concepts` ($3.76). Turns are now distinct message ids, and at the limit the design call gets a short wrap-up (save the note, keep the passing package, stop). The run's ledger shows $5.51; $1.50 of it is a reshape call stopped at 0 turns by the run's stop, charged its whole budget by the rule for a call with no reported cost.
+

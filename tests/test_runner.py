@@ -242,10 +242,11 @@ class ResultMessage:  # named like the SDK's, which the session reads by duck ty
         self.structured_output, self.errors, self.result = None, [], f"answer {k}"
 
 
-class AssistantMessage:  # one turn, with its own usage, as the SDK's
-    def __init__(self, cached):
+class AssistantMessage:  # one turn's event, with its own usage, as the SDK's
+    def __init__(self, cached, message_id=None):
         self.content, self.usage = [], {"input_tokens": 5, "cache_read_input_tokens": cached,
                                         "cache_creation_input_tokens": 20}
+        self.message_id = message_id
 
 
 class FakeClient:
@@ -386,3 +387,38 @@ def test_a_message_within_its_limits_is_not_interrupted(tmp_path):
     r = s.send(_call(max_turns=25))
     s.close()
     assert r.interrupted is False
+
+
+# --- turns as the SDK counts them, and a wrap-up at the limit (#141) ---
+
+
+class ThreeEventsPerTurn(LongClient):
+    """Each turn comes as three events (text and two tool calls) with one message id, as the SDK sends them."""
+
+    async def receive_response(self):
+        n = len(self.prompts)
+        if n > 1:  # the wrap-up message: one short turn
+            yield AssistantMessage(100, message_id="wrap")
+            yield ResultMessage(0)
+            return
+        for k in range(30):
+            if self.interrupted:
+                break
+            for _ in range(3):
+                yield AssistantMessage(100, message_id=f"turn-{k}")
+        yield ResultMessage(0)
+
+
+def test_turns_are_counted_by_message_id_and_a_call_at_its_limit_wraps_up(tmp_path):
+    FakeClient.made.clear()
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 9.0)
+    call = _call(max_turns=20, wrapup="You are at your limit: save design_note.json now and stop.")
+    s = RN.ClaudeSession("m", led, "designer", call, environ={"ANTHROPIC_API_KEY": "k"},
+                         client_factory=ThreeEventsPerTurn)
+    r = s.send(call)
+    s.close()
+    client = FakeClient.made[-1]
+    assert r.interrupted is True and "20 turns" in r.interrupt_reason  # 20 turns, not 7 (= 21 events / 3)
+    assert len(client.prompts) == 2 and "design_note.json" in client.prompts[1]
+    assert r.wrapped_up is True
+

@@ -90,6 +90,7 @@ class AgentCall:
     output_schema: dict | None = None  # JSON schema of a structured answer
     max_turns: int = 10
     effort: str | None = None
+    wrapup: str | None = None       # sent after an interrupt at the message's limit, so the agent can finish (#141)
     session: str | None = None      # the persistent session that answered it (#125), if any
     session_id: str | None = None
 
@@ -109,6 +110,7 @@ class AgentResult:
     context_tokens: int = 0        # the last turn's input, cached or not: a session's context size (#125)
     interrupted: bool = False      # stopped by the session's per-message limits (#139)
     interrupt_reason: str | None = None
+    wrapped_up: bool = False       # the call's wrap-up prompt was sent after the interrupt (#141)
 
 
 # --- the spend ledger ---
@@ -392,6 +394,8 @@ class ClaudeSession:
         self._loop = self._thread = self._queue = None
         self._token = False
 
+    WRAPUP_TURNS = 4  # the follow-up after an interrupt (#141)
+
     # --- the owner thread ---
 
     def _options(self, env):
@@ -443,9 +447,19 @@ class ClaudeSession:
                     item = await self._queue.get()
                     if item is None:
                         break
-                    prompt, fut, max_turns = item
+                    prompt, fut, max_turns, wrapup = item
                     try:
-                        fut.set_result(await self._ask(c, prompt, max_turns))
+                        out = await self._ask(c, prompt, max_turns)
+                        if out.interrupted and wrapup:
+                            # Let the agent leave its work in order (#141): one short follow-up.
+                            w = await self._ask(c, wrapup, self.WRAPUP_TURNS)
+                            out.text, out.wrapped_up = w.text or out.text, True
+                            out.cost_usd = w.cost_usd if w.cost_usd is not None else out.cost_usd  # a running total
+                            out.turns = (out.turns or 0) + (w.turns or 0)
+                            out.usage = w.usage or out.usage
+                            out.context_tokens = w.context_tokens or out.context_tokens
+                            out.structured = w.structured if w.structured is not None else out.structured
+                        fut.set_result(out)
                     except BaseException as e:  # noqa: BLE001 - handed to the caller
                         fut.set_exception(e)
         except BaseException as e:  # noqa: BLE001 - a failed connect is the first send's error
@@ -455,12 +469,18 @@ class ClaudeSession:
     async def _ask(self, c, prompt, max_turns=None):
         import time
 
-        out, texts, t0, turns = AgentResult(cost_usd=None), [], time.time(), 0
+        out, texts, t0, ids, anon = AgentResult(cost_usd=None), [], time.time(), set(), 0
         await c.query(prompt)
         async for msg in c.receive_response():
             kind = type(msg).__name__
             if kind == "AssistantMessage":
-                turns += 1
+                # One turn can come as several events (text and each tool call) with one message id (#141).
+                mid = getattr(msg, "message_id", None)
+                if mid is None:
+                    anon += 1
+                else:
+                    ids.add(mid)
+                turns = len(ids) + anon
                 if not out.interrupted:
                     why = (f"the message passed its {max_turns} turns" if max_turns and turns > max_turns else
                            f"the message passed its {self.message_seconds:g} s" if time.time() - t0 > self.message_seconds
@@ -508,7 +528,7 @@ class ClaudeSession:
             if self._loop is None:
                 self._start()
             fut = cf.Future()
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, (call.prompt, fut, call.max_turns))
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, (call.prompt, fut, call.max_turns, call.wrapup))
             result = fut.result()
             if result.is_error and result.errors and not result.interrupted:
                 raise RuntimeError("; ".join(map(str, result.errors)))
