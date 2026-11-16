@@ -297,9 +297,10 @@ class ClaudeRunner:
         of three calls side by side only $0.42)."""
         return min(call.max_budget_usd, self.ledger.remaining() + call.max_budget_usd)
 
-    def session(self, name, base: AgentCall, resume=None):
-        """A persistent session (#125) on this runner's model and ledger."""
-        return ClaudeSession(self.model, self.ledger, name, base, resume=resume, environ=self.environ)
+    def session(self, name, base: AgentCall, resume=None, messages=4):
+        """A persistent session (#125) on this runner's model and ledger, budgeted for ``messages``."""
+        return ClaudeSession(self.model, self.ledger, name, base, resume=resume, environ=self.environ,
+                             messages=messages)
 
     def run(self, call: AgentCall) -> AgentResult:
         self.ledger.reserve(call.max_budget_usd)
@@ -374,8 +375,10 @@ class ClaudeSession:
     with the session's name; the SDK reports cost per message. ``resume`` reopens a saved session."""
 
     def __init__(self, model, ledger: SpendLedger, name, base: AgentCall, resume=None, environ=None,
-                 client_factory=None):
+                 client_factory=None, messages=4):
         self.model, self.ledger, self.name, self.base = model, ledger, name, base
+        # The SDK's budget caps the whole session, and its cost is the session's running total (#131).
+        self.session_budget_usd, self.total_usd = base.max_budget_usd * max(1, int(messages)), 0.0
         self.environ, self.resume, self._factory = environ, resume, client_factory
         self.guard = ToolGuard(base.write_root, tuple(base.read_roots), tuple(base.tools))
         self.handlers = {t.name: t for t in base.mcp_tools}
@@ -387,6 +390,7 @@ class ClaudeSession:
 
     def _options(self, env):
         kw = option_kwargs(self.base, self.model, self.base.max_budget_usd, env)
+        kw["max_budget_usd"] = self.session_budget_usd
         if self.resume:
             kw["resume"] = self.resume
         if self._factory is not None:
@@ -495,10 +499,15 @@ class ClaudeSession:
                 raise RuntimeError("; ".join(map(str, result.errors)))
         except BaseException as e:
             err = f"{type(e).__name__}: {e}"
-            self.ledger.record(call.name, self.model, AgentResult(cost_usd=budget_stop_cost(err), is_error=True,
-                                                                  errors=[err]),
+            stop = budget_stop_cost(err)  # a running total too, if the SDK stopped the session on its budget
+            self.ledger.record(call.name, self.model,
+                               AgentResult(cost_usd=None if stop is None else max(0.0, stop - self.total_usd),
+                                           is_error=True, errors=[err]),
                                budget_usd=call.max_budget_usd, session=self.name)
             raise
+        if result.cost_usd is not None:  # the session's running total: keep this message's share (#131)
+            total = float(result.cost_usd)
+            result.cost_usd, self.total_usd = max(0.0, total - self.total_usd), total
         self.ledger.record(call.name, self.model, result, budget_usd=call.max_budget_usd, session=self.name)
         if result.api_key_source is not None:  # reported on a session's first message only
             check_source(result.api_key_source, auth_token=self._token)
@@ -560,7 +569,7 @@ class ScriptedRunner:
     def __init__(self, script, ledger: SpendLedger | None = None, model="scripted"):
         self.script, self.ledger, self.model, self.calls = list(script), ledger, model, []
 
-    def session(self, name, base, resume=None):
+    def session(self, name, base, resume=None, messages=4):
         return ScriptedSession(self, name, base, resume)
 
     def run(self, call: AgentCall) -> AgentResult:

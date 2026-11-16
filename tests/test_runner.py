@@ -288,7 +288,9 @@ def test_a_session_connects_once_answers_every_message_and_records_each_in_the_l
     # was replaced before its second message).
     assert s.context_tokens == 5 + 1000 + 20
     rows = led.rows()
-    assert [r["session"] for r in rows] == ["designer", "designer"] and [r["cost_usd"] for r in rows] == [0.01, 0.02]
+    # The SDK's cost is the session's running total (#131): $0.01 then $0.02 means $0.01 each.
+    assert [r["session"] for r in rows] == ["designer", "designer"] and [r["cost_usd"] for r in rows] == [0.01, 0.01]
+    assert (r1.cost_usd, r2.cost_usd) == (0.01, 0.01)
     assert rows[1]["usage"]["cache_read_input_tokens"] == 2000
 
 
@@ -309,3 +311,16 @@ def test_a_scripted_session_marks_its_calls_with_the_session():
     s.send(_call(prompt="again"))
     assert [c.session for c in runner.calls] == ["designer", "designer"] and s.messages == 2
     assert len({c.session_id for c in runner.calls}) == 1
+
+
+def test_a_session_s_sdk_budget_covers_all_its_messages(tmp_path):
+    """long-20261116-mean (#131): the $1.50 of one message capped the whole session, and its third
+    message was stopped after one turn."""
+    FakeClient.made.clear()
+    led = RN.SpendLedger(tmp_path / "spend.jsonl", 9.0)
+    s = RN.ClaudeSession("m", led, "designer", _call(max_budget_usd=1.5), environ={"ANTHROPIC_API_KEY": "k"},
+                         client_factory=FakeClient, messages=4)
+    s.send(_call(max_budget_usd=1.5))
+    s.close()
+    assert FakeClient.made[0].opts["max_budget_usd"] == 6.0
+

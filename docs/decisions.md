@@ -418,3 +418,12 @@ The maintainer chose the Agent SDK with the API key and Opus for every role (202
 - **Per message:** the Opus critic cost $0.24 (Sonnet's was about $0.08); explore calls $1.05 at 19 turns against $1.30–1.38 at 22–27 before (`concept-track-20261115-mean`).
 - **A bug in this issue's first version, fixed before merging:** a session's context was measured as the message's usage summed over its turns (1.57 million tokens for one 19-turn message), so the concept's session was replaced before its first repair, which then started without its memory. Context is now the last turn's input.
 
+## Session costs are running totals (issue #131)
+
+A correction to #125. The SDK reports a session's cost as its running total, not per message, and the budget given at connect caps the whole session. #125's 3-message Haiku test ($0.0021, $0.0028, $0.0030) was misread as per message. Found in `long-20261116-mean`: the design session's messages showed $1.124, $1.373 and $1.424 at 22, 5 and 1 turns; its third message stopped after one turn without writing `family.py`, because the session had used $1.42 of its $1.50.
+
+- `ClaudeSession` records each message's increment, and a session's SDK budget is one message's budget × `session_messages`. The ledger still holds one message's budget per message and the run's cap; the CLI no longer stops a single message at its own budget.
+- **True spend** of the three runs with sessions (ledger in brackets): `sessions-20261115-mean` $5.25 ($7.38), `clock-repair-20261115-mean` $3.99 ($4.18), `long-20261116-mean` $3.28 ($5.77).
+- Repair iterations no longer count against patience: `long-20261116-mean` stopped on patience after its two (starved) repairs, at 21.3 min of its 60.
+- `long-20261116-mean`'s explore round found the best capture so far, the V-plate brick CP3: Z +0.939 / +0.466 / +0.287 against A/B's +0.506 / +0.139 / +0.045 (simulated, uncalibrated contact). It failed the structure gate and the ring (the closer K2 jammed, 7 of 16).
+
