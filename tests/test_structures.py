@@ -97,9 +97,11 @@ def test_a_b_builds_a_bridge_and_a_wall_on_most_repeats(ab_repeats):
 
 
 def test_a_b_overhang_stops_before_twelve_on_every_repeat(ab_repeats):
-    r = ab_repeats["overhang+"]
+    from brixzle.engine import structure_gate as G
+
+    r = ab_repeats["overhang+"]  # the back-first corbel since #137: 12 courses, 24 bricks
     assert r["passed"] is False and r["complete"] == 0
-    assert all(b["total"] == 12 and 1 <= b["stable_bricks"] < 12 for b in r["builds"])
+    assert all(b["total"] == 24 and 1 <= G._corbel_steps(b) < 12 for b in r["builds"])
 
 
 def test_repeats_are_seeded_and_jittered(ab_repeats):
@@ -171,3 +173,18 @@ def test_a_brick_that_falls_is_still_a_collapse():
     yf = CF.load_family(Path(__file__).parent / "fixtures", "yfunnel")
     r = A.assemble(yf, yf.defaults, S.overhang(2, 1), T.TrialConfig(error=T.ErrorModel(ideal=True)), seed=0)
     assert r["status"] == "collapse" and r["stages"][-1]["outcome"] == "fell"
+
+
+# --- the back-first corbel (#137) ---
+
+
+def test_the_corbel_places_a_back_brick_before_each_reaching_out_brick():
+    c = S.corbel(3)
+    assert _tuples(c) == [(0, -2, 1), (0, 0, 1), (1, -1, 1), (1, 1, 1), (2, 0, 1), (2, 2, 1)]
+    assert c.bases == [(-3, 2)] and c.ordered is True
+
+
+def test_the_assembly_order_keeps_an_ordered_structure_s_order():
+    c = S.corbel(4)
+    assert [S.brick_name(b) for b in A.assembly_order(AB, AB.defaults, c)] == [S.brick_name(b) for b in c.bricks]
+
