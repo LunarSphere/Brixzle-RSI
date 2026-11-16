@@ -298,3 +298,10 @@ def test_the_check_reports_whether_the_brick_holds_a_half_supported_brick(tmp_pa
 def test_the_principles_and_the_prompt_name_capture_and_hold():
     assert any("hold" in p["title"].lower() and "R4" in p["text"] for p in DA.principles())
     assert "half supported" in DA.system_prompt()
+
+
+def test_the_design_call_states_its_turn_budget(tmp_path):
+    """#139: a message past its turns is interrupted, so the agent is told the budget up front."""
+    runner = RN.ScriptedRunner([write_wedge("budgeted")])
+    DA.design(runner, _intake(tmp_path), tmp_path / "a", "rsi_t_i01_a9", max_turns=25)
+    assert "at most 25 turns" in runner.calls[0].prompt and runner.calls[0].max_turns == 25
