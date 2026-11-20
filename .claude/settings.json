@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.rsi-loop-active\" || exit 0; cd \"$CLAUDE_PROJECT_DIR\" && uv run --quiet python -m brixzle.director.guard hook"
+          }
+        ]
+      }
+    ]
+  }
+}

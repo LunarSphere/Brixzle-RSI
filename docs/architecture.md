@@ -116,6 +116,48 @@ Issue #108. A full score costs about 3 to 5 minutes, so when a round has several
 
 The screen does not pick a winner among close candidates. On A/B and the four designs of `ab4iter2-20261114-mean` its ranking disagreed with the maps' at the top (`runs/screen-compare-20261113.json`): those five lie within 0.1 of each other in Z, and the screen's standard error at 60 drops is about 0.08. So a candidate is screened out only if its score is more than two standard errors of the difference below the best (a clear loser, such as the yfunnel fixture), and the rest are scored in full by rank, up to `--screen-max-maps` (default 3). If the wall-clock left after holding the end tune's time cannot fit that many full scores (each estimated from the run's scored iterations so far, 240 s before any), fewer are mapped and the iteration records a warning. The others are logged as `screened_out` with their screen score; the iteration records `seconds.screen`.
 
+## The self-steering loop
+
+Issue #165. The twinhook line beat the SDK loop because the maintainer steered between rounds: they changed the goal as evidence came in, kept each step to one change, and had every claim rerun (`docs/november-16-2026-concise.md`). This loop automates that steering. It runs inside Claude Code, with no Agent SDK and no API calls:
+
+    /rsi-loop runs/rsi/<name> --new "<goal>" [--baseline ab] [--iterations N] [--minutes M] [--replay] [--unattended]
+    claude -p "/rsi-loop runs/rsi/<name> --new '<goal>' --unattended"       # headless, same command
+
+**Subagents and checkpoint files.** One Claude Code session runs `.claude/commands/rsi-loop.md`. It spawns one subagent per role, each with its own instructions in `.claude/agents/` and only the paths it needs:
+
+| Role | Reads | Writes |
+|---|---|---|
+| designer | `iter-NN/brief.json`, the parent's `family.py`, the tools | `iter-NN/<module>/`, `design_note.md`, `claim.json` |
+| verifier | the note, `verified.json`, cited runs | `audit.md` |
+| critic | `verified.json`, and the tools' slices, mapdiff and contacts | `diagnosis.md` |
+| director | `goal.json`, `STATE.md`, `archive.json`, `decisions.jsonl`, the iteration's files | `STATE.md`, `iter-NN/decision.json` |
+
+Separate subagents give each role a clean context, so the critic never grades work it wrote.
+
+Every step's output is a file in the run directory, and `next.json` names the next step. A stopped or context-full session resumes with `/rsi-loop <run>` and loses at most the step in flight.
+
+**Deterministic steps** (`python -m brixzle.director`, `src/brixzle/director/`):
+
+- `init` writes the run (`goal.json`, `STATE.md`, `decisions.jsonl`, `archive.json`, `next.json`) and the lock.
+- `baseline` scores the baseline and seeds the archive.
+- `check` is the one-change check.
+- `verify` measures the candidate itself with `tools.evaluate` and the #164 objective, compares the designer's claim number by number, and offers the design to the Pareto archive.
+- `decide` validates and logs the director's decision and writes the next brief.
+- `guard` checks the tracked tree.
+- `finish` ends the run.
+
+**Bounds**, enforced by code:
+
+- **Writes only inside the run.** While `.rsi-loop-active` (the lock) exists, a PreToolUse hook (`.claude/settings.json`, `director/guard.py`) refuses any write outside the run directory. That covers `docs/requirements.md`, `rules/`, the scorer, the sim, the caches, `.claude/` and the lock. It also refuses a Bash command that writes outside the run, and reads of the lock's `deny_read` paths (a replay hides the designs it replays). Without a lock, the hook does nothing.
+- **The tracked tree must not change.** `guard` runs after every iteration and ends the run on any change.
+- **One change per iteration.** The director's decision names what the next design may change, as 1 to 3 units (`param:<field>`, `def:<name>`, `const:<name>`). `check` compares the candidate's module with its parent's, definition by definition, and refuses any other change. The rest stays frozen.
+- **Verified before acted on.** The designer's numbers are rerun by `verify`, and its prose is audited by the verifier. The director is told not to build on a design whose claim did not match.
+- **Goal changes only tighten, with evidence.** A goal change needs run directories that exist, and may only tighten an objective setting. Each goes in `decisions.jsonl` and `goal.json`'s history.
+- **Budgets.** Iterations and wall-clock are set at `init`. The director stops after three iterations that add nothing to the archive.
+- **Human checkpoints are optional.** At the iterations given by `--checkpoints`, the loop stops and summarises, unless it was started `--unattended`.
+
+**Acceptance** is #164's Pareto archive (`director/archive.py`). A feasible design is kept if no member beats it beyond noise on Z, error-tolerant overhang, Z at μ 0.8 and overhang steps (Z bands: one standard error for its counts), and members it beats are dropped. The director picks which member to push and on which term.
+
 ## What a build needs: the build-aware objective
 
 Issue #164. Capture Z alone was won by `fable_allround`, a brick the SO-101 cannot grip well, reach far with, or release low (`docs/decisions.md`). `engine/objective.py` adds the terms a real build needs, and `scripts/objective_baselines.py` scores designs on them.

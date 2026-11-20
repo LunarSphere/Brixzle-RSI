@@ -529,5 +529,6 @@ def evaluate(spec, out, stages=STAGES, seed=0, cache=True):
             RD.module_png(fam, p, out / "module.png")
             rec["stl"] = [x.name for x in VD.export_stl(fam, p, out)]
         stage("renders", renders)
+    rec["complete"] = True  # every asked stage finished (a cut-off run lacks it; director.verify redoes it)
     save()
     return {**rec, "run": str(out)}
