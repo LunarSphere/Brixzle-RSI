@@ -50,9 +50,27 @@ def _with_violations(measured, stages):
     return {**measured, "violations": violations}
 
 
-def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True, seed=0):
+def _with_edge_measurement(spec, out_dir, measured):
+    from brixzle.tools import core as TC
+
+    path = out_dir / "edge" / "result.json"
+    if path.exists():
+        result = json.loads(path.read_text())
+    else:
+        TC.cache_on()
+        fam = TC.load(spec)
+        result = TC.edgemap(fam, fam.defaults)
+        path.parent.mkdir(exist_ok=True)
+        write_json(path, TC._finite(result))
+    return {**measured, "edge_z": result["edge_z"],
+            "edge": {"report": str(path), "run": str(path.parent), "weaker_bare_edge": result["weaker_bare_edge"],
+                     "cases": result["cases"], "seconds": result.get("seconds")}}
+
+
+def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True, seed=0, measure_edge=False):
     """The candidate's evaluation (tools.core.evaluate) and, with ``objective``, the #164 terms. Z at
-    mu 0.8 comes from tools.core.friction (seed 1, mean box).
+    mu 0.8 comes from tools.core.friction (seed 1, mean box). An edge push adds the named
+    half-supported drop map and makes its weaker-edge Z available for claim checks.
 
     Resumable: a foreground step is cut off after 10 minutes, so each part is saved as it finishes
     (``eval/eval.json``, ``objective.json``, then ``measured.json``) and a second call reuses what is
@@ -64,7 +82,11 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
     out_dir = Path(out_dir)
     done = out_dir / "measured.json"
     if done.exists():
-        return _with_violations(json.loads(done.read_text()), stages)
+        out = _with_violations(json.loads(done.read_text()), stages)
+        if measure_edge and "edge" not in out:
+            out = _with_edge_measurement(spec, out_dir, out)
+            write_json(done, TC._finite(out))
+        return out
     out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     ev = None
@@ -97,6 +119,8 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
         out["objective"] = rec
         out["overhang_mean_steps"] = rec.get("overhang_mean_steps")
         out["tolerance_mm"] = rec.get("tolerance_mm")
+    if measure_edge:
+        out = _with_edge_measurement(spec, out_dir, out)
     out["seconds"] = round(time.time() - t0, 1)
     out = _with_violations(out, stages)
     write_json(done, TC._finite(out))

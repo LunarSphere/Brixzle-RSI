@@ -359,3 +359,33 @@ def test_measure_resumes_after_it_was_cut_off(tmp_path, monkeypatch):
 def test_the_loop_never_waits_in_the_background():
     text = (ROOT / ".claude" / "commands" / "rsi-loop.md").read_text()
     assert "run_in_background" in text and "600000" in text
+
+
+def test_verify_measures_the_edge_target_on_request_and_checkpoints_it(repo, monkeypatch):
+    from brixzle.director import __main__ as CLI
+    from brixzle.tools import core as TC
+
+    run = _init(repo)
+    d = run / "iter-01"
+    (d / "candidate").mkdir(parents=True)
+    (d / "candidate" / "family.py").touch()
+    measured_dir = d / "measured"
+    measured_dir.mkdir()
+    RN.write_json(measured_dir / "measured.json",
+                  {"gate": {"passed": True}, "ring": {"status": "complete"}, "check_family": {"ok": True},
+                   "objective": _rec("candidate"), "seconds": 1.0})
+    RN.write_json(d / "brief.json", {"term": "edge_z"})
+    RN.write_json(d / "claim.json", {"numbers": [{"what": "weaker edge Z", "path": "edge_z", "value": 0.3}]})
+    calls = []
+    family = type("FakeFamily", (), {"defaults": None})()
+    monkeypatch.setattr(TC, "load", lambda _: family)
+    monkeypatch.setattr(TC, "cache_on", lambda: None)
+    monkeypatch.setattr(TC, "edgemap", lambda family, params: calls.append(family) or
+                        {"edge_z": 0.3, "weaker_bare_edge": "minus_bare", "cases": {}})
+
+    assert CLI.main(["verify", "--run", str(run), "--iter", "1"]) == 0
+    assert VE.measure("candidate", measured_dir, measure_edge=True)["edge_z"] == 0.3
+    assert calls == [family]
+    measured = RN.read_json(d / "verified.json")["measured"]
+    assert measured["edge_z"] == 0.3
+    assert RN.read_json(measured["edge"]["report"])["edge_z"] == 0.3

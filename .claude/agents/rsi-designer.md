@@ -44,7 +44,8 @@ Write everything inside `<run>/iter-NN/`. The loop's guard refuses writes anywhe
    - Only numbers a tool printed. `path` names the number in the verifier's measurement:
      - `z.mean.Z`, `z.p95.Z`, `z.max.Z`;
      - `gate.overhang_n`, `gate.passed`, `ring.status`;
-     - `overhang_mean_steps` when the run scores it, `tolerance_mm` for comparison, and `violations`.
+     - `edge_z` when the brief names it as the push term;
+    - `overhang_mean_steps` when the run scores it, `tolerance_mm` for comparison, and `violations`.
    - The verifier reruns every one. An unmeasured or wrong number fails the iteration.
 
 ## Tools
@@ -53,6 +54,7 @@ Run them with Bash. They are deterministic and read the drop cache. Results are 
 
 - `uv run python -m brixzle.agents.check_family <run>/iter-NN <module>`: the contract and rule margins. Run it first.
 - `uv run python -m brixzle.tools redrop F --map <parent map> --box mean --outcomes jammed,wrong_valley --limit 30`: re-drop the parent's failures on your candidate.
+- `uv run python -m brixzle.tools --runs <run>/iter-NN edgemap F`: compare both half-supported edges when the brief pushes `edge_z`. Use `contacts --edge-case <layout>` on the weaker edge.
 - `uv run python -m brixzle.tools contacts F --map <map> --outcomes jammed --limit 5`: what touches at rest.
 - `uv run python -m brixzle.tools sweep F --param <p> --values a,b,c --map <map> --box mean --limit 30`: try values of one parameter.
 - `uv run python -m brixzle.tools evaluate F --out <run>/iter-NN/eval-<tag> --stages map,gate`: any stage subset. A full run is about 4 min.
