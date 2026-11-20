@@ -155,6 +155,12 @@ Gate and ring results are kept whole, by the family's fingerprint without parame
 
 Unset, as in the loop and the tests, every drop is simulated. A cached result is an earlier sim result (simulated, uncalibrated contact), not a new one.
 
+**Primitive search (#166).** When the brief calls for a new family or a parameter search, the director can run
+`uv run python -m brixzle.search --n <candidates> --seed <seed> --runs <run>/search`. The progressive checks report
+throughput and save the parameter values and full evaluations for the finalists. A generated package is useful
+as a starting point only if it fits the director's brief and the normal verification checks. Use
+`--calibrate <size> --reference <objective-report>` for an independent seeded measurement of false rejection.
+
 ## Per-iteration results
 
 Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/render.py`):
