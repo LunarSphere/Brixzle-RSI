@@ -454,3 +454,16 @@ In `gate2-20261116-mean` (`--budget-usd 15 --max-minutes 60`; simulated, uncalib
 
 `limits-20261116-mean` (stopped): #139 counted every `AssistantMessage` event as a turn; one turn can be several events. All three explore calls were interrupted at "25 turns" when the SDK reported 17, 17 and 15, before writing `design_note.json`, and were refused as `no_concepts` ($3.76). Turns are now distinct message ids, and at the limit the design call gets a short wrap-up (save the note, keep the passing package, stop). The run's ledger shows $5.51; $1.50 of it is a reshape call stopped at 0 turns by the run's stop, charged its whole budget by the rule for a call with no reported cost.
 
+
+## Allround: capture won by a brick that cannot be built with (issue #164)
+
+`fable_allround` had the best capture Z on the wide boxes: +0.955 / +0.984 / +0.687 on its own map, at 24.65 g (`RSI_RESULTS/fable_allround-20261117-opus`). The loop's objective rewarded only that. It reached it with a 58 mm pitch and wings to 28 mm across the wall, and that size costs everything else a build needs (`runs/objective-20261120T180941Z`, simulated, uncalibrated contact):
+
+- **Grip.** No top-down stock-jaw grasp passes the strict rule (within 2 mm of the centre of mass, 30 % fingertip coverage). #153's relaxed grasp holds its 2 mm wing tips and shifts 1.45 mm and 0.80° over a 100 mm lift, against #153's bar of 1 mm and 1°.
+- **Size.** It is 115.7 mm long and releases from 62.4 mm (A/B: 49.7 and 22.9 mm). The SO-101 reaches a 9-step overhang with it (A/B 11, twinhook4 12), and bridge(3) needs a 30 mm riser.
+- **Arm build.** 0 of 7 overhang bricks seated in `runs/arm-build-20261120T141937Z`, from the maintainer's reading of its log. The run was killed before it wrote its report.
+- **Error-tolerant overhang.** Its wide pitch does help here: the median noisy corbel reaches 3 steps out to 3 mm of placement error, against 2 mm for twinhook4 and gentle. A/B, at 4 mm, is still better.
+
+Under the objective proposed in #164 (hard constraints on grip, length ≤ 70 mm, release ≤ 30 mm, arm overhang ≥ 11 and bridge riser ≤ 10 mm, then a Pareto order on Z, error-tolerant overhang, Z at μ 0.8 and overhang steps), allround breaks five constraints and is not kept. A/B, twinhook4 and gentle are all feasible, and none dominates another.
+
+**Lesson:** an objective of capture alone is won by growing the brick. Grip, size and release height have to be terms, or constraints, from the start.
