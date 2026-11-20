@@ -38,6 +38,7 @@ import numpy as np
 
 LABEL = "simulated, uncalibrated contact"
 MEAN_RADIUS_MM = 14.8
+OVERHANG_SCORE_RADII_MM = (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)
 
 
 @dataclass(frozen=True)
@@ -50,12 +51,12 @@ class Settings:
     max_bridge_riser_mm: float = 10.0   # A/B and twinhook4 need none, gentle 10 (taller courses), allround 30
     grip_mm: float = 1.0                # #153's lift bar
     grip_deg: float = 1.0
-    radii_mm: tuple = (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, MEAN_RADIUS_MM)
+    radii_mm: tuple = (*OVERHANG_SCORE_RADII_MM, 7.0, 10.0, MEAN_RADIUS_MM)
     past_failure: int = 1               # radii still built after the first that fails (for the record)
     builds: int = 17                    # #148's count: one half-supported attempt each, at worst
     corbel_steps: int = 6
     tolerance_steps: int = 3            # the gate's own floor for the overhang (R4)
-    scored: tuple = ("z_target", "tolerance_mm", "z_mu08", "overhang_n")
+    scored: tuple = ("z_target", "overhang_mean_steps", "z_mu08", "overhang_n")
 
 
 # --- the error-tolerant overhang ---
@@ -128,9 +129,16 @@ def tolerance_radius(median_by_radius, steps):
     return best
 
 
+def overhang_mean_steps(median_by_radius):
+    """Mean median reaching steps over the six scoring radii, if they were all measured."""
+    medians = {float(radius): steps for radius, steps in median_by_radius.items()}
+    if not all(medians.get(radius) is not None for radius in OVERHANG_SCORE_RADII_MM):
+        return None
+    return sum(medians[radius] for radius in OVERHANG_SCORE_RADII_MM) / len(OVERHANG_SCORE_RADII_MM)
+
+
 def overhang_tolerance(family, p, settings=Settings(), seed=0, workers=None):
-    """The noisy corbel at growing radii, until ``past_failure`` radii after the first whose median
-    build falls short of ``tolerance_steps`` (larger radii cannot raise the tolerance radius)."""
+    """Measure low-error score radii before applying the threshold-based stop."""
     t0 = time.time()
     per, after = {}, None
     for r in sorted(settings.radii_mm):
@@ -139,10 +147,11 @@ def overhang_tolerance(family, p, settings=Settings(), seed=0, workers=None):
             after = 0
         elif after is not None:
             after += 1
-        if after is not None and after >= settings.past_failure:
+        if r >= OVERHANG_SCORE_RADII_MM[-1] and after is not None and after >= settings.past_failure:
             break
     medians = {r: v["median_steps"] for r, v in per.items()}
     return {"label": LABEL, "by_radius": {str(r): v for r, v in per.items()}, "median_steps": {str(r): m for r, m in medians.items()},
+            "overhang_mean_steps": overhang_mean_steps(medians),
             "tolerance_mm": tolerance_radius(medians, settings.tolerance_steps), "steps_needed": settings.tolerance_steps,
             "seconds": round(time.time() - t0, 1)}
 
@@ -276,8 +285,11 @@ def violations(rec, s=Settings()):
 
 
 def _scores(rec, s):
-    vals = {"z_target": rec["z"].get("mean"), "tolerance_mm": rec.get("tolerance_mm"), "z_mu08": rec.get("z_mu08"),
-            "overhang_n": rec.get("overhang_n")}
+    mean_steps = rec.get("overhang_mean_steps")
+    if mean_steps is None:
+        mean_steps = overhang_mean_steps((rec.get("overhang_tolerance") or {}).get("median_steps", {}))
+    vals = {"z_target": rec["z"].get("mean"), "overhang_mean_steps": mean_steps,
+            "tolerance_mm": rec.get("tolerance_mm"), "z_mu08": rec.get("z_mu08"), "overhang_n": rec.get("overhang_n")}
     return [(-1.0 if vals[k] is None else float(vals[k])) for k in s.scored]
 
 
@@ -289,7 +301,7 @@ def dominates(a, b, s=Settings()):
 
 def rank(recs, s=Settings()):
     """Feasible designs first, by Pareto layer (layer 1 is dominated by none); then the infeasible,
-    by fewest violations. Ties by error-tolerance radius, then Z."""
+    by fewest violations. Ties by mean overhang steps, then Z."""
     recs = [{**r, "violations": violations(r, s)} for r in recs]
     for r in recs:
         r["feasible"] = not r["violations"]
@@ -319,7 +331,8 @@ def evaluate_design(family, p=None, settings=Settings(), env=None, z=None, z_mu0
                     "lift_deg": max((v["slip_deg"] for v in lift_parts), default=None),
                     "rule_parts": rule["parts"], "lift_parts": lift["parts"]},
            "size": size(family, p), "arm": arm_reach(family, p, env), "overhang_tolerance": tol,
-           "tolerance_mm": tol["tolerance_mm"], "z": z or {}, "z_mu08": z_mu08, "overhang_n": overhang_n,
+           "overhang_mean_steps": tol["overhang_mean_steps"], "tolerance_mm": tol["tolerance_mm"],
+           "z": z or {}, "z_mu08": z_mu08, "overhang_n": overhang_n,
            "seconds": {"grip_rule": rule["seconds"], "grip_lift": lift["seconds"], "tolerance": tol["seconds"]}}
     rec["seconds"]["total"] = round(time.time() - t0, 1)
     rec["violations"] = violations(rec, settings)

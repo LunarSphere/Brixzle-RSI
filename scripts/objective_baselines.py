@@ -67,7 +67,7 @@ def main():
         rec = OB.evaluate_design(fam, settings=OB.Settings(), env=env, z=z, z_mu08=mu08, overhang_n=overhang)
         rec["sources"] = sources
         recs.append(rec)
-        print(name, json.dumps({k: rec[k] for k in ("violations", "tolerance_mm")}), rec["overhang_tolerance"]["median_steps"],
+        print(name, json.dumps({k: rec[k] for k in ("violations", "overhang_mean_steps", "tolerance_mm")}), rec["overhang_tolerance"]["median_steps"],
               rec["grip"]["lift_mm"], rec["size"]["length_mm"], rec["arm"], flush=True)
         (out / "report.json").write_text(json.dumps(TC._finite({"label": OB.LABEL, "designs": recs, "seconds": secs}), indent=1, default=str) + "\n")
     ranked = OB.rank(recs)
