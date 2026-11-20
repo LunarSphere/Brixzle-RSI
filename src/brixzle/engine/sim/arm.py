@@ -58,6 +58,12 @@ def attach_arm(xml, base_mm, yaw=0.0):
         z_m = float(floor.pos[2]) + 0.0005   # build_scene sinks the plane 0.5 mm under the lowest base
     else:
         z_m = z * MM
+    floor_m = float(spec.geom("floor").pos[2]) + 0.0005
+    if z_m > floor_m + 1e-4:
+        # the riser the base stands on: drawn only (the arm's base never touches anything)
+        h = (z_m - floor_m) / 2
+        spec.worldbody.add_geom(name="arm_riser", type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.06, 0.06, h],
+                                pos=[x * MM, y * MM, floor_m + h], rgba=[0.45, 0.45, 0.5, 1], contype=0, conaffinity=0)
     frame = spec.worldbody.add_frame(pos=[x * MM, y * MM, z_m], quat=_yaw_quat(yaw))
     child = arm_spec()
     # The scene's solver settings win (the arm's file sets its own); copy them over so the attach

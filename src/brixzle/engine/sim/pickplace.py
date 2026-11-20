@@ -29,6 +29,28 @@ CEILING_MM = 80.0        # keep the tool point this far under the arm's base at 
 APPROACH_MM = 30.0       # the jaws come down beside the brick, not over it, so a short approach clears it
 
 
+class Recorder:
+    """Captures frames of a rig at ``fps`` of sim time from a free camera (for videos only)."""
+
+    def __init__(self, model, lookat_mm, distance_mm=420.0, azimuth=135.0, elevation=-22.0, fps=30, size=(720, 960)):
+        self.model, self.fps = model, fps
+        self.every = max(1, round(1 / (fps * model.opt.timestep)))
+        self.renderer = mujoco.Renderer(model, *size)
+        self.cam = mujoco.MjvCamera()
+        self.cam.lookat[:] = np.asarray(lookat_mm, float) * MM
+        self.cam.distance, self.cam.azimuth, self.cam.elevation = distance_mm * MM, azimuth, elevation
+        self.frames, self._n = [], 0
+
+    def step(self, data):
+        if self._n % self.every == 0:
+            self.renderer.update_scene(data, camera=self.cam)
+            self.frames.append(self.renderer.render().copy())
+        self._n += 1
+
+    def close(self):
+        self.renderer.close()
+
+
 def quat_mat(q):
     R = np.zeros(9)
     mujoco.mju_quat2Mat(R, np.asarray(q, dtype=float))
@@ -54,6 +76,7 @@ class Rig:
     q: np.ndarray = field(default=None)   # the five placing joints last commanded
     jaw_mm: float = 60.0           # the jaw opening last commanded
     log: list = field(default_factory=list)
+    recorder: object = None        # optional Recorder: frames are captured while the sim runs
 
     @property
     def jaw(self):
@@ -84,6 +107,8 @@ class Rig:
     def hold(self, seconds):
         for _ in range(int(round(seconds / self.model.opt.timestep))):
             mujoco.mj_step(self.model, self.data)
+            if self.recorder is not None:
+                self.recorder.step(self.data)
 
     def set_jaw(self, jaw_mm, seconds=0.6):
         self.jaw_mm = jaw_mm
