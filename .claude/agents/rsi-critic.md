@@ -1,6 +1,7 @@
 ---
 name: rsi-critic
 description: Critic role of the self-steering brick loop (#165). Reads one verified evaluation and names the mechanism behind its failures from contacts and stage data, not from scores.
+model: opus
 tools: Read, Write, Glob, Grep, Bash
 ---
 

@@ -207,6 +207,80 @@ def test_the_archive_keeps_the_pareto_set_within_noise():
     assert [r["name"] for r in a.members] == ["better"]
 
 
+def test_archive_uses_the_overhang_term_from_the_run_goal(repo):
+    from brixzle.director import __main__ as CLI
+
+    run = _init(repo, settings={"scored": ["z_target", "overhang_mean_steps", "z_mu08", "overhang_n"]})
+    ab = {**_rec("ab", tol=4.0), "overhang_mean_steps": 29 / 6}
+    short = {**_rec("short", tol=5.0), "overhang_mean_steps": 23 / 6}
+
+    assert CLI._offer(run, ab)["kept"]
+    assert not CLI._offer(run, short)["kept"]
+    assert CLI._offer(run, ab)["kept"]
+    archive = RN.read_json(run / "archive.json")
+    assert [row["name"] for row in archive["members"]] == ["ab"]
+    assert [row["name"] for row in archive["offers"]] == ["ab", "short"]
+
+
+@pytest.mark.parametrize(
+    ("stage", "failure", "violation"),
+    [
+        ("gate", {"passed": False}, "structure_gate"),
+        ("ring", {"status": "placement_jammed"}, "ring"),
+        ("ring", {"error": "invalid kit"}, "ring"),
+        ("check_family", {"ok": False, "violations": []}, "check_family"),
+    ],
+)
+def test_verify_rejects_infeasible_checkpoint(repo, stage, failure, violation):
+    from brixzle.director import __main__ as CLI
+
+    run = _init(repo)
+    d = run / "iter-01"
+    (d / "candidate").mkdir(parents=True)
+    (d / "candidate" / "family.py").touch()
+    measured_dir = d / "measured"
+    measured_dir.mkdir()
+    measured = {
+        "gate": {"passed": True},
+        "ring": {"status": "complete"},
+        "check_family": {"ok": True, "violations": []},
+        "objective": _rec("candidate"),
+        "violations": [],
+        "seconds": 0,
+    }
+    measured[stage] = failure
+    RN.write_json(measured_dir / "measured.json", measured)
+
+    assert CLI.main(["verify", "--run", str(run), "--iter", "1"]) == 0
+    verified = RN.read_json(d / "verified.json")
+    assert verified["measured"]["violations"] == [violation]
+    assert verified["measured"]["objective"]["violations"] == []
+    assert not verified["offer"]["kept"]
+    assert RN.read_json(run / "archive.json")["members"] == []
+
+
+def test_baseline_uses_the_same_feasibility_checks(repo):
+    from brixzle.director import __main__ as CLI
+
+    run = _init(repo)
+    measured_dir = run / "baseline" / "measured"
+    measured_dir.mkdir(parents=True)
+    RN.write_json(
+        measured_dir / "measured.json",
+        {"gate": {"passed": True}, "ring": None, "check_family": {"ok": True},
+         "objective": _rec("ab", feasible=False), "violations": ["grip"]},
+    )
+
+    argv = ["baseline", "--run", str(run)]
+    assert CLI.main(argv) == 0
+    assert CLI.main(argv) == 0
+    verified = RN.read_json(run / "baseline" / "verified.json")
+    assert verified["measured"]["violations"] == ["grip", "ring"]
+    archive = RN.read_json(run / "archive.json")
+    assert archive["members"] == []
+    assert len(archive["offers"]) == 1
+
+
 def test_the_command_line_steps(repo, monkeypatch):
     from brixzle.director import __main__ as CLI
     monkeypatch.chdir(repo)
@@ -239,11 +313,13 @@ def test_the_project_hook_guards_every_tool_while_a_loop_runs():
     assert GU.LOCK in (ROOT / ".gitignore").read_text()
 
 
-@pytest.mark.parametrize("role", ["designer", "critic", "director", "verifier"])
-def test_each_role_has_its_own_instructions(role):
+@pytest.mark.parametrize(("role", "model"), [("designer", "fable"), ("critic", "opus"),
+                                            ("director", "opus"), ("verifier", "sonnet")])
+def test_each_role_has_its_own_instructions(role, model):
     text = (ROOT / ".claude" / "agents" / f"rsi-{role}.md").read_text()
     head = text.split("---")[1]
     assert f"name: rsi-{role}" in head and "description:" in head and "tools:" in head
+    assert f"model: {model}" in head.splitlines()
     assert "Write" in head.split("tools:")[1]  # each writes its own file; the guard keeps it inside the run
     assert "rsi-designer" in (ROOT / ".claude" / "commands" / "rsi-loop.md").read_text()
 

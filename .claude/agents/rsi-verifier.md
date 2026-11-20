@@ -1,6 +1,7 @@
 ---
 name: rsi-verifier
 description: Verifier role of the self-steering brick loop (#165). Checks that every claim in a designer's note is backed by the verifier's own measurement or a cited tool run.
+model: sonnet
 tools: Read, Write, Glob, Grep, Bash
 ---
 

@@ -23,14 +23,14 @@ resumes, and the drop and stage caches make the redone part fast. Keep each Bash
 
 **The loop.** After each step, check `<run>/next.json` and `uv run python -m brixzle.director status --run <run>`.
 
-0. **Baseline** (only if `<run>/baseline/` is missing).
-   - Run `uv run python -m brixzle.director baseline --run <run>` (about 8 min).
-   - Spawn **rsi-director** for iteration 00. Its decision goes to `<run>/iter-00/decision.json`.
+0. **Baseline** (when `next.json` is at iteration 0).
+   - If `<run>/baseline/verified.json` is missing, run `uv run python -m brixzle.director baseline --run <run>` (about 8 min).
+   - If `<run>/iter-00/decision.json` is missing, spawn **rsi-director** for iteration 00 to write it.
    - Then run `uv run python -m brixzle.director decide --run <run> --iter 0`.
 1. **Design** iteration N, from `<run>/iter-NN/brief.json`.
    - Spawn the **rsi-designer** subagent.
    - Give it only the brief's path, the run directory and its role file `.claude/agents/rsi-designer.md`.
-   - If that agent type isn't available in this session, use a general-purpose subagent with the role file's text as its instructions. Do the same for every role.
+   - Use each named role without a per-call model override so its role file selects the model. If a named role is unavailable, report the missing role and stop with the checkpoint intact.
 2. **Check:** `uv run python -m brixzle.director check --run <run> --iter N`.
    - If it is refused, give the designer the refusal once.
    - If it is refused again, write `{"action": "fix", ...}` back to the director (step 6) with the refusal as evidence.

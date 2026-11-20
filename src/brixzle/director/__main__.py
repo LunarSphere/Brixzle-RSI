@@ -93,7 +93,8 @@ def main(argv=None):
             out = RN.read_json(d / "verified.json")["offer"]
         else:
             m = VE.measure(goal["baseline"], d / "measured")
-            out = _offer(run, {**m["objective"], "name": f"baseline:{goal['baseline']}", "spec": goal["baseline"]})
+            out = _offer(run, {**m["objective"], "violations": m["violations"],
+                               "name": f"baseline:{goal['baseline']}", "spec": goal["baseline"]})
             RN.write_json(d / "verified.json", {"measured": m, "claim": None, "offer": out})
     elif a.step == "check":
         pkg, spec = candidate(run, a.iter)
@@ -116,7 +117,8 @@ def main(argv=None):
         claim = RN.read_json(d / "claim.json", {"numbers": []})
         m = VE.measure(spec, d / "measured")
         cmp = VE.compare(claim, m)
-        rec = {**m["objective"], "name": f"iter-{a.iter:02d}:{pkg.name}", "spec": spec}
+        rec = {**m["objective"], "violations": m["violations"],
+               "name": f"iter-{a.iter:02d}:{pkg.name}", "spec": spec}
         offer = _offer(run, rec)
         out = {"claim": cmp, "offer": offer, "violations": m.get("violations"), "seconds": m["seconds"]}
         RN.write_json(d / "verified.json", {"measured": m, "claim": cmp, "offer": offer})
@@ -137,10 +139,15 @@ def main(argv=None):
 def _offer(run, rec):
     path = Path(run) / "archive.json"
     data = RN.read_json(path, {"members": [], "offers": []})
-    arc = AR.Archive(data["members"])
+    offers = data.setdefault("offers", [])
+    for previous in offers:
+        if previous["name"] == rec["name"]:
+            return {key: saved for key, saved in previous.items() if key not in {"name", "time"}}
+    settings = RN.read_json(Path(run) / "goal.json", {}).get("settings", {})
+    arc = AR.Archive(data["members"], terms=settings.get("scored", AR.LEGACY_TERMS))
     res = arc.offer(rec)
     data["members"] = arc.members
-    data.setdefault("offers", []).append({"name": rec["name"], **res, "time": RN.now()})
+    offers.append({"name": rec["name"], **res, "time": RN.now()})
     RN.write_json(path, data)
     return res
 

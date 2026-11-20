@@ -1,6 +1,7 @@
 ---
 name: rsi-designer
 description: Designer role of the self-steering brick loop (#165). Writes one candidate brick family that makes exactly the change its brief allows, measures it with the repo's tools, and claims only measured numbers.
+model: fable
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
@@ -43,7 +44,7 @@ Write everything inside `<run>/iter-NN/`. The loop's guard refuses writes anywhe
    - Only numbers a tool printed. `path` names the number in the verifier's measurement:
      - `z.mean.Z`, `z.p95.Z`, `z.max.Z`;
      - `gate.overhang_n`, `gate.passed`, `ring.status`;
-     - `tolerance_mm`, `violations`.
+     - `overhang_mean_steps` when the run scores it, `tolerance_mm` for comparison, and `violations`.
    - The verifier reruns every one. An unmeasured or wrong number fails the iteration.
 
 ## Tools

@@ -6,9 +6,12 @@ evaluates the candidate itself, with the tools and the objective (the drop cache
 the engine simulated for the same geometry), and ``compare`` checks each claim against it. A
 number the measurement does not have is a mismatch.
 """
+import json
 import math
 from pathlib import Path
 import time
+
+from brixzle.director.run import write_json
 
 
 def lookup(obj, path):
@@ -35,6 +38,18 @@ def compare(claim, measured, tol=1e-6):
     return {"ok": bad == 0, "mismatches": bad, "numbers": rows}
 
 
+def _with_violations(measured, stages):
+    """Combine objective violations with verdicts for the requested feasibility stages."""
+    violations = list((measured.get("objective") or {}).get("violations") or [])
+    if "check" in stages and (measured.get("check_family") or {}).get("ok") is not True:
+        violations.append("check_family")
+    if "gate" in stages and (measured.get("gate") or {}).get("passed") is not True:
+        violations.append("structure_gate")
+    if "ring" in stages and (measured.get("ring") or {}).get("status") != "complete":
+        violations.append("ring")
+    return {**measured, "violations": violations}
+
+
 def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True, seed=0):
     """The candidate's evaluation (tools.core.evaluate) and, with ``objective``, the #164 terms. Z at
     mu 0.8 comes from tools.core.friction (seed 1, mean box).
@@ -43,15 +58,13 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
     (``eval/eval.json``, ``objective.json``, then ``measured.json``) and a second call reuses what is
     there. An evaluation cut off part-way is redone in a new directory (``eval-2``, ...); the drop and
     stage caches make the redone stages fast."""
-    import json
-
     from brixzle.engine import objective as OB
     from brixzle.tools import core as TC
 
     out_dir = Path(out_dir)
     done = out_dir / "measured.json"
     if done.exists():
-        return json.loads(done.read_text())
+        return _with_violations(json.loads(done.read_text()), stages)
     out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     ev = None
@@ -80,10 +93,11 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
                                      overhang_n=(ev.get("gate") or {}).get("overhang_n"))
             rec["z_counts"] = {k: (ev.get("z") or {}).get("mean", {}).get(k) for k in ("S", "J", "N")}
             rec["z_mu08_counts"] = {"S": mu08["S"], "J": mu08["J"], "N": mu08["N"]}
-            obj_path.write_text(json.dumps(rec, default=str))
+            write_json(obj_path, TC._finite(rec))
         out["objective"] = rec
+        out["overhang_mean_steps"] = rec.get("overhang_mean_steps")
         out["tolerance_mm"] = rec.get("tolerance_mm")
-        out["violations"] = rec.get("violations")
     out["seconds"] = round(time.time() - t0, 1)
-    done.write_text(json.dumps(out, default=str))
+    out = _with_violations(out, stages)
+    write_json(done, TC._finite(out))
     return out

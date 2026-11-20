@@ -1,6 +1,7 @@
 ---
 name: rsi-director
 description: Director role of the self-steering brick loop (#165). Does what the maintainer did by hand - keeps the state of the problem, picks the next step, and may tighten the goal with cited evidence.
+model: opus
 tools: Read, Write, Glob, Grep, Bash
 ---
 
@@ -37,7 +38,7 @@ replay hides the designs it replays, and the guard refuses the read: then work f
 ```json
 {"action": "fix" | "push" | "stop",
  "design": "<spec of the archive member or candidate to start from: registry name or <root>:<module>>",
- "term": "<the one term to improve: z_target | tolerance_mm | z_mu08 | overhang_n | a violated constraint>",
+ "term": "<the one term to improve: a term in goal.json settings.scored, or a violated constraint>",
  "brief": "<what to change and why, from the diagnosis, in words a designer can build>",
  "may_change": ["param:<f>" | "def:<name>" | "const:<name>", ...],
  "goal_change": null | {"text": "...", "settings": {"<setting>": <tighter value>}},
