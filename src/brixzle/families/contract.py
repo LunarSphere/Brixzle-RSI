@@ -161,10 +161,10 @@ def _numbers(values):
     return " ".join(f"{float(v):.9g}" for v in np.ravel(values))
 
 
-def _compile(bodies):
+def _compile(bodies, pieces):
     assets = "".join(f'<mesh name="c{i}" vertex="{_numbers(np.asarray(v) * 1e-3)}"/>'
-                     for i, v in enumerate(bodies.collision))
-    geoms = "".join(f'<geom type="mesh" mesh="c{i}"/>' for i in range(len(bodies.collision)))
+                     for i, v in enumerate(pieces))
+    geoms = "".join(f'<geom type="mesh" mesh="c{i}"/>' for i in range(len(pieces)))
     inertia = np.asarray(bodies.inertia_g_mm2) * 1e-9
     full = [inertia[0, 0], inertia[1, 1], inertia[2, 2], inertia[0, 1], inertia[0, 2], inertia[1, 2]]
     xml = (f'<mujoco><asset>{assets}</asset><worldbody><body name="brick"><freejoint/>'
@@ -175,8 +175,10 @@ def _compile(bodies):
 
 def _check_sim_bodies(family, p, part):
     bodies = B.sim_bodies(family, p, part)
-    _require(len(bodies.collision) > 0, "no collision pieces")
-    for i, piece in enumerate(bodies.collision):
+    # Check the whole collision geometry. The simulation keeps the materials separate.
+    pieces = [*bodies.collision, *bodies.soft_collision]
+    _require(pieces, "no collision pieces")
+    for i, piece in enumerate(pieces):
         piece = np.asarray(piece)
         _require(piece.ndim == 2 and piece.shape[1] == 3 and B.math_finite(piece),
                  f"collision piece {i} must be a finite (n, 3) vertex array")
@@ -185,9 +187,9 @@ def _check_sim_bodies(family, p, part):
         _require(ConvexHull(piece).volume > 0, f"collision piece {i} has no volume")
     inside, outside = B.contact_points(family, p, part)
     # 1 um tolerance: decomposed pieces meet at seams, and a point on a seam belongs to both.
-    missed = int((~B.inside_any(inside, bodies.collision, tol=1e-3)).sum())
+    missed = int((~B.inside_any(inside, pieces, tol=1e-3)).sum())
     _require(missed == 0, f"{missed} of {len(inside)} points just inside the outline are not in the collision")
-    phantom = int(B.inside_any(outside, bodies.collision, tol=-1e-3).sum())
+    phantom = int(B.inside_any(outside, pieces, tol=-1e-3).sum())
     _require(phantom == 0, f"{phantom} of {len(outside)} points just outside the outline or off a guide face "
                            "are inside the collision (phantom material)")
     _require(B.math_finite(bodies.mass_g, bodies.com_mm, bodies.inertia_g_mm2),
@@ -196,7 +198,7 @@ def _check_sim_bodies(family, p, part):
     _require(np.allclose(inertia, inertia.T, rtol=1e-6, atol=1e-9) and np.all(np.linalg.eigvalsh(inertia) > 0),
              "inertia must be symmetric positive-definite")
     try:
-        _compile(bodies)
+        _compile(bodies, pieces)
     except ValueError as e:  # MuJoCo reports model errors as ValueError
         raise _Fail(f"MuJoCo cannot compile the sim bodies: {e}") from e
 
@@ -205,7 +207,11 @@ def _placed(family, p, placement):
     pos, quat = family.seat_pose(p, placement)
     w, x, y, z = quat
     rot = Rotation.from_quat([x, y, z, w])
-    pieces, _ = B.collision(family, p, family.part_for(placement.course, placement.direction))
+    part = family.part_for(placement.course, placement.direction)
+    pieces, _ = B.collision(family, p, part)
+    if family.soft is not None:
+        soft, _ = family.soft(p, part)
+        pieces = [*pieces, *soft]
     return [rot.apply(np.asarray(v)) + np.asarray(pos) for v in pieces]
 
 
