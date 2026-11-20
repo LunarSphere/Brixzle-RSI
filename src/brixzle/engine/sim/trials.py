@@ -154,6 +154,12 @@ def classify(lat: Lattice, err, angle, tol: Tolerance, on_floor):
     return 'jammed'
 
 
+def _piece(name):
+    """A brick geom's piece index: k for brickJ_cK, -(k + 1) for a compliant piece brickJ_sK (#167)."""
+    seg = name.rsplit('_', 1)[1]
+    return -(int(seg[1:]) + 1) if seg.startswith('s') else int(seg[1:])
+
+
 def _brick_geoms(model, info):
     owner = {}
     for j, b in enumerate(info['bodies']):
@@ -216,7 +222,7 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
                 entry = contacts.get(key)
                 if entry is None:
                     entry = contacts[key] = {
-                        'piece': int(names[mine].rsplit('_c', 1)[1]), 'other': _contact_name(names, owner, other),
+                        'piece': _piece(names[mine]), 'other': _contact_name(names, owner, other),
                         'other_geom': names[other], 'start_s': now, 'end_s': now, 'touches': 0, 'peak_N': 0.,
                         'first_pos_mm': (np.asarray(c.pos)/MM).tolist(), 'active_at_end': False, '_live': False}
                 if not entry['_live']:
@@ -270,7 +276,7 @@ def rest_contacts(model, data, info, owner, names, j):
         sign = 1. if mine2 else -1.
         rows.append({'pos_mm': (np.asarray(c.pos)/MM).tolist(), 'normal': (sign*frame[0]).tolist(),
                      'force_N': (sign*(frame.T @ force[:3])).tolist(), 'normal_N': float(force[0]),
-                     'dist_mm': float(c.dist/MM), 'piece': int(names[mine].rsplit('_c', 1)[1]),
+                     'dist_mm': float(c.dist/MM), 'piece': _piece(names[mine]),
                      'other': _contact_name(names, owner, other), 'other_geom': names[other]})
     return rows
 
