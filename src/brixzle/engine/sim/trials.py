@@ -1,5 +1,7 @@
 # From LunarSphere/aerial-assembly brixzle/src/brixzle/trials.py @ a649663
 # Changed: the drop rig lays course 1 across two seated bricks (running bond) (issue #82; rig_layout); classify's wrong valley uses the voxel pitch U, not the brick length 2U; run_until_settled can record a contact trace, and the drop loop is a reusable DropRig (scene built once), which can also return the contacts at rest (rest_contacts, issue #49); trials take a family and its params instead of BrickParams and cad bundles (seat pose, insertion axis, release lift and lattice pitch come from the family; drop_trials takes a course instead of a part); sequential assembly and push tests (assemble, push_test, expected_seat) dropped, leaving the drop trial; DropRig's recording rate is settable (record_fps, issue #77).
+# Half-supported layouts from LunarSphere/Brixzle-RSI src/brixzle/engine/sim/trials.py @ 41e98f6.
+# Changed: report the world-space release offset for edge-map cells.
 """MuJoCo trials: coarse-placement drops.
 
 No drone dynamics: a brick is released as a free body at a sampled pose error
@@ -134,6 +136,17 @@ def pose_error(family: Family, p, data, info, j, placement, ref=None):
     r = _rot(quat)
     angle = math.degrees((target_r.inv()*r).magnitude())
     return pos - tpos, angle
+
+
+def expected_seat(family: Family, p, data, info, placement, ref):
+    """Seat of ``placement`` carried along with supporter ref=(k, placement_k)'s actual pose."""
+    k, rp = ref
+    tpos, tquat = family.seat_pose(p, placement)
+    rpos, rquat = body_pose(data, info, k)
+    ipos, iquat = family.seat_pose(p, rp)
+    delta = _rot(rquat)*_rot(iquat).inv()
+    q = (delta*_rot(tquat)).as_quat()
+    return rpos + delta.apply(np.asarray(tpos) - np.asarray(ipos)), np.array([q[3], q[0], q[1], q[2]])
 
 
 def classify(lat: Lattice, err, angle, tol: Tolerance, on_floor):
@@ -301,21 +314,45 @@ def rig_layout(lat: Lattice, course, neighbour=False):
     return [Placement(0, 1), Placement(0, 1 + span)], Placement(1, 1 + span//2), (0, 2 + 2*span)
 
 
+# Half-supported seats (issue #146), as the structures build them: placed bricks (the first is the
+# supporter the target is judged against), the target and the base's voxel range.
+_EDGE_LAYOUTS = {
+    'plus_anchored': ([Placement(0, 0), Placement(0, -2), Placement(1, -1)], Placement(1, 1), (-3, 2)),  # corbel step 1
+    'plus_cantilever': ([Placement(1, 1), Placement(0, 0), Placement(0, -2), Placement(1, -1), Placement(2, 0)],
+                        Placement(2, 2), (-3, 2)),                                                       # corbel step 2
+    'plus_bare': ([Placement(0, 0)], Placement(1, 1), (-1, 2)),                                          # bridge arm, +x
+    'minus_bare': ([Placement(0, 0)], Placement(1, -1), (0, 3)),                                         # bridge arm, -x
+}
+EDGE_CASES = tuple(_EDGE_LAYOUTS)
+
+
+def edge_layout(lat: Lattice, case):
+    """(placed, target, base) of a half-supported drop (issue #146). The target engages one voxel of
+    its supporter and reaches one voxel past it."""
+    if case not in _EDGE_LAYOUTS:
+        raise ValueError(f'unknown edge case {case!r}; expected one of {EDGE_CASES}')
+    if lat.span_voxels != 2:
+        raise ValueError(f'the edge layouts are laid out for a two-voxel brick, got span_voxels = {lat.span_voxels}')
+    placed, target, base = _EDGE_LAYOUTS[case]
+    return list(placed), target, base
+
+
 class DropRig:
     """One compiled scene for repeated drops of one brick (course 0 onto the base, or course 1 across
-    two ideally seated course-0 bricks; ``rig_layout``), so many poses don't rebuild the model."""
+    two ideally seated course-0 bricks, or a named half-supported edge), shared across poses."""
 
     def __init__(self, family: Family, p, cfg: TrialConfig, course=0, record=False, bodies=None, record_fps=60):
         """``bodies`` ({part: SimBodies}) skips rebuilding the bricks, e.g. in a worker process.
         ``record_fps``: frames per second of sim time kept when recording."""
         self.record_fps = record_fps
-        if course not in (0, 1):
-            raise ValueError('course must be 0 or 1')
+        self.edge = course in EDGE_CASES
+        if course not in (0, 1) and not self.edge:
+            raise ValueError(f"course must be 0, 1 or one of {EDGE_CASES}, got {course!r}")
         self.family, self.p, self.cfg, self.course, self.record = family, p, cfg, course, record
         bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}
-        self.placed, self.target, self.base = rig_layout(family.lattice(p), course)
-        # The seat of a course-1 brick is judged against the first brick below it.
-        self.support = self.placed[0] if course == 1 else None
+        layout = edge_layout if self.edge else rig_layout
+        self.placed, self.target, self.base = layout(family.lattice(p), course)
+        self.support = self.placed[0] if self.placed else None
         body_parts = [family.part_for(b.course, b.direction) for b in (*self.placed, self.target)]
         self.j = len(self.placed)
         self.model, self.xml, self.info = build_scene(family, p, bodies, [self.base], len(body_parts), cfg.physics,
@@ -345,7 +382,10 @@ class DropRig:
             mujoco.mj_copyData(self._settled, model, data)
         else:
             mujoco.mj_copyData(data, model, self._settled)
-        pos, quat = release_pose(family, p, self.target, sample)
+        seat = expected_seat(family, p, data, info, self.target, (0, self.support)) if self.edge else None
+        if self.edge:
+            below = [body_pose(data, info, k)[0].copy() for k in range(self.j)]
+        pos, quat = release_pose(family, p, self.target, sample, seat)
         activate(model, data, info, self.j, pos, quat, linvel=sample['vel'])
         frames = [] if self.record else None
         contacts = {} if trace else None
@@ -355,6 +395,10 @@ class DropRig:
         err, angle = pose_error(family, p, data, info, self.j, self.target, ref)
         outcome = classify(family.lattice(p), err, angle, self.cfg.tolerance, m['floor'])
         row = {**sample, **m, 'outcome': outcome, 'err_mm': err.tolist(), 'angle_deg': angle}
+        if self.edge:
+            row["release_world_offset_mm"] = (pos - seat[0]).tolist()
+            row["placed_moved_mm"] = max(float(np.linalg.norm(body_pose(data, info, k)[0] - before))
+                                         for k, before in enumerate(below))
         if trace:
             row['contacts'] = _trace_rows(contacts)
         if rest:

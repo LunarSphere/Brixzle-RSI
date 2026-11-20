@@ -133,6 +133,7 @@ Issue #163. The hand-run twinhook line spent LLM turns on steps that are mechani
 |---|---|---|
 | `evaluate` | The loop's stages (`runs/fable/eval_family.py` as a module), or any subset (`--stages map,gate`); `eval.json` as before, so `scripts/compare_eval.py` reads it | yes, cached |
 | `redrop` | Chosen poses of a map (by box, outcome, slice, course, a seeded sample), at a friction | yes, cached |
+| `edgemap` | Fixed drop grids for both half-supported edges and the first two reaching corbel seats (#172) | yes, cached |
 | `contacts` | The same, with each drop's rest pose and its contacts grouped by the pair touching | yes, cached |
 | `sweep` | One parameter over a list of values, on a map's poses; a value the family refuses is reported | yes, cached |
 | `slices` | Counts and Z per box, slice and course | no |
@@ -141,6 +142,11 @@ Issue #163. The hand-run twinhook line spent LLM turns on steps that are mechani
 | `gate`, `ring`, `friction` | The stages alone | yes; gate and ring cached |
 
 A family is a registry name or `<root>:<module>`.
+
+**Half-supported seats (#172).** `edgemap` measures both bare edges on the same 87 poses and the anchored and cantilevered positive-X corbel seats on 13 poses each. The bare map resolves offsets near the aim at its nominal height, with sparse outer cells and lower and higher release heights. Each row keeps the layout, error about aim, signed world-space release displacement and exact input sample. Tipped jams count toward J. To diagnose an edge, use `contacts <family> --map <edgemap-run> --edge-case <layout> --outcomes jammed`. The intended push target is the lower of the two bare-edge Z values. Keep the sequential noisy corbel and the structure gate as build evidence.
+
+The earlier allround campaign shifted the centre of mass toward opposite sides to help the two edges individually. That trade-off is family-specific (`runs/opus/campaign-log.md`). Treat a change that improves one edge as a hypothesis until the other edge has been measured as well.
+
 
 **The drop cache** (`engine/drop_cache.py`). A drop depends only on what the rigs build and on its pose. So `DropPool` reads a drop that was already simulated for the same key and stores new ones, when `BRIXZLE_DROP_CACHE` is set (the tools set it). The key covers:
 
