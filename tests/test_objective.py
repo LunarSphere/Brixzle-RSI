@@ -49,9 +49,9 @@ def test_size_reads_length_pitch_and_release():
 def test_constraints_and_ranking():
     s = OB.Settings()
     good = {"name": "g", "grip": {"rule": True, "lift_mm": 0.7, "lift_deg": 0.3}, "size": {"length_mm": 60, "release_lift_mm": 25},
-            "arm": {"overhang": 12, "bridge_riser_mm": 0}, "z": {"mean": 0.97}, "tolerance_mm": 5.0, "z_mu08": 0.9,
+            "arm": {"overhang": 12, "bridge_riser_mm": 0}, "z": {"mean": 0.97}, "tolerance_mm": 4.0, "overhang_mean_steps": 29 / 6, "z_mu08": 0.9,
             "overhang_n": 11}
-    worse = {**good, "name": "w", "tolerance_mm": 2.0}
+    worse = {**good, "name": "w", "tolerance_mm": 5.0, "overhang_mean_steps": 23 / 6}
     big = {**good, "name": "b", "size": {"length_mm": 116, "release_lift_mm": 62}, "tolerance_mm": 10.0}
     assert OB.violations(good, s) == []
     assert set(OB.violations(big, s)) == {"length", "release_lift"}
@@ -60,7 +60,7 @@ def test_constraints_and_ranking():
     assert OB.dominates(good, worse, s) and not OB.dominates(worse, good, s)
 
 
-def test_the_sweep_stops_one_radius_past_the_first_failure(monkeypatch):
+def test_the_sweep_scores_all_low_error_radii_even_after_an_early_threshold_failure(monkeypatch):
     built = []
     medians = {0.0: 6, 1.0: 6, 2.0: 3, 3.0: 1, 4.0: 1, 5.0: 6}
 
@@ -70,4 +70,6 @@ def test_the_sweep_stops_one_radius_past_the_first_failure(monkeypatch):
 
     monkeypatch.setattr(OB, "noisy_corbel", fake)
     res = OB.overhang_tolerance(None, None, OB.Settings())
-    assert built == [0.0, 1.0, 2.0, 3.0, 4.0] and res["tolerance_mm"] == 2.0
+    assert built == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    assert res["tolerance_mm"] == 2.0
+    assert res["overhang_mean_steps"] == pytest.approx(23 / 6)
