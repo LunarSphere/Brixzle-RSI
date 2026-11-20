@@ -58,3 +58,16 @@ def test_constraints_and_ranking():
     ranked = OB.rank([worse, big, good], s)
     assert [r["name"] for r in ranked] == ["g", "w", "b"] and ranked[-1]["feasible"] is False
     assert OB.dominates(good, worse, s) and not OB.dominates(worse, good, s)
+
+
+def test_the_sweep_stops_one_radius_past_the_first_failure(monkeypatch):
+    built = []
+    medians = {0.0: 6, 1.0: 6, 2.0: 3, 3.0: 1, 4.0: 1, 5.0: 6}
+
+    def fake(family, p, r, builds, steps, seed, workers):
+        built.append(r)
+        return {"median_steps": medians.get(r, 0)}
+
+    monkeypatch.setattr(OB, "noisy_corbel", fake)
+    res = OB.overhang_tolerance(None, None, OB.Settings())
+    assert built == [0.0, 1.0, 2.0, 3.0, 4.0] and res["tolerance_mm"] == 2.0

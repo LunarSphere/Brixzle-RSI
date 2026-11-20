@@ -12,7 +12,8 @@ overhang bricks in the arm build. Capture Z alone rewarded that. These terms are
 
 - **Error-tolerant overhang** (``overhang_tolerance``): the back-first corbel built with every
   brick released at a seeded error inside a disc of radius r about its supporter's seat (and the
-  mean box's release heights), at r = 0, 2, 5, 10 and 14.8 mm. The gate builds it with ideal
+  mean box's release heights), at r = 0, 1, 2, 3, 4, 5, 7, 10 and 14.8 mm, stopping one radius past the
+  first whose median falls short. The gate builds it with ideal
   placement. At the mean box's 14.8 mm every design reached a median of 0 to 1 steps (#148), so one
   radius cannot rank them; the score is the largest radius at which the median build still reaches
   ``tolerance_steps``.
@@ -46,10 +47,11 @@ class Settings:
     max_length_mm: float = 70.0         # twinhook4 is 68 mm, A/B 50; allround's 116 cut the arm's overhang to 9
     max_release_mm: float = 30.0        # A/B 23, twinhook4 26; allround 62
     min_arm_overhang: int = 11          # A/B's, with the real grasp (#153)
-    max_bridge_riser_mm: float = 0.0    # A/B and twinhook4 reach bridge(3) with no riser
+    max_bridge_riser_mm: float = 10.0   # A/B and twinhook4 need none, gentle 10 (taller courses), allround 30
     grip_mm: float = 1.0                # #153's lift bar
     grip_deg: float = 1.0
-    radii_mm: tuple = (0.0, 2.0, 5.0, 10.0, MEAN_RADIUS_MM)
+    radii_mm: tuple = (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, MEAN_RADIUS_MM)
+    past_failure: int = 1               # radii still built after the first that fails (for the record)
     builds: int = 17                    # #148's count: one half-supported attempt each, at worst
     corbel_steps: int = 6
     tolerance_steps: int = 3            # the gate's own floor for the overhang (R4)
@@ -127,8 +129,18 @@ def tolerance_radius(median_by_radius, steps):
 
 
 def overhang_tolerance(family, p, settings=Settings(), seed=0, workers=None):
+    """The noisy corbel at growing radii, until ``past_failure`` radii after the first whose median
+    build falls short of ``tolerance_steps`` (larger radii cannot raise the tolerance radius)."""
     t0 = time.time()
-    per = {r: noisy_corbel(family, p, r, settings.builds, settings.corbel_steps, seed, workers) for r in settings.radii_mm}
+    per, after = {}, None
+    for r in sorted(settings.radii_mm):
+        per[r] = noisy_corbel(family, p, r, settings.builds, settings.corbel_steps, seed, workers)
+        if after is None and per[r]["median_steps"] < settings.tolerance_steps:
+            after = 0
+        elif after is not None:
+            after += 1
+        if after is not None and after >= settings.past_failure:
+            break
     medians = {r: v["median_steps"] for r, v in per.items()}
     return {"label": LABEL, "by_radius": {str(r): v for r, v in per.items()}, "median_steps": {str(r): m for r, m in medians.items()},
             "tolerance_mm": tolerance_radius(medians, settings.tolerance_steps), "steps_needed": settings.tolerance_steps,

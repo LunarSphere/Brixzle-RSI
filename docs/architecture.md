@@ -116,6 +116,15 @@ Issue #108. A full score costs about 3 to 5 minutes, so when a round has several
 
 The screen does not pick a winner among close candidates. On A/B and the four designs of `ab4iter2-20261114-mean` its ranking disagreed with the maps' at the top (`runs/screen-compare-20261113.json`): those five lie within 0.1 of each other in Z, and the screen's standard error at 60 drops is about 0.08. So a candidate is screened out only if its score is more than two standard errors of the difference below the best (a clear loser, such as the yfunnel fixture), and the rest are scored in full by rank, up to `--screen-max-maps` (default 3). If the wall-clock left after holding the end tune's time cannot fit that many full scores (each estimated from the run's scored iterations so far, 240 s before any), fewer are mapped and the iteration records a warning. The others are logged as `screened_out` with their screen score; the iteration records `seconds.screen`.
 
+## What a build needs: the build-aware objective
+
+Issue #164. Capture Z alone was won by `fable_allround`, a brick the SO-101 cannot grip well, reach far with, or release low (`docs/decisions.md`). `engine/objective.py` adds the terms a real build needs, and `scripts/objective_baselines.py` scores designs on them.
+
+- **Error-tolerant overhang** (`overhang_tolerance`). The back-first corbel (6 steps, 17 seeded builds) is built with every brick released at a seeded error inside an r-disc about its supporter's seat, at the mean box's release heights. Radii are 0, 1, 2, 3, 4, 5, 7, 10 and 14.8 mm, stopping one past the first failure. The score is the largest r at which the median build reaches 3 reaching steps.
+- **Grip** (`grip_rule`, `grip_lift`). #153's top-down stock-jaw grasp at a strict setting: within 2 mm of the centre of mass along the brick, 30 % fingertip coverage. Then a 100 mm lift from the mould station, which passes within 1 mm and 1°.
+- **Size and reach** (`size`, `arm_reach`). Length, depth, pitch and release lift, and the longest overhang and the bridge(3) riser the SO-101 reaches with the real grasp.
+- **`Settings`** holds the proposed hard constraints and the scored terms. `rank` orders designs by feasibility, then by Pareto layer. The loop's acceptance rule does not use it yet; #165's director does.
+
 ## Tools for the mechanical steps
 
 Issue #163. The hand-run twinhook line spent LLM turns on steps that are mechanical: re-dropping failing poses, reading rest contacts, splitting Z by slice, comparing two maps, sweeping one parameter, and running the stages by hand-written script. `python -m brixzle.tools <tool>` does each one deterministically. Each tool writes `runs/<tool>-<UTC>-<family>/result.json` and prints a short JSON summary for an agent to read.
