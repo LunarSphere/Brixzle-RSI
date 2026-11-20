@@ -30,6 +30,9 @@ class SearchSettings:
     full: int = 3                   # at most this many get the full evaluation
     workers: int = 8
     fixed: dict = field(default_factory=lambda: {"end_gap": 0.3})
+    # prim allows y_deg 0 (straight) or >= 30 deg (R6); sampling 0-55 wasted 43 % of a first search
+    # (runs/search-20261120T184736Z-prim), so the search samples the V across Y only.
+    bounds: dict = field(default_factory=lambda: {"y_deg": (30.0, 55.0)})
 
 
 def family():
@@ -42,9 +45,10 @@ def sample(settings=SearchSettings()):
     from scipy.stats import qmc
 
     fam = family()
-    names = sorted(fam.bounds)
-    lo = np.array([fam.bounds[k][0] for k in names])
-    hi = np.array([fam.bounds[k][1] for k in names])
+    bounds = {**fam.bounds, **settings.bounds}
+    names = sorted(bounds)
+    lo = np.array([bounds[k][0] for k in names])
+    hi = np.array([bounds[k][1] for k in names])
     m = int(math.ceil(math.log2(max(2, settings.n))))
     pts = qmc.Sobol(len(names), scramble=True, seed=settings.seed).random_base2(m)[: settings.n]
     vals = lo + pts * (hi - lo)
@@ -54,6 +58,24 @@ def sample(settings=SearchSettings()):
 # --- stage 0: rules on the parameters ---
 
 MASS_MARGIN_G = 1.0   # stage 0 rejects on mass only beyond this margin: the estimate is not exact (calibrated)
+
+
+def bore_problem(p, g):
+    """The carrying bores' placement, analytically (R13 walls, R10 either side of and above the centre
+    of mass), or ''. Each bore sits on a ramp, ``bore_z`` of the way up the strip; the strip's faces
+    there slope at the ramp angle, so the wall is the vertical gap times cos(ramp)."""
+    from brixzle.families.prim.family import BORE_D_MM
+
+    r, c = BORE_D_MM / 2, math.cos(math.radians(p.ramp_deg))
+    if min(p.bore_z, 1 - p.bore_z) * p.H0 * c - r < 1.2:
+        return "bore wall"
+    x_right = g["vu"] + p.bore_x * g["run"]
+    if not 0 < x_right < p.U:                       # one bore each side of the middle
+        return "bores straddle"
+    com_z = p.H0 / 2 + g["h"] / 2                   # the strip's mid-height, over the profile's mean height
+    if p.bore_x * g["h"] + p.bore_z * p.H0 <= com_z:
+        return "bores above the centre of mass"
+    return ""
 
 
 def mass_estimate(p, g):
@@ -90,6 +112,9 @@ def stage_rules(params, settings=SearchSettings()):
         return False, "length", m
     if release > settings.max_release_mm:
         return False, "release", m
+    why = bore_problem(p, g)
+    if why:
+        return False, why, m
     if not settings.mass_min_g <= mass <= settings.mass_max_g + MASS_MARGIN_G or mass + settings.gripper_g > settings.payload_g + MASS_MARGIN_G:
         return False, "mass", m
     return True, "", m
