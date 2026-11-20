@@ -1,6 +1,6 @@
 """Measure the SO-101's top-down reach and how far each design's overhang and bridge fall inside it (#152).
 
-    uv run python scripts/arm_reach.py [--fable-root runs/fable] [--step 5]
+    uv run python scripts/arm_reach.py [--step 5]
 
 Writes runs/arm-reach-<UTC time>/ with report.json (the envelope's size, each design's overhang
 courses and bridge arm courses and the arm base used, stage timings) and envelope.png. Reach is
@@ -20,22 +20,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from brixzle.agents.check_family import load_family
 from brixzle.engine.sim import arm as A
 from brixzle.families import registry
 
 
-def families(fable_root):
-    out = {"ab": registry.get("ab")}
-    for name in ("fable_twinhook4", "fable_allround"):
-        if (Path(fable_root) / name / "family.py").exists():
-            out[name] = load_family(fable_root, name)
-    return out
+def families():
+    return {name: registry.get(name) for name in ("ab", "fable_twinhook4", "fable_allround")}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fable-root", default="runs/fable")
     ap.add_argument("--step", type=float, default=5.0)
     ap.add_argument("--runs", default="runs")
     a = ap.parse_args()
@@ -52,7 +46,7 @@ def main():
            "top_down_ceiling_mm": float(env["z_mm"][env["reachable"].any(axis=1)].max()),
            "reach_at_floor_mm": float(env["r_mm"][env["reachable"][np.argmin(abs(env["z_mm"]))]].max(initial=0.0)),
            "designs": {}}
-    for name, fam in families(a.fable_root).items():
+    for name, fam in families().items():
         t = time.time()
         p = fam.defaults
         oh = A.max_overhang_courses(fam, env, p)

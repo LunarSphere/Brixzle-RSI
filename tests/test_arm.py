@@ -1,7 +1,6 @@
 """SO-101 arm in the scene (#152): the model loads, attaches to a brick scene, holds a pose, and
 its top-down reach is measured."""
 import math
-from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -13,18 +12,9 @@ from brixzle.engine.sim.scene import build_scene
 from brixzle.families import builders as B
 from brixzle.families import registry
 
-FABLE = Path(__file__).resolve().parents[1] / "runs" / "fable"
-
-
 def get_family(name):
-    """A/B from the registry; the fable designs from the local, git-ignored runs/fable (skipped
-    when absent: they are not registered in the repo yet)."""
-    if name == "ab":
-        return registry.get("ab")
-    if not (FABLE / name / "family.py").exists():
-        pytest.skip(f"{name} is only available locally under runs/fable")
-    from brixzle.agents.check_family import load_family
-    return load_family(FABLE, name)
+    return registry.get(name)
+
 
 PHYS = Physics(timestep=0.001, friction=0.35, contact_timeconst=0.02)
 ACTUATORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
