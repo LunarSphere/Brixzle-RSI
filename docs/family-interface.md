@@ -152,6 +152,17 @@ These formulas come from the same `rules.py`. aerial-assembly used the first bor
 
 Each violation says which check failed, where (for example `defaults, part A`) and what to fix.
 
+## A family as a subclass: the twinhook line
+
+Issue #162. The Fable designs share one joint, so they are one class hierarchy in `families/twinhook/base.py`, not six 40–50 KB copies:
+
+- **The shared joint** is the module's functions: the voxel profile, the tooth and horn, the mouths (with an optional lead-in chamfer), the lids and blind pockets, a brick's or a ring cell's layout, and the rules' predictions (`hook_levers`, `y_coupling`).
+- **`TwinHook`** is twinhook4 as a family. **`WebbedTwinHook`** places the turn piece's web by search (gentle, feather). **`WingedTwinHook`** adds wings to the brick and the base, a release that clears them, and its own carrying openings (wide, allround).
+- **A branch** is a `TwinHookParams` subclass with its own defaults (and any new fields), its bounds, and a class that overrides only what it changes: for example gentle is its defaults, its bounds and one rule floor. A new design is the same: subclass a branch, change what the step changes.
+- `SomeBranch.instance().family()` builds the `Family`. There is one instance per class, and it pickles by reference, so the family works in the sim's worker processes.
+
+A refactor must not change a design. `families/fingerprint.py` hashes exactly what the engine builds from a family (parameters, collision pieces, sections, solids, grip features, seats in every gate structure, bases, the ring kit, and the family's rule margins), and `tests/test_twinhook_line.py` compares each registered branch with the `runs/fable` module it came from, item by item.
+
 ## Not covered yet
 
 - **The gripper:** which gripper holds which grip feature is decided after the brick is settled (issue #24). Until then nothing checks that a feature can really be held; R10 only asks that one exists.
