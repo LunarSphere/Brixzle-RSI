@@ -89,10 +89,12 @@ def main(argv=None):
     elif a.step == "baseline":
         goal = RN.read_json(run / "goal.json")
         d = run / "baseline"
-        d.mkdir(exist_ok=False)
-        m = VE.measure(goal["baseline"], d)
-        RN.write_json(d / "verified.json", {"measured": m, "claim": None})
-        out = _offer(run, {**m["objective"], "name": f"baseline:{goal['baseline']}", "spec": goal["baseline"]})
+        if (d / "verified.json").exists():
+            out = RN.read_json(d / "verified.json")["offer"]
+        else:
+            m = VE.measure(goal["baseline"], d / "measured")
+            out = _offer(run, {**m["objective"], "name": f"baseline:{goal['baseline']}", "spec": goal["baseline"]})
+            RN.write_json(d / "verified.json", {"measured": m, "claim": None, "offer": out})
     elif a.step == "check":
         pkg, spec = candidate(run, a.iter)
         brief = RN.read_json(iter_dir(run, a.iter) / "brief.json", {})
@@ -106,6 +108,11 @@ def main(argv=None):
     elif a.step == "verify":
         d = iter_dir(run, a.iter)
         pkg, spec = candidate(run, a.iter)
+        if (d / "verified.json").exists():  # already verified: the archive took its offer once
+            v = RN.read_json(d / "verified.json")
+            print(json.dumps({"claim": v["claim"], "offer": v["offer"], "violations": v["measured"].get("violations")},
+                             indent=1, default=str))
+            return 0 if v["claim"]["ok"] else 1
         claim = RN.read_json(d / "claim.json", {"numbers": []})
         m = VE.measure(spec, d / "measured")
         cmp = VE.compare(claim, m)

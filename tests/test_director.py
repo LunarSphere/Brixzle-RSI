@@ -246,3 +246,40 @@ def test_each_role_has_its_own_instructions(role):
     assert f"name: rsi-{role}" in head and "description:" in head and "tools:" in head
     assert "Write" in head.split("tools:")[1]  # each writes its own file; the guard keeps it inside the run
     assert "rsi-designer" in (ROOT / ".claude" / "commands" / "rsi-loop.md").read_text()
+
+
+def test_measure_resumes_after_it_was_cut_off(tmp_path, monkeypatch):
+    """A foreground step is cut off at 10 minutes; run again, it reuses what it saved (#165)."""
+    from brixzle.engine import objective as OB
+    from brixzle.tools import core as TC
+    calls = {"eval": 0, "obj": 0}
+
+    def fake_eval(spec, out, stages=(), seed=0, cache=True):
+        calls["eval"] += 1
+        __import__("pathlib").Path(out).mkdir(parents=True)
+        rec = {"z": {"mean": {"Z": 0.5, "S": 9, "J": 0, "N": 18}}, "gate": {"overhang_n": 9}, "stages": list(stages),
+               "complete": True}
+        (__import__("pathlib").Path(out) / "eval.json").write_text(json.dumps(rec))
+        return rec
+
+    def fake_obj(fam, **kw):
+        calls["obj"] += 1
+        if calls["obj"] == 1:
+            raise KeyboardInterrupt  # cut off mid-objective
+        return {"tolerance_mm": 4.0, "violations": []}
+
+    monkeypatch.setattr(TC, "evaluate", fake_eval)
+    monkeypatch.setattr(TC, "load", lambda spec: type("F", (), {"defaults": None})())
+    monkeypatch.setattr(TC, "friction", lambda fam, p, mus: {"z": {"mu 0.8": {"Z": 0.3, "S": 5, "J": 1, "N": 10}}})
+    monkeypatch.setattr(OB, "evaluate_design", fake_obj)
+    with pytest.raises(KeyboardInterrupt):
+        VE.measure("ab", tmp_path)
+    m = VE.measure("ab", tmp_path)
+    assert calls == {"eval": 1, "obj": 2} and m["tolerance_mm"] == 4.0
+    again = VE.measure("ab", tmp_path)
+    assert calls == {"eval": 1, "obj": 2} and again == m
+
+
+def test_the_loop_never_waits_in_the_background():
+    text = (ROOT / ".claude" / "commands" / "rsi-loop.md").read_text()
+    assert "run_in_background" in text and "600000" in text

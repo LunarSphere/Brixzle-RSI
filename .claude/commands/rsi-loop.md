@@ -15,6 +15,12 @@ You orchestrate Brixzle-RSI's self-steering design loop (issue #165), with no Ag
    - With `--replay`, add `--deny-read src/brixzle/families/twinhook,src/brixzle/families/fable_twinhook4,src/brixzle/families/fable_gentle,src/brixzle/families/fable_feather,src/brixzle/families/fable_reach,src/brixzle/families/fable_wide,src/brixzle/families/fable_allround,runs/fable,RSI_RESULTS,clean_results,docs/november-16-2026-concise.md,docs/november-16-2026-verbose.md`. This hides the designs being replayed.
 3. **Without `--new`:** resume. Read `<run>/next.json` and continue from its step. Every step's output is a file, so nothing else is needed.
 
+**Run every step in the foreground.** Never use `run_in_background` and never stop to wait: in a headless session
+(`claude -p`) the session ends when your turn ends. Give each Bash call `timeout: 600000` (10 minutes). `baseline`
+and `verify` save their parts as they go, so if one is cut off at 10 minutes, run the same command again: it
+resumes, and the drop and stage caches make the redone part fast. Keep each Bash command to one plain command
+(no `$(...)` arithmetic), so the permission rules allow it.
+
 **The loop.** After each step, check `<run>/next.json` and `uv run python -m brixzle.director status --run <run>`.
 
 0. **Baseline** (only if `<run>/baseline/` is missing).

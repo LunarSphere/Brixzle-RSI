@@ -37,24 +37,53 @@ def compare(claim, measured, tol=1e-6):
 
 def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True, seed=0):
     """The candidate's evaluation (tools.core.evaluate) and, with ``objective``, the #164 terms. Z at
-    mu 0.8 comes from tools.core.friction (seed 1, mean box)."""
+    mu 0.8 comes from tools.core.friction (seed 1, mean box).
+
+    Resumable: a foreground step is cut off after 10 minutes, so each part is saved as it finishes
+    (``eval/eval.json``, ``objective.json``, then ``measured.json``) and a second call reuses what is
+    there. An evaluation cut off part-way is redone in a new directory (``eval-2``, ...); the drop and
+    stage caches make the redone stages fast."""
+    import json
+
     from brixzle.engine import objective as OB
     from brixzle.tools import core as TC
 
+    out_dir = Path(out_dir)
+    done = out_dir / "measured.json"
+    if done.exists():
+        return json.loads(done.read_text())
+    out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    ev = TC.evaluate(spec, Path(out_dir) / "eval", stages=stages, seed=seed)
-    out = {"eval": str(Path(out_dir) / "eval"), "z": ev.get("z"), "gate": ev.get("gate"), "ring": ev.get("ring"),
+    ev = None
+    for k in range(1, 10):
+        d = out_dir / ("eval" if k == 1 else f"eval-{k}")
+        if not d.exists():
+            ev = TC.evaluate(spec, d, stages=stages, seed=seed)
+            break
+        rec = json.loads((d / "eval.json").read_text()) if (d / "eval.json").exists() else {}
+        if rec.get("complete"):
+            ev = rec
+            break
+    if ev is None:
+        raise RuntimeError(f"no usable evaluation under {out_dir}")
+    out = {"eval": str(d), "z": ev.get("z"), "gate": ev.get("gate"), "ring": ev.get("ring"),
            "held_out": ev.get("held_out"), "check_family": ev.get("check_family"), "mass_g": ev.get("mass_g")}
     if objective:
-        fam = TC.load(spec)
-        fr = TC.friction(fam, fam.defaults, mus=(0.8,))
-        mu08 = next(iter(fr["z"].values()))
-        rec = OB.evaluate_design(fam, z={k: v["Z"] for k, v in (ev.get("z") or {}).items()}, z_mu08=mu08["Z"],
-                                 overhang_n=(ev.get("gate") or {}).get("overhang_n"))
-        rec["z_counts"] = {k: (ev.get("z") or {}).get("mean", {}).get(k) for k in ("S", "J", "N")}
-        rec["z_mu08_counts"] = {"S": mu08["S"], "J": mu08["J"], "N": mu08["N"]}
+        obj_path = out_dir / "objective.json"
+        if obj_path.exists():
+            rec = json.loads(obj_path.read_text())
+        else:
+            fam = TC.load(spec)
+            fr = TC.friction(fam, fam.defaults, mus=(0.8,))
+            mu08 = next(iter(fr["z"].values()))
+            rec = OB.evaluate_design(fam, z={k: v["Z"] for k, v in (ev.get("z") or {}).items()}, z_mu08=mu08["Z"],
+                                     overhang_n=(ev.get("gate") or {}).get("overhang_n"))
+            rec["z_counts"] = {k: (ev.get("z") or {}).get("mean", {}).get(k) for k in ("S", "J", "N")}
+            rec["z_mu08_counts"] = {"S": mu08["S"], "J": mu08["J"], "N": mu08["N"]}
+            obj_path.write_text(json.dumps(rec, default=str))
         out["objective"] = rec
-        out["tolerance_mm"] = rec["tolerance_mm"]
-        out["violations"] = rec["violations"]
+        out["tolerance_mm"] = rec.get("tolerance_mm")
+        out["violations"] = rec.get("violations")
     out["seconds"] = round(time.time() - t0, 1)
+    done.write_text(json.dumps(out, default=str))
     return out
