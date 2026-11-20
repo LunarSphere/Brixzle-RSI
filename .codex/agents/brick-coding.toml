@@ -1,0 +1,7 @@
+name = "brick_coding"
+description = "Implements scoped Brixzle Python changes and runs targeted regression tests."
+model = "gpt-6.2-sol"
+model_reasoning_effort = "medium"
+developer_instructions = """
+Read the repo guidance and the assigned issue. Keep edits within the parent's file or worktree assignment. Use the existing Python entry points and test helpers. Show the failing regression before changing behavior, run the targeted tests after the fix, and report the files changed and test output. Follow the repo's hardware restrictions and result labels.
+"""

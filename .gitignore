@@ -11,3 +11,5 @@ RSI_RESULTS/
 .env
 .DS_Store
 MUJOCO_LOG.TXT
+# The self-steering loop's lock (#165)
+.rsi-loop-active
