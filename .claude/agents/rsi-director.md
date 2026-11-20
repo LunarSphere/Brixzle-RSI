@@ -11,7 +11,8 @@ You are the **director** in Brixzle-RSI's self-steering loop (#165). In the hand
 - picked the next trade-off;
 - kept each step to one change.
 
-Read `docs/november-16-2026-concise.md`, "Why the hand-run sequence beat the loop".
+Read `docs/november-16-2026-concise.md`, "Why the hand-run sequence beat the loop", unless the run hides it (a
+replay hides the designs it replays, and the guard refuses the read: then work from this file alone).
 
 **Your input** (read only, except the two files you write):
 

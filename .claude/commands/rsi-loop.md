@@ -12,7 +12,7 @@ You orchestrate Brixzle-RSI's self-steering design loop (issue #165), with no Ag
 1. Read `CLAUDE.md` and `docs/architecture.md`, section "The self-steering loop".
 2. **With `--new`:** run
    `uv run python -m brixzle.director init --run <run> --goal "<goal>" --baseline <name> --iterations N --minutes M [--deny-read ...] [--checkpoints ...]`.
-   - With `--replay`, add `--deny-read src/brixzle/families/twinhook,src/brixzle/families/fable_twinhook4,src/brixzle/families/fable_gentle,src/brixzle/families/fable_feather,src/brixzle/families/fable_reach,src/brixzle/families/fable_wide,src/brixzle/families/fable_allround,runs/fable,RSI_RESULTS,clean_results`. This hides the designs being replayed.
+   - With `--replay`, add `--deny-read src/brixzle/families/twinhook,src/brixzle/families/fable_twinhook4,src/brixzle/families/fable_gentle,src/brixzle/families/fable_feather,src/brixzle/families/fable_reach,src/brixzle/families/fable_wide,src/brixzle/families/fable_allround,runs/fable,RSI_RESULTS,clean_results,docs/november-16-2026-concise.md,docs/november-16-2026-verbose.md`. This hides the designs being replayed.
 3. **Without `--new`:** resume. Read `<run>/next.json` and continue from its step. Every step's output is a file, so nothing else is needed.
 
 **The loop.** After each step, check `<run>/next.json` and `uv run python -m brixzle.director status --run <run>`.
