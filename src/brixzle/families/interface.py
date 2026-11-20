@@ -235,7 +235,8 @@ class Family:
     extra_rules: Callable[[Any, str, SimBodies], dict[str, float]] | None = None  # (p, part, bodies)
     ring: RingKit | None = None  # how the family turns a corner and closes a ring (issue #89)
     # Mixed materials (#167): (p, part) -> (convex pieces of a second, compliant material, their contact as
-    # {timeconst, dampratio, friction, estimate, source}). They collide with their own contact settings.
+    # {timeconst, dampratio, friction, optional solimp, and optional material provenance}).
+    # They collide with their own contact settings.
     soft: Callable[[Any, str], tuple] | None = None
 
     @property

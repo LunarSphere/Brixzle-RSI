@@ -6,16 +6,16 @@ The brick, its parameters, bounds and ring kit are fable_gentle's. Only the teet
 material: they are TPU on the PLA body, so in the sim they collide with their own, softer and more
 damped contact (``Family.soft``; the scene gives them their own ``solref`` and friction).
 
-**The TPU values are estimates, not measurements.** PLA keeps the repo's contact (``Physics``:
-time constant 0.2, damping ratio 1.0, friction 0.3). For TPU (Shore 95A) the contact is taken
-three times softer (time constant 0.6), overdamped (damping ratio 2.0) and grippier (friction 0.6).
-These are guesses until the TPU friction and drop tests (docs/physical-tests-167.md) are run.
+The bounce trial's default PLA contact uses a 0.004 s time constant, a 1.0 damping ratio and
+friction 0.35 (``TrialConfig``). The Shore 95A TPU contact uses unmeasured estimates of 0.6 s,
+2.0 and 0.6, respectively. It uses the PLA impedance curve (solimp) and PLA density for the
+mass properties. The TPU friction and drop tests are described in docs/physical-tests-167.md.
 """
 from brixzle.families.fable_gentle.family import BOUNDS, Gentle, GentleParams  # noqa: F401
 from brixzle.families.twinhook.base import _brick_layout, _extras
 
-TPU_CONTACT = {"timeconst": 0.6, "dampratio": 2.0, "friction": 0.6, "estimate": True,
-               "source": "guess (#167): 3x the PLA time constant, overdamped, TPU-on-PLA friction 0.6; unmeasured"}
+TPU_CONTACT = {"material": "TPU (Shore 95A)", "timeconst": 0.6, "dampratio": 2.0, "friction": 0.6, "estimate": True,
+               "source": "Unmeasured estimates for Shore 95A TPU against PLA (#167)"}
 
 
 class GentleTpuHook(Gentle):

@@ -16,6 +16,7 @@ from brixzle.families.interface import Family
 
 MM = 1e-3
 PARK_Z = 2.0
+CONTACT_SOLIMP = (0.95, 0.99, 0.0001, 0.5, 2.0)
 
 
 def _numbers(values):
@@ -60,7 +61,7 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
     default = ET.SubElement(root, 'default')
     ET.SubElement(default, 'geom', condim='3', friction=f'{physics.friction} 0.005 0.0001', margin='0',
                   solref=f'{physics.contact_timeconst} {physics.contact_dampratio}',
-                  solimp='0.95 0.99 0.0001 0.5 2')
+                  solimp=_numbers(CONTACT_SOLIMP))
     visual_el = ET.SubElement(root, 'visual')
     ET.SubElement(visual_el, 'global', offwidth='1280', offheight='960')
     asset = ET.SubElement(root, 'asset')
@@ -113,6 +114,7 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
             ET.SubElement(body, 'geom', name=f'brick{j}_s{k}', type='mesh', mesh=f'{name}_soft_{k}', group='3',
                           rgba='.9 .3 .3 .4', contype='1', conaffinity='1', priority='1',
                           solref=f"{sc['timeconst']} {sc['dampratio']}",
+                          solimp=_numbers(sc.get("solimp", CONTACT_SOLIMP)),
                           friction=f"{sc['friction']} 0.005 0.0001")
         if visual and bundle.mesh is not None:
             palette = {'B': '.95 .55 .15 1', 'L3': '.95 .55 .15 1', 'I3': '.35 .75 .4 1', 'K2': '.85 .3 .35 1'}

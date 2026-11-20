@@ -219,7 +219,8 @@ def grip_lift(family, p, settings=Settings(), strict=True):
 def size(family, p):
     from brixzle.families import builders as B
 
-    pts = np.vstack([np.vstack(B.sim_bodies(family, p, part).collision) for part in family.parts])
+    bodies = [B.sim_bodies(family, p, part) for part in family.parts]
+    pts = np.vstack([piece for b in bodies for piece in (*b.collision, *b.soft_collision)])
     lo, hi = pts.min(axis=0), pts.max(axis=0)
     lat = family.lattice(p)
     return {"length_mm": float(hi[0] - lo[0]), "depth_mm": float(hi[1] - lo[1]), "height_mm": float(hi[2] - lo[2]),
