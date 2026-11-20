@@ -2,6 +2,7 @@
 (``evaluate`` writes eval.json to --out) and prints a short JSON summary. Simulated, uncalibrated contact.
 
     evaluate   <family> --out DIR [--stages map,gate,...]   the loop's stages, with the caches
+    edgemap    <family>                                     half-supported seat map
     redrop     <family> --map DIR [selection] [--friction MU]  re-drop chosen map poses
     contacts   <family> --map DIR [selection]                  rest pose and contacts of chosen drops
     sweep      <family> --param NAME --values V,V,.. --map DIR [selection]
@@ -32,6 +33,7 @@ def _selection(ap, needs_map=True):
     ap.add_argument("--outcomes")
     ap.add_argument("--slices")
     ap.add_argument("--courses")
+    ap.add_argument("--edge-case", choices=("plus_bare", "minus_bare", "plus_anchored", "plus_cantilever"))
     ap.add_argument("--limit", type=int)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--friction", type=float)
@@ -40,7 +42,7 @@ def _selection(ap, needs_map=True):
 
 def _drops(a):
     return TC.select_drops(TC.read_drops(a.map), box=a.box, outcomes=_csv(a.outcomes), slices=_csv(a.slices),
-                           courses=_csv(a.courses, int), limit=a.limit, seed=a.seed)
+                           courses=_csv(a.courses, int), limit=a.limit, seed=a.seed, edge_case=a.edge_case)
 
 
 def parser():
@@ -53,6 +55,10 @@ def parser():
     e.add_argument("--stages", default=",".join(TC.STAGES))
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--no-cache", action="store_true")
+    s = sub.add_parser("edgemap")
+    s.add_argument("family")
+    s.add_argument("--workers", type=int, default=8)
+    s.add_argument("--no-cache", action="store_true")
     for name in ("redrop", "contacts"):
         s = sub.add_parser(name)
         s.add_argument("family")
@@ -108,6 +114,8 @@ def main(argv=None):
         p, name = fam.defaults, fam.name
         if a.tool == "redrop":
             res = TC.redrop(fam, p, _drops(a), friction=a.friction, workers=a.workers)
+        elif a.tool == "edgemap":
+            res = TC.edgemap(fam, p, workers=a.workers)
         elif a.tool == "contacts":
             res = TC.contacts(fam, p, _drops(a), friction=a.friction, workers=a.workers)
         elif a.tool == "sweep":

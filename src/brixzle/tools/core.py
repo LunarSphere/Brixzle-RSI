@@ -1,3 +1,5 @@
+# Edge-stage layout and tipped-jam terminology from LunarSphere/Brixzle-RSI src/brixzle/engine/edge_capture.py @ de8d1ff.
+# Changed: use a fixed grid across three heights, with cache and contact replay.
 """Deterministic tools for the design loop's mechanical steps (#163).
 
 Each tool is a function that returns a JSON-able dict and writes it to a new run directory
@@ -78,7 +80,15 @@ def _ideal():
 
 
 def read_drops(map_dir):
-    return json.loads(gzip.open(Path(map_dir) / "drops.json.gz").read())
+    map_dir = Path(map_dir)
+    drop_path = map_dir / "drops.json.gz"
+    if drop_path.exists():
+        with gzip.open(drop_path, "rt") as stream:
+            return json.load(stream)
+    result = json.loads((map_dir / "result.json").read_text())
+    if result.get("kind") != "edgemap":
+        raise ValueError(f"{map_dir} is not a placement map or edge map")
+    return result["rows"]
 
 
 def boxes():
@@ -106,7 +116,7 @@ def band(c):
     return ZS.z_band({"S": c["seated"], "J": c["jammed"], "N": c["N"], "Z": c["Z"]}) if c["N"] else None
 
 
-def select_drops(drops, box=None, outcomes=None, slices=None, courses=None, limit=None, seed=0):
+def select_drops(drops, box=None, outcomes=None, slices=None, courses=None, limit=None, seed=0, edge_case=None):
     """Map drops (not zooms) inside ``box`` (a statistic name), with these outcomes, slices and courses;
     at most ``limit``, picked with ``seed`` and kept in map order."""
     import numpy as np
@@ -115,7 +125,8 @@ def select_drops(drops, box=None, outcomes=None, slices=None, courses=None, limi
     b = boxes()[box] if box else None
     out = [d for d in drops if not d.get("zoom") and (b is None or in_box(d, b, c0))
            and (outcomes is None or d["outcome"] in outcomes) and (slices is None or d.get("slice") in slices)
-           and (courses is None or d["course"] in courses)]
+           and (courses is None or d["course"] in courses)
+           and (edge_case is None or d.get("edge_case") == edge_case)]
     if limit is not None and len(out) > limit:
         idx = sorted(np.random.default_rng(seed).choice(len(out), size=limit, replace=False).tolist())
         out = [out[i] for i in idx]
@@ -125,12 +136,77 @@ def select_drops(drops, box=None, outcomes=None, slices=None, courses=None, limi
 def _jobs(drops, opts):
     from brixzle.engine import probe as PB
     cfg = _ideal()
-    return [(d["course"], PB._map_sample(d, cfg), dict(opts)) for d in drops]
+    return [(d["edge_case"], d["sample"], dict(opts)) if "edge_case" in d
+            else (d["course"], PB._map_sample(d, cfg), dict(opts)) for d in drops]
 
 
 def _pose(d):
-    return {"slice": d.get("slice"), "course": d["course"], "cell": d.get("cell"), "x_mm": d["dx_mm"],
-            "y_mm": d.get("dy_mm", 0.0), "clear_mm": d["clear_mm"], "pitch_deg": d["pitch_deg"]}
+    row = {"slice": d.get("slice"), "course": d["course"], "cell": d.get("cell"), "x_mm": d["dx_mm"],
+           "y_mm": d.get("dy_mm", 0.0), "clear_mm": d["clear_mm"], "pitch_deg": d["pitch_deg"]}
+    if "edge_case" in d:
+        row["edge_case"] = d["edge_case"]
+    return row
+
+
+# --- half-supported seats ---
+
+
+def edge_grid():
+    """The fixed 200-drop stencil. Poses are X and Y offsets from aim, then height."""
+    nominal = [(x, y, "nominal") for x in range(-3, 4) for y in range(-3, 4)]
+    for offset in (-6, -5, -4, -0.5, 0.5, 4, 5, 6):
+        nominal.extend(((offset, 0, "nominal"), (0, offset, "nominal")))
+    nominal.extend((x, y, "nominal") for x in (-4, 4) for y in (-4, 4))
+    bare = nominal + [(x, y, height) for height in ("low", "high") for x in (-2, 0, 2) for y in (-2, 0, 2)]
+    corbel = [(0, 0, "nominal")]
+    for offset in (-4, -2, -1, 1, 2, 4):
+        corbel.extend(((offset, 0, "nominal"), (0, offset, "nominal")))
+    return {"plus_bare": bare, "minus_bare": bare, "plus_anchored": corbel, "plus_cantilever": corbel}
+
+
+def edgemap(family, p, workers=8):
+    """Drop matched edge grids and two corbel stencils. Keep tipped jams in Z."""
+    from brixzle.engine import box_search as BS
+    from brixzle.engine import zscore as ZS
+    from brixzle.engine.sim import trials as T
+
+    t0 = time.time()
+    cfg = _ideal()
+    h = boxes()["mean"].half_widths["z_mm"]
+    heights = {"low": 0.0, "nominal": h, "high": 2 * h}
+    lattice = family.lattice(p)
+    grid = edge_grid()
+    layouts = {}
+    poses, jobs = [], []
+    for case, points in grid.items():
+        placed, target, base = T.edge_layout(lattice, case)
+        layouts[case] = {"placed": [asdict(b) for b in placed], "target": asdict(target), "base": base}
+        for x, y, height in points:
+            sample = ZS._sample(cfg, {"x": x, "y": y, "z": heights[height], "t": 0.0})
+            poses.append({"slice": "edge", "edge_case": case, "course": target.course, "cell": len(poses),
+                          "height": height, "dx_mm": x, "dy_mm": y, "clear_mm": sample["clear"],
+                          "pitch_deg": sample["pitch"], "sample": sample})
+            jobs.append((case, sample, {"trace": False}))
+
+    with BS.DropPool(family, p, cfg, workers=workers) as pool:
+        rows = []
+        for pose, measured in zip(poses, pool.imap(jobs), strict=True):
+            outcome = measured["outcome"]
+            rows.append({**pose, "outcome": outcome,
+                         "tipped": outcome == "jammed" and measured["settled"] and measured["angle_deg"] > 10.0,
+                         **{k: measured[k] for k in ("angle_deg", "err_mm", "settled",
+                                                    "release_world_offset_mm", "placed_moved_mm")}})
+        cache = dict(pool.cache_stats)
+
+    cases = {}
+    for case in grid:
+        selected = [r for r in rows if r["edge_case"] == case]
+        cases[case] = {**counts([r["outcome"] for r in selected]), "tipped": sum(r["tipped"] for r in selected)}
+    weaker = min(("plus_bare", "minus_bare"), key=lambda case: cases[case]["Z"])
+    return {"kind": "edgemap", "label": LABEL, "family": family.name, "params": asdict(p),
+            "config": T.as_dict(cfg), "tip_deg": 10.0, "grid_height_above_min_mm": heights,
+            "layouts": layouts, "cases": cases, "weaker_bare_edge": weaker, "edge_z": cases[weaker]["Z"],
+            "rows": rows, "cache": cache, "seconds": round(time.time() - t0, 3)}
 
 
 # --- redrop ---
@@ -216,6 +292,8 @@ def slices(map_dir):
 
 
 def _key(d):
+    if "edge_case" in d:
+        return (d["edge_case"], d["dx_mm"], d["dy_mm"], d["clear_mm"], d["pitch_deg"])
     return (d.get("slice"), d["course"], tuple(d.get("cell") or ()), d["dx_mm"], d.get("dy_mm", 0.0), d["clear_mm"],
             d["pitch_deg"])
 

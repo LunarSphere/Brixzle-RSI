@@ -5,7 +5,7 @@ one already run is read back instead of run again.
 
 - **the sim geometry** (``geometry_key``): each part's collision pieces, mass, centre of mass and
   inertia (``SimBodies``, not the printed mesh, which the physics never sees); the lattice; the
-  release lift; the seat pose, insertion axis and part of every brick in both drop rigs; and the
+  release lift; the seat pose, insertion axis and part of every brick in supported drop rigs; and the
   anchored bases those rigs use. Not the family's name, version or parameter values: two designs
   that build the same scene share their drops, so a refactor (#162) or a parameter the sim never sees
   costs nothing;
@@ -68,8 +68,11 @@ def geometry_key(family, p, bodies=None):
     bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}
     lat = family.lattice(p)
     rigs, bases = [], set()
-    for course in (0, 1):
-        placed, target, base = T.rig_layout(lat, course)
+    layouts = [(course, T.rig_layout(lat, course)) for course in (0, 1)]
+    if lat.span_voxels == 2:
+        layouts.extend((case, T.edge_layout(lat, case)) for case in T.EDGE_CASES)
+    for course, (placed, target, base) in layouts:
+        rigs.append([course, base])
         for b in (*placed, target):
             pos, quat = family.seat_pose(p, b)
             rigs.append([course, b.course, b.i0, b.direction, family.part_for(b.course, b.direction),

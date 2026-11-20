@@ -115,7 +115,8 @@ def main(argv=None):
                              indent=1, default=str))
             return 0 if v["claim"]["ok"] else 1
         claim = RN.read_json(d / "claim.json", {"numbers": []})
-        m = VE.measure(spec, d / "measured")
+        brief = RN.read_json(d / "brief.json", {})
+        m = VE.measure(spec, d / "measured", measure_edge=brief.get("term") == "edge_z")
         cmp = VE.compare(claim, m)
         rec = {**m["objective"], "violations": m["violations"],
                "name": f"iter-{a.iter:02d}:{pkg.name}", "spec": spec}

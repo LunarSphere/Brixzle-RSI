@@ -38,7 +38,7 @@ replay hides the designs it replays, and the guard refuses the read: then work f
 ```json
 {"action": "fix" | "push" | "stop",
  "design": "<spec of the archive member or candidate to start from: registry name or <root>:<module>>",
- "term": "<the one term to improve: a term in goal.json settings.scored, or a violated constraint>",
+ "term": "<the one term to improve: a term in goal.json settings.scored, edge_z, or a violated constraint>",
  "brief": "<what to change and why, from the diagnosis, in words a designer can build>",
  "may_change": ["param:<f>" | "def:<name>" | "const:<name>", ...],
  "goal_change": null | {"text": "...", "settings": {"<setting>": <tighter value>}},
@@ -57,7 +57,12 @@ replay hides the designs it replays, and the guard refuses the read: then work f
   - a regression the diagnosis explains.
 - **`push`:**
   - one term of an archive member, as a branch;
-  - prefer the term furthest behind the goal.
+  - prefer the term furthest behind the goal;
+  - for a reaching-brick jam, run `uv run python -m brixzle.tools --runs <run>/edge edgemap <spec>`.
+    Compare the two bare edges and cite the run. Choose `term: edge_z` to push the weaker bare-edge Z.
+    Ask for contacts from that edge and review the other edge for regressions. In the prior allround
+    campaign the opposite edges benefited from opposite centre-of-mass shifts. Check both sides before
+    using that mechanism on another family. Keep the structure gate and noisy corbel for acceptance.
 - **`stop`:**
   - the budget is nearly spent;
   - three iterations in a row added nothing to the archive;

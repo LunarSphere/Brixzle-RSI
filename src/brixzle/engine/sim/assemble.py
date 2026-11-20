@@ -31,6 +31,7 @@ from shapely.ops import unary_union
 
 from brixzle.engine.sim import trials as T
 from brixzle.engine.sim.scene import activate, body_pose, build_scene
+from brixzle.engine.sim.trials import expected_seat
 from brixzle.engine.structures import CATALOG, Structure, brick_name, structure_for, voxels
 from brixzle.families import builders as B
 from brixzle.families.interface import Family, Placement
@@ -172,17 +173,6 @@ def assembly_order(family: Family, p, structure: Structure):
 
 
 # --- the trials (from trials.py) ---
-
-
-def expected_seat(family: Family, p, data, info, placement, ref):
-    """Seat of ``placement`` carried along with supporter ref=(k, placement_k)'s actual pose."""
-    k, rp = ref
-    tpos, tquat = family.seat_pose(p, placement)
-    rpos, rquat = body_pose(data, info, k)
-    ipos, iquat = family.seat_pose(p, rp)
-    delta = T._rot(rquat)*T._rot(iquat).inv()
-    q = (delta*T._rot(tquat)).as_quat()
-    return rpos + delta.apply(np.asarray(tpos) - np.asarray(ipos)), np.array([q[3], q[0], q[1], q[2]])
 
 
 def _assemble(family: Family, p, structure, cfg: T.TrialConfig, seed=0, stop_on_fail=True, record=None,
