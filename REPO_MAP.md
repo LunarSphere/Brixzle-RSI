@@ -15,6 +15,7 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/agents/runner.py` | The one place the loop calls Claude: the Agent SDK runner (credentials from `ANTHROPIC_API_KEY` or the `ant` profile), the spend ledger and its cap, the tool guard, and the scripted runner the tests use |
 | `src/brixzle/engine/` | Analytic predictor, tuner, sim verifier, scorer and diagnoser |
 | `src/brixzle/engine/sim/` | MuJoCo sim core ported from aerial-assembly: scene, drop trial, Tolerance and classify, Exp 3 error model |
+| `src/brixzle/engine/sim/arm.py` | SO-101 arm (#152): attach to a brick scene, top-down IK, reach envelope, base and riser planning for the overhang and bridge |
 | `src/brixzle/engine/sim/pickup.py`, `fork.py`, `drone.py` | Pickup trial (R12): pick fixture, bored brick collision, the fixed fork, and the drone's mass, thrust margin and hover spring |
 | `src/brixzle/engine/boxes.py`, `box_search.py` | Target error boxes (R11, R12) and the box-scale search for placement and pickup |
 | `src/brixzle/engine/quick_check.py` | Quick random check (issue #47): 40 evenly spread sim drops inside a target box, 32 seated to pass, stopping at the 9th failure; writes `check.json` with the failing poses and their contact traces |
@@ -31,8 +32,8 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/families/wedge/`, `pyramid/` | Dummy families for the contract tests: one Prismatic (2.5D), one Solid3D (full 3D) |
 | `src/brixzle/families/ab/` | The A/B baseline family ported from aerial-assembly: parameters and bounds, profile, lattice seats, rules, and `family.py` (the interface) |
 | `src/brixzle/rules/` | Design rules corpus (issue #16): distilled rules (`design_rules.md`), each citing its sources by key, and the citation list with links (`citations.md`); `__init__.py` parses both for the critic. No PDFs: the repo is public |
-| `src/brixzle/data/` | Drone error files: measured X–Y error (`error-exp3-r4.json`) and hover estimates (`hover-exp3-r2.json`) |
-| `scripts/` | One-off data generators, e.g. `make_hover_estimates.py` (Z, pitch and yaw estimates from aerial-assembly's Exp 3 logs) |
+| `src/brixzle/data/` | Drone error files: measured X–Y error (`error-exp3-r4.json`) and hover estimates (`hover-exp3-r2.json`); `so101/`: the SO-101 arm model copied from mujoco_menagerie (source, licence and the reason for the choice in its README) |
+| `scripts/` | One-off data generators, e.g. `make_hover_estimates.py` (Z, pitch and yaw estimates from aerial-assembly's Exp 3 logs) and `arm_reach.py` (the SO-101's reach and each design's overhang and bridge reach, #152) |
 | `tests/` | pytest suite (`uv run pytest`) |
 | `tests/fixtures/` | Reference results recorded from aerial-assembly, and the scripts that recorded them |
 | `docs/` | Requirements (R1–R13) as prose (`requirements.md`) and data (`requirements.yaml`), the family interface (`family-interface.md`), architecture, the predictor validation report (`predictor-validation.md`), and the decisions made where an issue left something open (`decisions.md`) |
