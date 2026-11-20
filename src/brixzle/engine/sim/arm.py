@@ -120,16 +120,17 @@ def _rot_err(R, R_des):
     return v
 
 
-def ik_top_down(model, idx, target_m, yaw, q0=None, data=None, iters=200, tol_mm=0.5, tol_deg=1.0):
+def ik_top_down(model, idx, target_m, yaw, q0=None, data=None, iters=200, tol_mm=0.5, tol_deg=1.0, wide=False):
     """Damped least squares for the five placing joints: tool point at ``target_m`` (world, m),
     gripper pointing straight down, jaws closing along ``yaw``. Joint limits are respected.
-    Seeds: ``q0`` if given, else a few elbow-up poses facing the target."""
+    Seeds: ``q0`` if given, else a few elbow-up poses facing the target, and with ``wide`` a grid of
+    60 more (for a pose found from scratch, e.g. far below a raised base; slow when it fails)."""
     data = mujoco.MjData(model) if data is None else data
     target = np.asarray(target_m, dtype=float)
     R_des = np.array([[math.cos(yaw), -math.sin(yaw), 0.0], [math.sin(yaw), math.cos(yaw), 0.0], [0.0, 0.0, 1.0]])
     dof = idx.dof[:5]
     lo, hi = idx.lo[:5], idx.hi[:5]
-    seeds = [np.asarray(q0, dtype=float)] if q0 is not None else _seeds(model, idx, target, data)
+    seeds = [np.asarray(q0, dtype=float)] if q0 is not None else _seeds(model, idx, target, data, wide)
     best = None
     jacp, jacr = np.zeros((3, model.nv)), np.zeros((3, model.nv))
     for q in seeds:
@@ -168,14 +169,15 @@ def _judge(model, idx, data, q, target, R_des, tol_mm, tol_deg):
     return IKResult(q=q.copy(), err_mm=err, tilt_deg=tilt, yaw_err_deg=yaw_err, ok=ok)
 
 
-def _seeds(model, idx, target, data):
+def _seeds(model, idx, target, data, wide=False):
     base = data.xpos[idx.bodies[0]] if data.xpos.any() else np.zeros(3)
     mujoco.mj_kinematics(model, data)
     base = data.xpos[idx.bodies[0]]
     pan = math.atan2(target[1] - base[1], target[0] - base[0]) - _base_yaw(model, data, idx)
     pan = (pan + math.pi) % (2 * math.pi) - math.pi
-    return [np.array([pan, lift, elbow, wrist, 0.0]) for lift, elbow, wrist in
-            ((0.0, 0.5, 1.0), (-0.8, 0.8, 1.2), (0.6, -0.2, 1.3), (0.3, 1.2, 0.2))]
+    first = [(0.0, 0.5, 1.0), (-0.8, 0.8, 1.2), (0.6, -0.2, 1.3), (0.3, 1.2, 0.2)]
+    grid = [(l, e, w) for l in (-1.2, -0.6, 0.0, 0.6, 1.2) for e in (-0.6, 0.2, 0.9, 1.5) for w in (-0.6, 0.4, 1.3)] if wide else []
+    return [np.array([pan, lift, elbow, wrist, 0.0]) for lift, elbow, wrist in first + grid]
 
 
 def _base_yaw(model, data, idx):
@@ -302,13 +304,14 @@ def floor_mm(family, p, structure):
 RISERS_MM = tuple(range(0, 151, 10))   # heights of the block the arm's base may stand on
 
 
-def plan_base(family, p, structure, targets_mm, env, grid_mm=10.0, risers_mm=RISERS_MM):
-    """A base pose (x, y, z mm, yaw rad, riser mm) from which every target is reached top-down, or None.
+def plan_bases(family, p, structure, targets_mm, env, grid_mm=10.0, risers_mm=RISERS_MM, yaws=None):
+    """Base poses (x, y, z mm, yaw rad, riser mm) from which every target is reached top-down,
+    best first: the lowest riser, then the nearest the targets' centroid.
 
     The base stays ``BASE_CLEAR_MM`` (in plan) from every brick and base, and may stand on a riser
     (a block under it): a straight-down pose tops out under 100 mm above the base, because the wrist
-    runs out of range, so a tall structure needs the base raised. The lowest riser that works wins,
-    then the base nearest the targets' centroid.
+    runs out of range, so a tall structure needs the base raised. The envelope screens candidates;
+    with ``yaws`` (the jaw yaw at each target, rad) each survivor is then checked by exact IK.
     """
     foot = _footprint_mm(family, p, structure)
     z0 = floor_mm(family, p, structure)
@@ -321,9 +324,32 @@ def plan_base(family, p, structure, targets_mm, env, grid_mm=10.0, risers_mm=RIS
         for x, y in cands:
             yaw = math.atan2(cen[1] - y, cen[0] - x)
             base = (x, y, z0 + riser)
-            if all(reachable(env, base, yaw, t) for t in targets_mm):
-                return (float(x), float(y), float(z0 + riser), float(yaw), float(riser))
-    return None
+            if not all(reachable(env, base, yaw, t) for t in targets_mm):
+                continue
+            if yaws is not None and not all(ik_from_base(base, yaw, t, ty).ok for t, ty in zip(targets_mm, yaws)):
+                continue
+            yield (float(x), float(y), float(z0 + riser), float(yaw), float(riser))
+
+
+def plan_base(family, p, structure, targets_mm, env, **kw):
+    """The best of ``plan_bases``, or None."""
+    return next(plan_bases(family, p, structure, targets_mm, env, **kw), None)
+
+
+_BARE = {}
+
+
+def ik_from_base(base_mm, base_yaw, target_mm, jaw_yaw):
+    """Exact top-down IK for an arm whose base is at ``base_mm`` turned by ``base_yaw``: the bare
+    model, with the target moved into its frame."""
+    if "m" not in _BARE:
+        _BARE["m"] = arm_spec().compile()
+        _BARE["i"] = ArmIndex.of(_BARE["m"], prefix="")
+        _BARE["d"] = mujoco.MjData(_BARE["m"])
+    c, s_ = math.cos(-base_yaw), math.sin(-base_yaw)
+    d = (np.asarray(target_mm, float) - np.asarray(base_mm, float)) * MM
+    local = np.array([c * d[0] - s_ * d[1], s_ * d[0] + c * d[1], d[2]])
+    return ik_top_down(_BARE["m"], _BARE["i"], local, jaw_yaw - base_yaw, data=_BARE["d"], wide=True)
 
 
 def max_overhang_courses(family, env, p=None, up_to=12):
