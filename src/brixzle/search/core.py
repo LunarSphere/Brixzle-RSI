@@ -238,7 +238,8 @@ def run_stage(name, cands, settings, parallel=True):
             key = why.split(":")[0]
             reasons[key] = reasons.get(key, 0) + 1
     rep = {"stage": name, "in": len(cands), "passed": len(passed), "wall_s": round(wall, 3),
-           "evals_per_s": round(len(cands) / wall, 3) if wall > 0 else None,
+           "evals_per_s": round(len(cands) / wall, 3) if cands and wall > 0 else None,
+           "pass_rate": len(passed) / len(cands) if cands else None,
            "cpu_s_per_eval": round(sum(r[3] for r in res) / max(1, len(res)), 4), "rejected_by": reasons,
            "label": LABEL_PRED if name in ("rules", "predict") else LABEL_SIM}
     return passed, rep
@@ -272,7 +273,89 @@ FAMILY = _family()
     return f"{root}:{cid}"
 
 
-def run_search(settings=SearchSettings(), runs="runs", full_eval=True):
+def _full_candidate(out, candidate, reference):
+    """Verify a candidate against the fixed #164 reference front."""
+    from brixzle.engine import objective as OB
+    from brixzle.tools import core as TC
+
+    candidate_id = candidate["id"]
+    spec = write_package(out / "candidates", candidate_id, candidate["params"])
+    started = time.monotonic()
+    try:
+        evaluation = TC.evaluate(spec, out / "eval" / candidate_id,
+                                 stages=("check", "quick", "map", "held_out", "gate", "ring"))
+    except ValueError as error:
+        return {"spec": spec, "status": "unevaluable", "reason": str(error), "kept": None,
+                "seconds": round(time.monotonic() - started, 3)}
+    z = {key: value["Z"] for key, value in (evaluation.get("z") or {}).items()}
+    gate = evaluation.get("gate") or {}
+    ring = evaluation.get("ring") or {}
+    violations = []
+    if (evaluation.get("check_family") or {}).get("ok") is not True:
+        violations.append("check_family")
+    if gate.get("passed") is not True:
+        violations.append("structure_gate")
+    if ring.get("status") != "complete":
+        violations.append("ring")
+    result = {"spec": spec, "eval": str(out / "eval" / candidate_id), "z": z, "gate": gate,
+              "ring": ring["status"] if "status" in ring else None, "violations": violations}
+    if not violations:
+        family = TC.load(spec)
+        friction = TC.friction(family, family.defaults, mus=(0.8,), seed=1)
+        score = OB.evaluate_design(family, z=z, z_mu08=next(iter(friction["z"].values()))["Z"],
+                                   overhang_n=gate["overhang_n"])
+        result["objective"] = score
+        violations.extend(score["violations"])
+        result["dominated_by"] = [r["name"] for r in reference if OB.dominates(r, score)]
+    result["kept"] = not violations and not result.get("dominated_by")
+    result["status"] = "complete"
+    result["seconds"] = round(time.monotonic() - started, 3)
+    return result
+
+
+def false_rejects(candidates):
+    """Counts and rates conditional on the candidates that full evaluation kept."""
+    keepers = [c for c in candidates if (c.get("full") or {}).get("kept") is True]
+    names = ("rules", "predict", "drops")
+    counts = {name: sum(not c["stages"][name]["ok"] for c in keepers) for name in names}
+    counts["early_funnel"] = sum(any(not c["stages"][name]["ok"] for name in names) for c in keepers)
+    return {name: {"count": count, "rate": count / len(keepers) if keepers else None}
+            for name, count in counts.items()}
+
+
+def calibrate(settings, reference, runs="runs", reference_source=None):
+    """Measure all stages on a seeded sample without routing it through the live funnel."""
+    from brixzle.tools import core as TC
+
+    t0 = time.monotonic()
+    out = TC.new_run("calibration", "prim", runs)
+    candidates = []
+    buildable = []
+    for index, params in enumerate(sample(settings)):
+        candidate = {"id": f"c{index:05d}", "params": params}
+        candidates.append(candidate)
+        try:
+            _params(params)
+        except (TypeError, ValueError) as error:
+            candidate["full"] = {"status": "invalid_parameters", "reason": str(error), "kept": None}
+        else:
+            buildable.append(candidate)
+
+    stages = [run_stage(name, buildable, settings)[1] for name, _ in STAGES]
+    for candidate in buildable:
+        candidate["full"] = _full_candidate(out, candidate, reference)
+    complete = [c for c in candidates if c["full"].get("kept") is not None]
+    result = {"label": LABEL_SIM, "settings": asdict(settings), "reference_source": reference_source,
+              "reference": [r["name"] for r in reference], "stages": stages, "candidates": candidates,
+              "evaluated": len(complete), "full_keepers": sum(c["full"]["kept"] for c in complete),
+              "false_rejects": false_rejects(candidates), "seconds": round(time.monotonic() - t0, 3),
+              "run": str(out)}
+    result = TC._finite(result)
+    (out / "calibration.json").write_text(json.dumps(result, indent=1, allow_nan=False) + "\n")
+    return result
+
+
+def run_search(settings=SearchSettings(), runs="runs", full_eval=True, reference=()):
     from brixzle.tools import core as TC
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -284,26 +367,23 @@ def run_search(settings=SearchSettings(), runs="runs", full_eval=True):
     reports, alive = [], cands
     for name, _ in STAGES:
         alive, rep = run_stage(name, alive, settings)
-        reports.append(rep)
-        print(json.dumps(rep), flush=True)
         if name == "drops":
             alive = sorted(alive, key=lambda c: -c["stages"]["drops"]["drops_score"])[: settings.keep_after_drops]
-        if not alive:
-            break
+        rep["handed_on"] = len(alive)
+        reports.append(rep)
+        print(json.dumps(rep), flush=True)
     full = []
-    if full_eval and alive:
-        TC.cache_on()
-        for c in alive[: settings.full]:
-            spec = write_package(out / "candidates", c["id"], c["params"])
-            t = time.time()
-            ev = TC.evaluate(spec, out / "eval" / c["id"], stages=("check", "quick", "map", "held_out", "gate", "ring"))
-            full.append({"id": c["id"], "spec": spec, "z": {k: v["Z"] for k, v in (ev.get("z") or {}).items()},
-                         "gate": {k: (ev.get("gate") or {}).get(k) for k in ("passed", "overhang_n")},
-                         "ring": (ev.get("ring") or {}).get("status"), "seconds": round(time.time() - t, 1)})
-            print(json.dumps(full[-1]), flush=True)
-        if full:
-            reports.append({"stage": "full", "in": len(full), "wall_s": round(sum(f["seconds"] for f in full), 1),
-                            "evals_per_s": round(len(full) / sum(f["seconds"] for f in full), 5), "label": LABEL_SIM})
+    if full_eval:
+        full_started = time.monotonic()
+        for candidate in alive[: settings.full]:
+            evaluated = {"id": candidate["id"], **_full_candidate(out, candidate, reference)}
+            full.append(evaluated)
+            print(json.dumps({key: evaluated.get(key) for key in ("id", "status", "kept", "seconds")}), flush=True)
+        wall = time.monotonic() - full_started
+        kept = sum(r["kept"] is True for r in full)
+        reports.append({"stage": "full", "in": len(full), "passed": kept, "handed_on": kept,
+                        "pass_rate": kept / len(full) if full else None, "wall_s": round(wall, 3),
+                        "evals_per_s": round(len(full) / wall, 5) if full else None, "label": LABEL_SIM})
     result = {"settings": asdict(settings), "sample_s": round(t_sample, 3), "stages": reports, "full": full,
               "survivors": [{"id": c["id"], "params": c["params"], "stages": c["stages"]} for c in alive],
               "seconds": round(time.time() - t0, 1), "run": str(out)}
@@ -321,8 +401,26 @@ def main(argv=None):
     ap.add_argument("--full", type=int, default=SearchSettings.full)
     ap.add_argument("--workers", type=int, default=SearchSettings.workers)
     ap.add_argument("--runs", default="runs")
+    ap.add_argument("--calibrate", type=int, help="sample size for independent full evaluation")
+    ap.add_argument("--reference", type=Path, help="build-aware objective baseline report")
     a = ap.parse_args(argv)
+    reference = []
+    if a.reference is not None:
+        from brixzle.engine import objective as OB
+
+        report = json.loads(a.reference.read_text())
+        reference = [r for r in OB.rank(report["designs"]) if r["layer"] == 1]
+        if not reference:
+            ap.error("--reference must contain a feasible build-aware baseline")
+    if a.calibrate is not None:
+        if a.calibrate < 1 or not reference:
+            ap.error("--calibrate needs a positive sample size and --reference")
+        settings = SearchSettings(n=a.calibrate, seed=a.seed, workers=a.workers)
+        result = calibrate(settings, reference, a.runs, reference_source=str(a.reference))
+        print(json.dumps({key: result[key] for key in ("evaluated", "full_keepers", "false_rejects", "seconds", "run")},
+                         indent=1))
+        return 0
     s = SearchSettings(n=a.n, seed=a.seed, full=a.full, workers=a.workers)
-    res = run_search(s, runs=a.runs, full_eval=a.full > 0)
+    res = run_search(s, runs=a.runs, full_eval=a.full > 0, reference=reference)
     print(json.dumps({"stages": res["stages"], "full": res["full"], "seconds": res["seconds"], "run": res["run"]}, indent=1))
     return 0

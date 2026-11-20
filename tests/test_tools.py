@@ -142,3 +142,35 @@ def test_the_command_line_runs_a_tool_and_writes_its_result(tmp_path, cache, cap
     assert CLI.main(["--runs", str(tmp_path / "runs"), "redrop", "ab", "--map", str(m), "--outcomes", "jammed",
                      "--workers", "1"]) == 0
     assert json.loads(capsys.readouterr().out)["drops"] == 1
+
+
+def test_sweep_uses_one_executor_and_drops_each_value_without_a_nested_pool(monkeypatch):
+    from brixzle.families import registry
+
+    opens, drop_workers = [], []
+
+    class FakeExecutor:
+        def __init__(self, workers, **kwargs):
+            opens.append(workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def map(self, fn, jobs):
+            return map(fn, jobs)
+
+    def fake_redrop(family, p, drops, friction, workers):
+        drop_workers.append(workers)
+        return {"rows": [], "counts": TC.counts([]), "cache": {}, "seconds": 0.0}
+
+    monkeypatch.setattr(TC, "ProcessPoolExecutor", FakeExecutor, raising=False)
+    monkeypatch.setattr(TC, "redrop", fake_redrop)
+    family = registry.get("ab")
+    values = [family.defaults.clearance, family.defaults.clearance]
+    result = TC.sweep(family, "clearance", values, [], workers=2)
+    assert opens == [2]
+    assert drop_workers == [1, 1]
+    assert [row["value"] for row in result["rows"]] == values
