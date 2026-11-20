@@ -12,12 +12,14 @@ outside ``src/`` (``runs/fable:fable_gentle``), as the design agent writes them.
 Every sim result is simulated, uncalibrated contact; a result read from a cache is an earlier sim
 result, not a new one.
 """
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 from pathlib import Path
 import time
@@ -271,31 +273,40 @@ def diffdesign(fam_a, fam_b, p_a=None, p_b=None):
 # --- sweep ---
 
 
+def _sweep_value(args):
+    family, p, param, value, drops, friction, workers = args
+    try:
+        candidate = replace(p, **{param: value})
+    except (ValueError, TypeError) as error:
+        return {"value": value, "feasible": False, "reason": str(error)[:200]}
+    try:
+        result = redrop(family, candidate, drops, friction=friction, workers=workers)
+    except ValueError as error:
+        return {"value": value, "feasible": False, "reason": str(error)[:200]}
+
+    clearance = _ideal().error.clearance[0]
+    per_box = {}
+    for name, box in boxes().items():
+        outcomes = [r["outcome"] for r, d in zip(result["rows"], drops) if in_box(d, box, clearance)]
+        if outcomes:
+            per_box[name] = counts(outcomes)
+    return {"value": value, "feasible": True, "boxes": per_box, "all": result["counts"], "cache": result["cache"],
+            "seconds": result["seconds"]}
+
+
 def sweep(family, param, values, drops, friction=None, workers=8, p=None):
-    """One parameter over ``values``, every other held at ``p`` (the defaults): per value, the counts
-    and Z per box over the poses of map ``drops``. A value the family refuses is reported, not run."""
+    """Re-use worker processes across sweep values. Each value owns its geometry and drop state."""
     t0 = time.time()
     p = p or family.defaults
-    c0 = _ideal().error.clearance[0]
-    rows = []
-    for v in values:
-        try:
-            q = replace(p, **{param: v})
-        except (ValueError, TypeError) as e:
-            rows.append({"value": v, "feasible": False, "reason": str(e)[:200]})
-            continue
-        try:
-            res = redrop(family, q, drops, friction=friction, workers=workers)
-        except ValueError as e:  # geometry that cannot be built
-            rows.append({"value": v, "feasible": False, "reason": str(e)[:200]})
-            continue
-        per_box = {}
-        for name, bx in boxes().items():
-            outs = [r["outcome"] for r, d in zip(res["rows"], drops) if in_box(d, bx, c0)]
-            if outs:
-                per_box[name] = counts(outs)
-        rows.append({"value": v, "feasible": True, "boxes": per_box, "all": res["counts"], "cache": res["cache"],
-                     "seconds": res["seconds"]})
+    values = list(values)
+    value_workers = min(workers, len(values), os.cpu_count() or 1)
+    pose_workers = 1 if value_workers > 1 else workers
+    jobs = [(family, p, param, value, drops, friction, pose_workers) for value in values]
+    if value_workers > 1:
+        with ProcessPoolExecutor(value_workers, mp_context=multiprocessing.get_context("spawn")) as executor:
+            rows = list(executor.map(_sweep_value, jobs))
+    else:
+        rows = [_sweep_value(job) for job in jobs]
     return {"label": LABEL, "family": family.name, "param": param, "drops_per_value": len(drops),
             "friction": friction, "rows": rows, "seconds": round(time.time() - t0, 2)}
 
