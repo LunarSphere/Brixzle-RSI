@@ -116,6 +116,36 @@ Issue #108. A full score costs about 3 to 5 minutes, so when a round has several
 
 The screen does not pick a winner among close candidates. On A/B and the four designs of `ab4iter2-20261114-mean` its ranking disagreed with the maps' at the top (`runs/screen-compare-20261113.json`): those five lie within 0.1 of each other in Z, and the screen's standard error at 60 drops is about 0.08. So a candidate is screened out only if its score is more than two standard errors of the difference below the best (a clear loser, such as the yfunnel fixture), and the rest are scored in full by rank, up to `--screen-max-maps` (default 3). If the wall-clock left after holding the end tune's time cannot fit that many full scores (each estimated from the run's scored iterations so far, 240 s before any), fewer are mapped and the iteration records a warning. The others are logged as `screened_out` with their screen score; the iteration records `seconds.screen`.
 
+## Tools for the mechanical steps
+
+Issue #163. The hand-run twinhook line spent LLM turns on steps that are mechanical: re-dropping failing poses, reading rest contacts, splitting Z by slice, comparing two maps, sweeping one parameter, and running the stages by hand-written script. `python -m brixzle.tools <tool>` does each one deterministically. Each tool writes `runs/<tool>-<UTC>-<family>/result.json` and prints a short JSON summary for an agent to read.
+
+| Tool | Does | Sim |
+|---|---|---|
+| `evaluate` | The loop's stages (`runs/fable/eval_family.py` as a module), or any subset (`--stages map,gate`); `eval.json` as before, so `scripts/compare_eval.py` reads it | yes, cached |
+| `redrop` | Chosen poses of a map (by box, outcome, slice, course, a seeded sample), at a friction | yes, cached |
+| `contacts` | The same, with each drop's rest pose and its contacts grouped by the pair touching | yes, cached |
+| `sweep` | One parameter over a list of values, on a map's poses; a value the family refuses is reported | yes, cached |
+| `slices` | Counts and Z per box, slice and course | no |
+| `mapdiff` | Two maps cell by cell: per box ΔZ against the noise band, and every changed cell | no |
+| `diffdesign` | Changed parameters and fingerprint items between two designs (#162) | no |
+| `gate`, `ring`, `friction` | The stages alone | yes; gate and ring cached |
+
+A family is a registry name or `<root>:<module>`.
+
+**The drop cache** (`engine/drop_cache.py`). A drop depends only on what the rigs build and on its pose. So `DropPool` reads a drop that was already simulated for the same key and stores new ones, when `BRIXZLE_DROP_CACHE` is set (the tools set it). The key covers:
+
+- the sim geometry: each part's collision pieces, mass, centre of mass and inertia, the lattice, the release lift, both rigs' seats, and their bases;
+- the source of `engine/sim/`, `families/builders.py` and `engine/box_search.py`;
+- the trial config;
+- the job: course, pose and options.
+
+Names and parameter values are not in the key. Two designs that build the same scene share drops, for example the #162 port and refactor.
+
+Gate and ring results are kept whole, by the family's fingerprint without parameter values, bounds or rule margins, together with the engine's code. A result read back is marked `cached_from`.
+
+Unset, as in the loop and the tests, every drop is simulated. A cached result is an earlier sim result (simulated, uncalibrated contact), not a new one.
+
 ## Per-iteration results
 
 Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/render.py`):
