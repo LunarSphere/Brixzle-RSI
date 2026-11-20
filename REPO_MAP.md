@@ -28,6 +28,8 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/engine/validate.py` | Predictor-vs-sim validation (issue #11): both models on an X, Z, theta grid over a placement box, agreement, capture edges and a disagreement map |
 | `src/brixzle/engine/report.py` | Scorer (issues #13, #61): quick check, full sim map covering the three target boxes, and `report.json` (schema 4) with Z per target and its counts, beside `map.json` |
 | `src/brixzle/engine/zscore.py` | Objective Z (issue #61): (seated − jammed) / drops inside each target box; Z straight from the in-box cells (`ZScore`) and held-out Z (`HeldOutZ`) for the tune and the acceptance rule |
+| `src/brixzle/tools/` | Deterministic tools for the loop's mechanical steps (#163): `python -m brixzle.tools` evaluate, redrop, contacts, sweep, slices, mapdiff, diffdesign, gate, ring, friction; each writes a run directory and prints a short JSON summary |
+| `src/brixzle/engine/drop_cache.py` | The drop cache (#163): drops keyed by sim geometry, sim code, trial config and pose, in `.cache/drops.sqlite`; on when `BRIXZLE_DROP_CACHE` is set |
 | `src/brixzle/families/` | One brick family per subpackage: parameters and bounds, 2D section, CAD solid, rules |
 | `src/brixzle/families/interface.py`, `builders.py`, `rules.py`, `contract.py`, `registry.py` | The family contract, shared builders (solid, collision, mass, base), shared R6/R9/R10 rules, contract checks, and family discovery |
 | `src/brixzle/families/wedge/`, `pyramid/` | Dummy families for the contract tests: one Prismatic (2.5D), one Solid3D (full 3D) |

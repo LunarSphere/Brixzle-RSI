@@ -160,11 +160,19 @@ class DropPool:
     the drops that have not started. A one-worker pool uses this module's worker state, so keep
     only one open at a time."""
 
-    def __init__(self, family, p, cfg, workers=None, bodies=None):
+    def __init__(self, family, p, cfg, workers=None, bodies=None, cache=None):
+        """``cache`` (engine/drop_cache.DropCache): read drops already simulated for the same sim
+        geometry, config and pose, and store new ones (#163). None: the one ``BRIXZLE_DROP_CACHE``
+        turns on, if any (drop_cache.default); otherwise every drop is simulated."""
         if workers is not None and (not isinstance(workers, int) or isinstance(workers, bool) or workers < 1):
             raise ValueError(f"workers must be an integer >= 1, got {workers!r}")
         self.workers = min(workers or DEFAULT_WORKERS, os.cpu_count() or 1)
         bodies = bodies or {k: B.sim_bodies(family, p, k) for k in family.parts}  # built once, here
+        from brixzle.engine import drop_cache as DC
+        self.cache, self.cfg = cache if cache is not None else DC.default(), cfg
+        self.cache_stats = {"hits": 0, "misses": 0}
+        if self.cache is not None:
+            self._geometry = DC.geometry_key(family, p, bodies)
         self._ex = None
         if self.workers > 1:
             self._ex = ProcessPoolExecutor(self.workers, mp_context=multiprocessing.get_context("spawn"),
@@ -175,9 +183,38 @@ class DropPool:
     def imap(self, jobs):
         """Rows for (course, sample) or (course, sample, options) jobs, in order (see _drop)."""
         jobs = list(jobs)
+        if self.cache is not None:
+            return self._cached(jobs)
         if self._ex is None:
             return (_drop(job) for job in jobs)
         return self._ex.map(_drop, jobs)
+
+    def _cached(self, jobs):
+        """Hits read from the cache, misses simulated (in order, lazily with one worker) and stored."""
+        from brixzle.engine import drop_cache as DC
+
+        keys = [DC.job_key(self._geometry, self.cfg, j) if DC.cacheable(j) else None for j in jobs]
+        hits = self.cache.get_many([k for k in keys if k])
+        misses = [j for j, k in zip(jobs, keys) if k not in hits]
+        self.cache_stats["hits"] += sum(1 for k in keys if k in hits)
+        self.cache_stats["misses"] += len(misses)
+        fresh = (_drop(j) for j in misses) if self._ex is None else self._ex.map(_drop, misses)
+        new = []
+        try:
+            for job, key in zip(jobs, keys):
+                if key in hits:
+                    yield hits[key]
+                    continue
+                row = next(fresh)
+                if key:
+                    row = DC._plain(row)
+                    new.append((key, row))
+                    if len(new) >= 64:
+                        self.cache.put_many(new)
+                        new = []
+                yield row
+        finally:
+            self.cache.put_many(new)
 
     def close(self):
         if self._ex is not None:
