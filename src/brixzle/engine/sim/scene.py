@@ -16,6 +16,7 @@ from brixzle.families.interface import Family
 
 MM = 1e-3
 PARK_Z = 2.0
+CONTACT_SOLIMP = (0.95, 0.99, 0.0001, 0.5, 2.0)
 
 
 def _numbers(values):
@@ -60,7 +61,7 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
     default = ET.SubElement(root, 'default')
     ET.SubElement(default, 'geom', condim='3', friction=f'{physics.friction} 0.005 0.0001', margin='0',
                   solref=f'{physics.contact_timeconst} {physics.contact_dampratio}',
-                  solimp='0.95 0.99 0.0001 0.5 2')
+                  solimp=_numbers(CONTACT_SOLIMP))
     visual_el = ET.SubElement(root, 'visual')
     ET.SubElement(visual_el, 'global', offwidth='1280', offheight='960')
     asset = ET.SubElement(root, 'asset')
@@ -89,6 +90,8 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
     for name, bundle in bundles.items():
         for j, piece in enumerate(bundle.collision):
             _mesh(asset, f'{name}_col_{j}', piece)
+        for j, piece in enumerate(getattr(bundle, 'soft_collision', None) or []):
+            _mesh(asset, f'{name}_soft_{j}', piece)
         if visual and bundle.mesh is not None:
             _mesh(asset, f'{name}_vis', bundle.mesh.vertices, bundle.mesh.faces)
     for j in range(n_bricks):
@@ -105,6 +108,14 @@ def build_scene(family: Family, p, bodies, bases, n_bricks, physics: Physics, vi
         for k in range(len(bundle.collision)):
             ET.SubElement(body, 'geom', name=f'brick{j}_c{k}', type='mesh', mesh=f'{name}_col_{k}',
                           group='3', rgba='.3 .6 .9 .4', contype='1', conaffinity='1')
+        # A second, compliant material (#167): its own contact, and priority so its settings win in a contact.
+        sc = getattr(bundle, 'soft_contact', None) or {}
+        for k in range(len(getattr(bundle, 'soft_collision', None) or [])):
+            ET.SubElement(body, 'geom', name=f'brick{j}_s{k}', type='mesh', mesh=f'{name}_soft_{k}', group='3',
+                          rgba='.9 .3 .3 .4', contype='1', conaffinity='1', priority='1',
+                          solref=f"{sc['timeconst']} {sc['dampratio']}",
+                          solimp=_numbers(sc.get("solimp", CONTACT_SOLIMP)),
+                          friction=f"{sc['friction']} 0.005 0.0001")
         if visual and bundle.mesh is not None:
             palette = {'B': '.95 .55 .15 1', 'L3': '.95 .55 .15 1', 'I3': '.35 .75 .4 1', 'K2': '.85 .3 .35 1'}
             rgba = palette.get(name, '.25 .55 .85 1') if len(bundles) > 1 else \

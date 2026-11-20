@@ -57,7 +57,7 @@ def code_version():
 
 def _bodies_repr(b):
     return {"collision": [np.asarray(v, float) for v in b.collision], "soft": [np.asarray(v, float) for v in b.soft_collision],
-            "source": b.collision_source, "mass_g": float(b.mass_g), "volume_mm3": float(b.volume_mm3),
+            "source": b.collision_source, "soft_contact": dict(sorted((b.soft_contact or {}).items())), "mass_g": float(b.mass_g), "volume_mm3": float(b.volume_mm3),
             "com_mm": np.asarray(b.com_mm, float), "inertia": np.asarray(b.inertia_g_mm2, float)}
 
 

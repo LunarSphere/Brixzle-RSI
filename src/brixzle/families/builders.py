@@ -258,9 +258,11 @@ def sim_bodies(family: Family, p, part) -> SimBodies:
     pieces, source = collision(family, p, part)
     mesh = solid_mesh(family, p, part, bored=True)
     mesh.density = PLA_DENSITY
+    soft, contact = family.soft(p, part) if family.soft is not None else ([], {})
     return SimBodies(collision=pieces, collision_source=source, mass_g=float(mesh.mass),
                      volume_mm3=float(mesh.volume), com_mm=mesh.center_mass.tolist(),
-                     inertia_g_mm2=mesh.moment_inertia.tolist(), mesh=mesh)
+                     inertia_g_mm2=mesh.moment_inertia.tolist(), mesh=mesh,
+                     soft_collision=[np.asarray(v, dtype=float) for v in soft], soft_contact=dict(contact))
 
 
 def ring_bodies(family: Family, p, part):

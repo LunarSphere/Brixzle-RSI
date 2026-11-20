@@ -9,6 +9,7 @@ What is covered, at the given parameters:
 - the parameter values, the bounds, the parts and the lattice;
 - per part: the exact collision pieces, the 2D section (outline, holes, guide faces), the grip
   features, the release lift, and the printed solid's volume and bounding box;
+- the compliant collision pieces and their contact settings, for mixed-material families;
 - the seat pose and insertion axis of every brick in the gate's structures (tower, wall, bridge,
   overhang each way, corbel), and the anchored bases they use;
 - the ring kit: its parts' collision pieces and solids, the plan of a 6 x 6, 2-course ring, its base;
@@ -121,6 +122,12 @@ def fingerprint(family: Family, p=None, ring=True, solid=True) -> dict[str, str]
     for part in family.parts:
         coll = g.collision(p, part) if getattr(g, "collision", None) else None
         out[f"collision:{part}"] = digest([np.asarray(c) for c in coll] if coll is not None else None)
+        if family.soft is not None:
+            pieces, contact = family.soft(p, part)
+            if len(pieces):
+                out[f"soft_collision:{part}"] = digest([np.asarray(c, float) for c in pieces])
+                out[f"soft_contact:{part}"] = digest({key: contact[key] for key in ("timeconst", "dampratio", "friction", "solimp")
+                                                      if key in contact})
         if getattr(g, "section", None):
             out[f"section:{part}"] = digest(g.section(p, part))
         if hasattr(g, "extrusion"):

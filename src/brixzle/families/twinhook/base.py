@@ -600,6 +600,7 @@ class TwinHook:
     bounds = BOUNDS
     ring_pocket_wall_mm = 1.4    # the ring parts' side pockets: three cells in one piece must stay under the payload
     y_before_hooks_floor = 1.3   # R11.y_before_hooks: the predicted slide / need ratio the brick must keep
+    soft_contact = None          # a second, compliant material's contact (#167): None, all PLA
 
     _instances = {}
 
@@ -644,11 +645,21 @@ class TwinHook:
         for q in _side_pockets(p, _brick_layout(p)):
             shape = shape.cut(B._swept(q, [], side))
         shape = shape.clean()
+        for v in self.soft_features(p, part):  # a compliant part is printed as part of the brick (#167)
+            shape = shape.fuse(capture.hull_solid(v))
+        shape = shape.clean()
         count = len(shape.Solids())
         if count != 1:
             raise ValueError(f"the brick would be {count} separate solids, not one")
         self.check_solid(shape)
         return shape
+
+    def soft_features(self, p, part):
+        """Convex pieces of a second, compliant material (#167); none here."""
+        return []
+
+    def soft(self, p, part):
+        return self.soft_features(p, part), dict(self.soft_contact or {})
 
     def pickup(self, p, part):
         """The carrying openings (R10): the through-Y lightening holes a 5 mm circle fits in. The blind
@@ -792,6 +803,7 @@ class TwinHook:
             base=self.base,
             pickup=self.pickup,
             extra_rules=self.extra_rules,
+            soft=self.soft if self.soft_contact else None,
         )
         k = HookCellKit(fam, self)
         kit = RingKit(parts=k.names, solid=RC._Call(k, "solid"), plan=RC._Call(k, "plan"), base=RC._Call(k, "base"),

@@ -181,7 +181,8 @@ class SimBodies:
     com_mm: list[float]
     inertia_g_mm2: list[list[float]]  # about the centre of mass
     mesh: Any                    # trimesh.Trimesh of the printed (bored) solid
-    soft_collision: list[np.ndarray] = field(default_factory=list)
+    soft_collision: list[np.ndarray] = field(default_factory=list)  # compliant pieces (a second material, #167)
+    soft_contact: dict = field(default_factory=dict)  # their contact: timeconst, dampratio, friction (Physics units)
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,10 @@ class Family:
     pickup: Callable[[Any, str], tuple[GripFeature, ...]]    # (p, part) -> the part's grip features (R10)
     extra_rules: Callable[[Any, str, SimBodies], dict[str, float]] | None = None  # (p, part, bodies)
     ring: RingKit | None = None  # how the family turns a corner and closes a ring (issue #89)
+    # Mixed materials (#167): (p, part) -> (convex pieces of a second, compliant material, their contact as
+    # {timeconst, dampratio, friction, optional solimp, and optional material provenance}).
+    # They collide with their own contact settings.
+    soft: Callable[[Any, str], tuple] | None = None
 
     @property
     def defaults(self):
