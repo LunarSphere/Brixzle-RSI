@@ -38,7 +38,7 @@ def compare(claim, measured, tol=1e-6):
     return {"ok": bad == 0, "mismatches": bad, "numbers": rows}
 
 
-def _with_violations(measured, stages):
+def _with_violations(measured, stages, min_drop_z=None):
     """Combine objective violations with verdicts for the requested feasibility stages."""
     violations = list((measured.get("objective") or {}).get("violations") or [])
     if "check" in stages and (measured.get("check_family") or {}).get("ok") is not True:
@@ -47,6 +47,14 @@ def _with_violations(measured, stages):
         violations.append("structure_gate")
     if "ring" in stages and (measured.get("ring") or {}).get("status") != "complete":
         violations.append("ring")
+    if "held" in measured:
+        if min_drop_z is None:
+            min_drop_z = measured["held"].get("min_drop_z")
+        measured = {**measured, "held": {**measured["held"], "min_drop_z": min_drop_z}}
+        violations.extend(measured["held"]["violations"])
+        z = lookup(measured, "z.mean.Z")
+        if z is None or (min_drop_z is not None and z < min_drop_z):
+            violations.append("drop_full_z")
     return {**measured, "violations": violations}
 
 
@@ -67,10 +75,31 @@ def _with_edge_measurement(spec, out_dir, measured):
                      "cases": result["cases"], "seconds": result.get("seconds")}}
 
 
-def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True, seed=0, measure_edge=False):
+def _with_held_measurement(spec, out_dir, measured, seed):
+    from brixzle.engine import heldmap as HM
+    from brixzle.tools import core as TC
+
+    path = out_dir / "held" / "result.json"
+    if path.exists():
+        result = json.loads(path.read_text())
+    else:
+        family = TC.load(spec)
+        settings = HM.HeldMapSettings() if seed is None else HM.HeldMapSettings(seed=seed)
+        result = HM.heldmap(family, family.defaults, HM.gripper_config(spec), settings)
+        path.parent.mkdir(exist_ok=True)
+        write_json(path, {**result, "family_spec": spec})
+    summary_keys = ("scores", "cases", "mission_passed", "missions", "violations", "fit_error", "seconds",
+                    "max_payload_kg", "median_steps_by_radius", "reliable_reach_by_length")
+    held = {key: result[key] for key in summary_keys if key in result}
+    return {**measured, "held": {**held, "report": str(path)}}
+
+
+def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True,
+            seed=None, measure_edge=False, measure_held=False, min_drop_z=None):
     """The candidate's evaluation (tools.core.evaluate) and, with ``objective``, the #164 terms. Z at
     mu 0.8 comes from tools.core.friction (seed 1, mean box). An edge push adds the named
-    half-supported drop map and makes its weaker-edge Z available for claim checks.
+    half-supported drop map and makes its weaker-edge Z available for claim checks. A held goal
+    also measures the candidate fork and wrist, using the heldmap CLI seed unless one is supplied.
 
     Resumable: a foreground step is cut off after 10 minutes, so each part is saved as it finishes
     (``eval/eval.json``, ``objective.json``, then ``measured.json``) and a second call reuses what is
@@ -79,12 +108,22 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
     from brixzle.engine import objective as OB
     from brixzle.tools import core as TC
 
+    if min_drop_z is not None and (type(min_drop_z) not in (int, float) or not -1 <= min_drop_z <= 1):
+        raise ValueError("min_drop_z must be a finite Z in [-1, 1]")
     out_dir = Path(out_dir)
     done = out_dir / "measured.json"
     if done.exists():
-        out = _with_violations(json.loads(done.read_text()), stages)
+        previous = json.loads(done.read_text())
+        out = previous
+        start = time.perf_counter()
         if measure_edge and "edge" not in out:
             out = _with_edge_measurement(spec, out_dir, out)
+        if measure_held and "held" not in out:
+            out = _with_held_measurement(spec, out_dir, out, seed)
+        if out is not previous:
+            out["seconds"] = round(out.get("seconds", 0) + time.perf_counter()-start, 3)
+        out = _with_violations(out, stages, min_drop_z)
+        if out != previous:
             write_json(done, TC._finite(out))
         return out
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -93,7 +132,7 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
     for k in range(1, 10):
         d = out_dir / ("eval" if k == 1 else f"eval-{k}")
         if not d.exists():
-            ev = TC.evaluate(spec, d, stages=stages, seed=seed)
+            ev = TC.evaluate(spec, d, stages=stages, seed=0 if seed is None else seed)
             break
         rec = json.loads((d / "eval.json").read_text()) if (d / "eval.json").exists() else {}
         if rec.get("complete"):
@@ -121,7 +160,9 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
         out["tolerance_mm"] = rec.get("tolerance_mm")
     if measure_edge:
         out = _with_edge_measurement(spec, out_dir, out)
+    if measure_held:
+        out = _with_held_measurement(spec, out_dir, out, seed)
     out["seconds"] = round(time.time() - t0, 1)
-    out = _with_violations(out, stages)
+    out = _with_violations(out, stages, min_drop_z)
     write_json(done, TC._finite(out))
     return out

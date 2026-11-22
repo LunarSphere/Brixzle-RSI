@@ -287,3 +287,33 @@ def test_mirrored_station_approach_starts_outside_the_structure(family):
     target, _ = family.seat_pose(family.defaults, rig.target)
     station_delta = rig.seat_R.inv().apply(rig.station - target*1e-3)
     assert station_delta[1] < -rig.stroke_m
+
+
+def test_build_preserves_supporter_pose_velocity_and_checks_collapse(family):
+    from brixzle.engine import structures
+
+    st = structures.corbel(2)
+    cfg = held.HeldConfig(drone=replace(CF21B, tw_min=100))
+    rig = held.HeldRig(family, family.defaults, st.bricks[2], cfg, structure=st)
+    assert rig.placed == st.bricks[:2]
+    assert rig.ref == (0, st.bricks[0])
+    # A computed takeoff failure leaves the restored supporter state untouched.
+    states = rig.brick_states()[:2]
+    states[0][0][0] += 30  # mm, off its base seat
+    states[0][2][0] = 0.001  # m/s
+    result = rig.trial(held.HeldSample(), support_states=states)
+    assert not result["passed"]
+    np.testing.assert_allclose(rig.brick_states()[0][0], states[0][0])
+    np.testing.assert_allclose(rig.brick_states()[0][2], states[0][2])
+    assert structures.brick_name(st.bricks[0]) in rig.off_seat()
+
+
+def test_mirrored_course_picks_from_same_corbel_station(family):
+    from brixzle.engine import structures
+
+    st = structures.corbel(2)
+    st.bricks[2] = replace(st.bricks[2], direction=-1)
+    rig = held.HeldRig(family, family.defaults, st.bricks[2], structure=st)
+    assert rig.seat_R.magnitude() > 3.
+    np.testing.assert_allclose(rig.station, [0., -.1, 0.])
+    np.testing.assert_allclose(rig.station_R.as_matrix(), np.eye(3))

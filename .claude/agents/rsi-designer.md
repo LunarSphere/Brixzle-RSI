@@ -34,6 +34,7 @@ Write everything inside `<run>/iter-NN/`. The loop's guard refuses writes anywhe
      - `param:<field>` is a parameter default;
      - `def:<name>` is a function or class body;
      - `const:<name>` is a module constant.
+   - For a held goal, copy the parent's optional `gripper.json` beside `family.py`. A brief can change one of its fields with `gripper:<field>` or `gripper:wrist.<field>`. See [held placement](../../docs/held-placement.md#scoring-a-candidate-with-heldmap).
    - Give the family a new `name` (the module name) and `version`.
    - **New design from scratch** (the brief says so and `parent` is empty): write a complete original family. Don't copy designs from papers or other groups (`CLAUDE.md`, "Original designs").
 2. **`<run>/iter-NN/design_note.md`:**
@@ -55,6 +56,7 @@ Run them with Bash. They are deterministic and read the drop cache. Results are 
 - `uv run python -m brixzle.agents.check_family <run>/iter-NN <module>`: the contract and rule margins. Run it first.
 - `uv run python -m brixzle.tools redrop F --map <parent map> --box mean --outcomes jammed,wrong_valley --limit 30`: re-drop the parent's failures on your candidate.
 - `uv run python -m brixzle.tools --runs <run>/iter-NN edgemap F`: compare both half-supported edges when the brief pushes `edge_z`. Use `contacts --edge-case <layout>` on the weaker edge.
+- `uv run python -m brixzle.tools --runs <run>/iter-NN heldmap F` measures held goals. Claim a verified term using a path such as `held.scores.held_reliable_reach_mm`. Cite the individual phase outcomes for a mission claim.
 - `uv run python -m brixzle.tools contacts F --map <map> --outcomes jammed --limit 5`: what touches at rest.
 - `uv run python -m brixzle.tools sweep F --param <p> --values a,b,c --map <map> --box mean --limit 30`: try values of one parameter.
 - `uv run python -m brixzle.tools evaluate F --out <run>/iter-NN/eval-<tag> --stages map,gate`: any stage subset. A full run is about 4 min.

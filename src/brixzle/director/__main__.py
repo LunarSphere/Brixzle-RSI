@@ -74,11 +74,13 @@ def main(argv=None):
     ap.add_argument("--deny-read", default="")
     ap.add_argument("--checkpoints", default="")
     ap.add_argument("--reason", default="")
+    ap.add_argument("--settings", type=Path, help="goal settings JSON for init")
     a = ap.parse_args(argv)
     run = Path(a.run).resolve()
     out, ok = {}, True
     if a.step == "init":
         r = RN.init_run(run, a.goal, a.baseline, budget={"iterations": a.iterations, "wall_clock_min": a.minutes},
+                        settings=json.loads(a.settings.read_text()) if a.settings else None,
                         deny_read=[d for d in a.deny_read.split(",") if d],
                         human_checkpoints=[int(c) for c in a.checkpoints.split(",") if c])
         out = {"run": str(r), "next": RN.read_json(r / "next.json")}
@@ -92,8 +94,8 @@ def main(argv=None):
         if (d / "verified.json").exists():
             out = RN.read_json(d / "verified.json")["offer"]
         else:
-            m = VE.measure(goal["baseline"], d / "measured")
-            out = _offer(run, {**m["objective"], "violations": m["violations"],
+            m = _measure(run, goal["baseline"], d)
+            out = _offer(run, {**_archive_terms(m), "violations": m["violations"],
                                "name": f"baseline:{goal['baseline']}", "spec": goal["baseline"]})
             RN.write_json(d / "verified.json", {"measured": m, "claim": None, "offer": out})
     elif a.step == "check":
@@ -116,9 +118,9 @@ def main(argv=None):
             return 0 if v["claim"]["ok"] else 1
         claim = RN.read_json(d / "claim.json", {"numbers": []})
         brief = RN.read_json(d / "brief.json", {})
-        m = VE.measure(spec, d / "measured", measure_edge=brief.get("term") == "edge_z")
+        m = _measure(run, spec, d, measure_edge=brief.get("term") == "edge_z")
         cmp = VE.compare(claim, m)
-        rec = {**m["objective"], "violations": m["violations"],
+        rec = {**_archive_terms(m), "violations": m["violations"],
                "name": f"iter-{a.iter:02d}:{pkg.name}", "spec": spec}
         offer = _offer(run, rec)
         out = {"claim": cmp, "offer": offer, "violations": m.get("violations"), "seconds": m["seconds"]}
@@ -137,6 +139,22 @@ def main(argv=None):
     return 0 if ok else 1
 
 
+def _measure(run, spec, directory, **options):
+    settings = RN.read_json(run / "goal.json")["settings"]
+    if settings.get("stage") == "held":
+        baseline = RN.read_json(run / "baseline" / "verified.json", {})
+        floor = settings.get("min_drop_z", VE.lookup(baseline, "measured.z.mean.Z"))
+        options.update(measure_held=True, min_drop_z=floor)
+    return VE.measure(spec, directory / "measured", **options)
+
+
+def _archive_terms(measured):
+    held = measured.get("held", {})
+    counts = {f"held_{key}_z_counts": {k: value[k] for k in ("S", "J", "N")}
+              for key, value in held.get("cases", {}).items()}
+    return {**measured["objective"], **held.get("scores", {}), **counts}
+
+
 def _offer(run, rec):
     path = Path(run) / "archive.json"
     data = RN.read_json(path, {"members": [], "offers": []})
@@ -145,7 +163,8 @@ def _offer(run, rec):
         if previous["name"] == rec["name"]:
             return {key: saved for key, saved in previous.items() if key not in {"name", "time"}}
     settings = RN.read_json(Path(run) / "goal.json", {}).get("settings", {})
-    arc = AR.Archive(data["members"], terms=settings.get("scored", AR.LEGACY_TERMS))
+    defaults = AR.HELD_TERMS if settings.get("stage") == "held" else AR.LEGACY_TERMS
+    arc = AR.Archive(data["members"], terms=settings.get("scored", defaults))
     res = arc.offer(rec)
     data["members"] = arc.members
     offers.append({"name": rec["name"], **res, "time": RN.now()})

@@ -2,6 +2,7 @@
 (``evaluate`` writes eval.json to --out) and prints a short JSON summary. Simulated, uncalibrated contact.
 
     evaluate   <family> --out DIR [--stages map,gate,...]   the loop's stages, with the caches
+    heldmap    <family> [--gripper FILE]                     five-phase held placements and corbel builds
     edgemap    <family>                                     half-supported seat map
     redrop     <family> --map DIR [selection] [--friction MU]  re-drop chosen map poses
     contacts   <family> --map DIR [selection]                  rest pose and contacts of chosen drops
@@ -55,6 +56,10 @@ def parser():
     e.add_argument("--stages", default=",".join(TC.STAGES))
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--no-cache", action="store_true")
+    h = sub.add_parser("heldmap")
+    h.add_argument("family")
+    h.add_argument("--gripper")
+    h.add_argument("--seed", type=int, default=192)
     s = sub.add_parser("edgemap")
     s.add_argument("family")
     s.add_argument("--workers", type=int, default=8)
@@ -112,6 +117,13 @@ def main(argv=None):
     else:
         fam = TC.load(a.family)
         p, name = fam.defaults, fam.name
+        if a.tool == "heldmap":
+            from brixzle.engine import heldmap as HM
+            res = HM.heldmap(fam, p, HM.gripper_config(a.family, a.gripper), HM.HeldMapSettings(seed=a.seed))
+            res = TC.write(TC.new_run(a.tool, name, a.runs), {**res, "family_spec": a.family})
+            summary = {k: v for k, v in res.items() if k not in ("rows", "builds", "params", "gripper", "mean_box")}
+            print(json.dumps(summary, indent=1, allow_nan=False))
+            return 0
         if a.tool == "redrop":
             res = TC.redrop(fam, p, _drops(a), friction=a.friction, workers=a.workers)
         elif a.tool == "edgemap":
