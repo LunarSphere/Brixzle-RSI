@@ -9,9 +9,11 @@ import pytest
 
 from brixzle.agents.check_family import load_family
 from brixzle.engine.sim import held
-from brixzle.engine.sim.drone import CF21B
+from brixzle.engine.sim.guards import guarded_drone
 from brixzle.engine.sim.trials import DropRig, ErrorModel, TrialConfig
 from brixzle.families.interface import Placement, bore
+
+CF21B = guarded_drone()
 
 
 @pytest.fixture(scope="module")
@@ -53,14 +55,15 @@ def test_resting_payload_passes_release_force_check(family):
 
 
 def test_sustained_overpressure_fails_release_force_check(family, monkeypatch):
-    rig = held.HeldRig(family, family.defaults, 0)
+    rig = held.HeldRig(family, family.defaults, 0, held.HeldConfig(press_force_N=.035))
     control = rig._control
 
     def excessive_press(pos, vel, acc, orientation, loaded, pressing):
         control(pos, vel, acc, orientation, loaded, pressing)
         if pressing:
-            # Fault injection: let the carrier's weight bear on the seated payload.
-            rig.data.xfrc_applied[rig.carrier, 2] = 0.
+            # Fault injection: exceed this test's cap while keeping the guards aloft.
+            weight = (rig.cfg.drone.mass_g * .001 + rig.payload) * held.G
+            rig.data.xfrc_applied[rig.carrier, 2] = weight - .13
 
     monkeypatch.setattr(rig, "_control", excessive_press)
     row = rig.trial(held.HeldSample())
@@ -81,7 +84,7 @@ def test_grip_caps_sustained_fork_load(family, cap, gentle):
 
 
 def test_beyond_guide_cannot_score_a_seat_with_a_retained_fork(family):
-    row = held.held_trial(family, family.defaults, 0, held.HeldSample(dy_m=0.09), held.HeldConfig())
+    row = held.held_trial(family, family.defaults, 0, held.HeldSample(dy_m=0.055), held.HeldConfig())
     assert not row["passed"] and not row["withdrawn"], row
     assert row["outcome"] == "jammed" and row["phases"]["release"]["outcome"] == "fork_retained"
     assert row["post_departure_outcome"] is None
@@ -215,7 +218,7 @@ def test_measured_samples_draw_from_recorded_approaches():
 
 
 def test_missed_pick_cannot_pass_a_mission(family):
-    rig = held.HeldRig(family, family.defaults, 0)
+    rig = held.HeldRig(family, family.defaults, 0, held.HeldConfig(station=None))
     row = rig.trial(held.HeldSample(), pickup_sample=held.HeldSample(dx_m=.09))
     assert not row["phases"]["grip"]["passed"] and not row["passed"]
     assert row["phases"]["release"]["outcome"] == "skipped"

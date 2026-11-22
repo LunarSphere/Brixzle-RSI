@@ -128,6 +128,10 @@ def test_report_splits_release_from_mission_and_exposes_radius_scores(monkeypatc
             return []
     monkeypatch.setattr(hm, "HeldRig", Rig)
     result = hm.heldmap(FAMILY, FAMILY.defaults, settings=hm.HeldMapSettings(samples=1, builds=1, reaches=3))
+    assert set(result["nominal_guard_access"]) == {"corbel", *structures.CATALOG}
+    assert len(result["nominal_guard_access"]["bridge"]) == len(structures.bridge(3).bricks)
+    assert result["mission_cases"]["full"]["guard_strikes"] == 0
+    assert result["builds"]["measured"]["guard_strikes"] == 0
     assert result["cases"]["full"]["N"] == 2
     assert result["scores"]["held_full_z"] == 1 and result["scores"]["held_mission_rate"] == 0
     assert result["missions"]["phases"]["transport"] == dict(passed=0, skipped=0, failed=5, wall_s=.05)
@@ -172,3 +176,18 @@ def test_station_fit_failure_reports_an_infeasible_candidate():
     from brixzle.families.ab.family import FAMILY
     report = hm.heldmap(FAMILY, FAMILY.defaults, held.HeldConfig(station=FunnelStation(mouth_width_m=.001)))
     assert report["violations"] == ["held_gripper_fit"] and "mouth" in report["fit_error"]
+
+
+def test_guard_access_records_a_structure_with_no_assembly_order(monkeypatch):
+    from brixzle.engine import heldmap as hm
+    from brixzle.families.ab.family import FAMILY
+
+    order = hm.assembly_order
+    def blocked(family, p, structure):
+        if structure.name.startswith("bridge"):
+            raise ValueError("No clear insertion path")
+        return order(family, p, structure)
+    monkeypatch.setattr(hm, "assembly_order", blocked)
+    checks, errors = hm.nominal_guard_access(FAMILY, FAMILY.defaults, held.HeldConfig(), structures.corbel(2))
+    assert errors == {"bridge": "No clear insertion path"}
+    assert checks["tower"] and "bridge" not in checks

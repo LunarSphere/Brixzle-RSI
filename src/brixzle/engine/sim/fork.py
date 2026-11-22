@@ -15,6 +15,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from brixzle.engine.sim.drone import DroneConfig, HoverGains
+from brixzle.engine.sim.guards import MIN_CLEARANCE_M
+from brixzle.engine.sim.scene import MM
 from brixzle.families import builders as B
 from brixzle.families.interface import grip_bores
 
@@ -34,6 +36,10 @@ class ForkParams:
     plate_margin: float = 3.0    # plate beyond the outer tines (x)
     bracket_t: float = 2.0       # mount bracket thickness (z)
     wall: float = 1.2            # plate below the lowest tine
+
+    def __post_init__(self):
+        if not math.isfinite(self.clear_guard) or self.clear_guard < MIN_CLEARANCE_M/MM:
+            raise ValueError("guard clearance must be finite and at least 1 mm")
 
     def to_dict(self):
         return asdict(self)
