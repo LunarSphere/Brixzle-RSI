@@ -71,7 +71,9 @@ def test_sustained_overpressure_fails_release_force_check(family, monkeypatch):
 
 @pytest.mark.parametrize(("cap", "gentle"), [(0.01, True), (0.001, False)])
 def test_grip_caps_sustained_fork_load(family, cap, gentle):
-    row = held.held_trial(family, family.defaults, 0, held.HeldSample(), held.HeldConfig(press_force_N=cap))
+    # Isolate the original fork/brick force from the optional station rail reactions.
+    cfg = held.HeldConfig(station=None, press_force_N=cap)
+    row = held.held_trial(family, family.defaults, 0, held.HeldSample(), cfg)
     grip = row["phases"]["grip"]
     assert grip["captured"] and grip["peak_engage_N"] > cap
     assert (grip["sustained_engage_N"] <= cap) == gentle
@@ -317,3 +319,17 @@ def test_mirrored_course_picks_from_same_corbel_station(family):
     assert rig.seat_R.magnitude() > 3.
     np.testing.assert_allclose(rig.station, [0., -.1, 0.])
     np.testing.assert_allclose(rig.station_R.as_matrix(), np.eye(3))
+
+
+def test_grip_sensor_skips_stationary_brick_contacts(family, monkeypatch):
+    import mujoco
+    rig = held.HeldRig(family, family.defaults, 0)
+    assert rig._contacts().supported  # resting brick in its fixture, fork still parked
+
+    def unexpected(*args):
+        pytest.fail("grip sensor decoded a contact away from the parked fork")
+
+    monkeypatch.setattr(mujoco, "mj_contactForce", unexpected)
+    grip = rig._contacts(fork_only=True)
+    np.testing.assert_array_equal(grip.fork_force_N, np.zeros(3))
+    assert grip.fork_brick_N == grip.fork_strike_N == 0.

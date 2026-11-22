@@ -19,8 +19,8 @@ Reuse the rig for multiple samples of a seat. Each call restores the settled fix
 | Phase | What the trial checks |
 |---|---|
 | Take-off | Compute maximum thrust divided by the weight of the drone, deck and empty gripper. A value below the drone's configured minimum stops the mission at the pad. |
-| Approach | Start airborne outside the station and track a short trajectory to the error-displaced standoff. Record the drone's actual tracking error. A drone can reach its commanded standoff and still miss the windows. |
-| Grip | Move the entire fork along drone-local +Y into the stationary brick. Check each shaft's depth and intersection with its own window or bore, then lift under payload compensation. Measure rise, contact load, carry offset and angle. |
+| Approach | Start airborne outside the station and track a short trajectory to the error-displaced standoff above its entry apron. Record the drone's actual tracking error. A drone can reach its commanded standoff and still miss the windows. |
+| Grip | Lower onto the fixed PLA apron, then drive the fork along drone-local +Y. The tapered rails guide the plate into a straight channel and two stops set its insertion depth. Check each shaft's depth and intersection with its own window or bore, then lift under payload compensation. Measure rise, contact load, carry offset and angle. |
 | Transport | Fly the loaded drone to the target. Check combined payload mass and loaded thrust-to-weight. Measure carry offset and angle throughout acceleration and braking, and check engagement again at arrival. A lost brick skips release. A brick still on the fork can continue to provide placement evidence even if its alignment failed. |
 | Release | Descend at the configured speed, stop at the force or depth limit, unload, fly along drone-local −Y and climb. Check that the shafts clear the brick, measure the brick's maximum drift through withdrawal and climb, then settle it while the departed drone hovers. |
 
@@ -43,7 +43,40 @@ After departure, `post_departure_outcome`, `err_mm` and `angle_deg` use the drop
 
 Known sim-to-real gaps include rotor downwash, ground effect near the structure, estimator noise beyond the measured hover RMS, and uncalibrated contact and wrist properties. Bench test #193 should measure the printed wrist stiffness and damping and include a hand or arm placement check with the printed gripper and brick before flight. Any real flight test belongs to the maintainer in aerial-assembly. [Bench test #193](https://github.com/LunarSphere/Brixzle-RSI/issues/193)
 
-## Recorded trials
+## Funnelled pickup station and gripper guides
+
+Exp 3 r4 measured a radial RMSE of **16.84 mm** and p95 of **27.78 mm**. Its mean offset was **(−8.45, +3.93) mm**, a bias magnitude of **9.32 mm**. Subtracting squared bias from squared RMSE gives an estimated **14.02 mm RMS** scatter about the mean. The file retains radii and a summary bias vector, so it cannot reconstruct the direction of each observation. Both station and target continue to draw empirical radii with a random azimuth. The simulation applies the full draws, including the unloaded hover estimates in Z, pitch and yaw. [Flight measurements](../src/brixzle/data/error-exp3-r4.json) · [Sampler](../src/brixzle/engine/sim/held.py)
+
+The station is one fixed PLA print. A fork approaching high or low first descends toward a broad apron. Two tapered rails act on the plate's sides while it slides forward. A straight section aligns the shafts before they reach the brick. End stops catch the plate margins and leave the shafts free to pass through the windows. The controller commands travel past the stops to accommodate along-track error. MuJoCo resolves the contact against the thrust-controlled carrier and compliant wrist. The lift starts at the carrier's achieved position and unloads the lateral preload. Only the pickup site carries the fixture. Bench test #193 should check rail clearance under the propeller guards, since the carrier's collision geometry covers the fork and its guides. [Fixture geometry](../src/brixzle/engine/sim/funnel.py) · [Motion and force checks](../src/brixzle/engine/sim/held.py)
+
+The **design starting points** are a **120 mm** clear mouth perpendicular to the insertion line, a **55°** minimum rail angle measured from the transverse direction in plan, and a **12 mm** rail height above the sliding surface. For a different fork, allow the projected plate width plus twice the required lateral error at the mouth. DR1 applies in the direction of the insertion force. Both faces must clear the PLA friction cone plus the R6 angular margin, including on oblique mounts. Use `HeldConfig(station=FunnelStation(...))` to change the geometry in SI or `HeldConfig(station=None)` to compare the original saddles alone. A candidate sidecar configures the carried hardware and motion. The station is common test equipment for the campaign. [Parameter definitions](../src/brixzle/engine/sim/funnel.py) · [R6 settings](../src/brixzle/families/rules.py)
+
+`rig.station_solid()` returns the CadQuery solid in millimetres from the same convex pieces used for contact. Export it with `cq.exporters.export(rig.station_solid(), str(output_dir / "station.stl"))` in a fresh run directory. The sill regression checks a single valid solid, a flat print base and a watertight STL. [Sill station STL](../runs/stageb/fixture196-verified-7jEMYM/sill-station.stl) · [Export and geometry tests](../tests/test_funnel_station.py)
+
+A `guides` array in `gripper.json` adds oriented solid boxes. For example, this sidecar fits a TPU guide to the sill fork plate. A pair of inclined boxes can form a V-guide.
+
+```json
+{
+  "guides": [
+    {
+      "material": "TPU",
+      "size_m": [0.004, 0.006, 0.012],
+      "centre_m": [0, -0.026, 0.035],
+      "quat_wxyz": [0.7071067812, 0, 0, 0.7071067812]
+    }
+  ]
+}
+```
+
+The dimensions are full side lengths in metres. Centres and unit quaternions use the fork's nominal brick carry frame. Omitting the quaternion selects the identity. Each box must touch the plate, a tine or a connected guide. PLA uses the scene's rigid contact. TPU uses the existing estimated softer contact parameters. The boxes mount rigidly, so flexure of a printed TPU lip still needs a bench check. Each solid box contributes its full mass, centre of mass and rotated inertia to the fork. Overlapping attachment material is counted conservatively. As in the TPU hook trial, the mass model uses PLA density for TPU pending a weighing. The R10 payload, thrust margin, wrist loading and release collision checks include the guides in every phase. The example dimensions come from the scene and mass test. [Guide and mass model](../src/brixzle/engine/sim/fork.py) · [TPU contact assumptions](../src/brixzle/families/fable_gentle_tpuhook/family.py) · [Example test](../tests/test_funnel_station.py)
+
+### Why the aligned sill missed its carry tolerance
+
+**Simulated, uncalibrated contact.** On the original saddles both shafts entered. At lift the aligned brick was **2.30 mm** below nominal and the carry angle reached **4.12°**. At the end of transport one shaft fell short of the required engagement. Repeating the aligned pickup with a rigid wrist still failed. In a saddle-only comparison, advancing the oblique fork an additional **2 mm** along brick Y at the same shaft slope brought the carry angle down to **1.50°** and passed transport. The limiting factor was how far the short oblique fork engaged the V-swept windows. The station provides that extra depth at its stops. The carry angle, displacement and individual tine-depth checks retain their original tolerances. Wrist stiffness and damping are a **guess** pending the bench test. [Aligned and rigid-wrist diagnostic](../runs/stageb/funnel196-DLd8Rb/fit.log) · [Insertion-depth comparison](../runs/stageb/funnel196-DLd8Rb/depth.log) · [Fixture comparison with both sets of phase verdicts](../runs/stageb/fixture196-verified-7jEMYM/result.json)
+
+With an aligned target and a **+27.78 mm X** error at pickup, the sill passed all five phases and seated after departure. With the same error on the saddles alone it missed the grip. In the funnel the sustained grip force was **0.101 N** against a **0.232 N** limit. The peak contact normal sum was **0.672 N**. The compiled-rig trial took **4.90 s**, including **1.56 s** in grip. The aligned funnel trial took **4.89 s** and also passed every phase. These are individual full-seat observations, simulated, uncalibrated contact. [Inputs, outcomes and individual phase timings](../runs/stageb/fixture196-verified-7jEMYM/result.json)
+
+## Recorded trials before the funnel station
 
 **Simulated, uncalibrated contact.** The aligned full-seat trial on the unchanged `gentle_inboard_sill` took **3.756 s** on a compiled scene. First scene setup, including CAD and fixture settling, took **3.242 s**. The brick stayed seated through withdrawal and climb. The gripper failed the overall mission. Wall-clock for that trial and the measurements behind each verdict appear below. [Run inputs, outcomes and timings](../runs/stageb/held191-force-MaGElm/result.json) · [Reproduction script](../runs/stageb/held191-force-MaGElm/reproduce.py)
 
@@ -101,8 +134,24 @@ Baseline and candidate verification both run heldmap for a held goal. Claims can
 
 The step offset is still one voxel on the two-voxel brick. A smaller positive offset requires extending the lattice representation or supporting longer-span bricks, with corresponding changes to support connectivity and expected seat poses. The reach report uses the family's actual pitch. [Structure assumptions](../src/brixzle/engine/structures.py) · [Voxel connectivity](../src/brixzle/engine/sim/assemble.py)
 
-### Recorded heldmap on gentle_inboard_sill
+### Recorded heldmap on gentle_inboard_sill before the funnel station
 
 The default heldmap at seed **192** took **273.46 s** end to end, including process startup and writing the report. The evaluator recorded **271.18 s** internally. [Command and process timing](../runs/stageb/held192-20261122T214933984234Z/wall.json) · [Evaluator timing and inputs](../runs/stageb/held192-20261122T214933984234Z/heldmap-20261122T215407253674Z-gentle_inboard_sill/result.json)
 
 **Simulated, uncalibrated contact.** All ten empirical key-seat missions passed the computed take-off check. Five passed approach tracking. All ten missed the grip and skipped transport and release. All three measured builds stopped at the first pickup, giving **0 mm reliable reach**. With pickup aligned, full-seat Z was **0** (two seats and two jams), positive bare-edge Z was **+0.5** (one seat and one fall), and negative bare-edge and first-reach Z were both **0** (one seat and one jam each). These cases reuse the same seeded approaches across layouts. [Trial rows, phase timings and builds](../runs/stageb/held192-20261122T214933984234Z/heldmap-20261122T215407253674Z-gentle_inboard_sill/result.json)
+
+### Heldmap with the funnel station
+
+**Simulated, uncalibrated contact.** On `gentle_inboard_sill`, grip passed **10/10** empirical key-seat missions, compared with **0/10** on the saddles. Take-off, approach and transport also passed every attempt. Release passed **2/10**, giving **2/10** whole-mission passes. These cases reuse two seeded station/target sample pairs across five layouts. [Heldmap trials, seed and settings](../runs/stageb/held196-verified-MyeUSn/heldmap-20261122T225725710990Z-gentle_inboard_sill/result.json) · [Earlier run](../runs/stageb/held192-20261122T214933984234Z/heldmap-20261122T215407253674Z-gentle_inboard_sill/result.json)
+
+| Phase | Passed | Failed | Skipped | Total wall-clock across empirical key-seat missions |
+|---|---:|---:|---:|---:|
+| Take-off | 10 | 0 | 0 | 0.000014 s |
+| Approach | 10 | 0 | 0 | 4.90 s |
+| Grip | 10 | 0 | 0 | 58.93 s |
+| Transport | 10 | 0 | 0 | 10.63 s |
+| Release | 2 | 8 | 0 | 31.11 s |
+
+Five releases retained the fork. Five bricks seated after departure, of which two passed clean withdrawal. With aligned pickup and mean-box target samples, release Z was **−0.5** on the full seat, **+1** on the positive bare edge, **−1** on the negative bare edge and **0** on the first reach. The three empirical corbel builds gave **0 mm** reliable reach, so the design failed R4. The maximum simulated payload was **26.52 g**. [Heldmap trials, seed and settings](../runs/stageb/held196-verified-MyeUSn/heldmap-20261122T225725710990Z-gentle_inboard_sill/result.json)
+
+The default seed-192 heldmap took **592.76 s** end to end, including its radius study and sequential builds. The evaluator timed **590.31 s** internally. That is about **33%** of the project's 30-minute family budget for one heldmap. Resolving only contacts involving the fork during engagement reproduced every trial and build measurement from the initial funnel run. Wrist stiffness and damping are a **guess** pending #193. [Process timing](../runs/stageb/held196-verified-MyeUSn/wall.txt) · [Run comparison](../runs/stageb/held196-verified-MyeUSn/comparison.json) · [Family time budget](../CLAUDE.md)

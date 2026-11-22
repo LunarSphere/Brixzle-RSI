@@ -19,7 +19,8 @@ from brixzle.engine.sim import trials as T
 from brixzle.engine.sim import approach_error
 from brixzle.engine.sim.config import read_json
 from brixzle.engine.sim.drone import CF21B, DroneConfig, G, HoverGains
-from brixzle.engine.sim.fork import ForkParams, build_fork
+from brixzle.engine.sim.fork import ForkGuide, ForkParams, build_fork
+from brixzle.engine.sim.funnel import FunnelStation
 from brixzle.engine.sim.pickup import (
     PickConfig, _R, _wxyz, add_fork_parts, bored_collision, withdrawal_stroke_mm,
     fixture_pieces, hover_wrench, minimum_jerk, vertical_sweep, tine_segment, SEAT,
@@ -109,8 +110,14 @@ class HeldConfig:
     tip_engagement_m: float = 0.004    # past mid-depth for an oblique fork
     oblique_yaw_rad: float = math.atan(0.55)  # fixed candidate mount angle, guess
     release_at_contact: bool = False
+    guides: tuple[ForkGuide, ...] = ()
+    station: FunnelStation | None = field(default_factory=FunnelStation)
 
     def __post_init__(self):
+        if self.station is not None and not isinstance(self.station, FunnelStation):
+            raise ValueError("station must be a FunnelStation or None")
+        if not isinstance(self.guides, tuple) or not all(isinstance(g, ForkGuide) for g in self.guides):
+            raise ValueError("guides must be a tuple of ForkGuide objects")
         if not isinstance(self.release_at_contact, bool):
             raise ValueError("release_at_contact must be a boolean")
         if self.drone.mass_g <= 0:
@@ -176,7 +183,8 @@ def _fork_fit(family, p, part, cfg):
             raise ForkFitError("held fork needs through-Y windows or two fitting bores at least 16 mm across")
         seats = [(b.x_mm, b.z_mm + b.radius_mm - r) for b in bores]
         aim = (0., -min(b.radius_mm-r for b in bores))
-    fork = build_fork(family, p, part, ForkParams(tine_d=2*r), tines=seats, y_tip_mm=tip, with_drone=False, tine_dx_dy=slope)
+    fork = build_fork(family, p, part, ForkParams(tine_d=2*r), tines=seats, y_tip_mm=tip,
+                      with_drone=False, tine_dx_dy=slope, guides=cfg.guides)
     collision = bored_collision(core, p, part)
     if cap:
         collision.extend(cap.feature_sets(p, part))
@@ -311,12 +319,26 @@ class HeldRig:
             pieces = [v-station_origin for v in fixture_pieces(family, p, part)]
         else:
             pieces = _station(core, p, part)
+        self.entry_m = 0.
+        saddle_count = len(pieces)
+        if self.cfg.station is not None:
+            try:
+                pieces, self.entry_m = self.cfg.station.geometry(
+                    self.fork, self.aim, pieces, collision, self.cfg.physics.friction)
+            except ValueError as exc:
+                raise ForkFitError(str(exc)) from exc
+        self.station_pieces_mm = pieces
         fixture = [self.station_R.apply(piece) + self.station/MM for piece in pieces]
         self.model, _, self.info = build_scene(family, p, bodies, [base], len(parts), self.cfg.physics,
                                                body_parts=[*parts[:-1], "held_target"], visual=False,
                                                extra=_carrier(self.cfg, self.fork), static=fixture)
         m = self.model
+        self.rail_geoms = np.zeros(m.ngeom, dtype=bool)
+        for i in range(saddle_count, len(pieces)):
+            self.rail_geoms[m.geom(f"static_{i}").id] = True
         self.data = d = mujoco.MjData(m)
+        if self.cfg.guides:
+            self._validate_guide_mounts()
         self.owner = T._brick_geoms(m, self.info)
         self.target_body = self.info["bodies"][self.j]
         self.gripper_kg = float(m.body_subtreemass[m.body("wrist").id])
@@ -358,12 +380,34 @@ class HeldRig:
         self.start = mujoco.MjData(m)
         mujoco.mj_copyData(self.start, m, d)
 
-    def _contacts(self):
-        """Separate external support loads, fork/brick contact and any direct fork strike."""
+    def _validate_guide_mounts(self):
+        """Every guide must touch a tine, the plate, or another attached guide."""
+        m, d = self.model, self.data
+        mujoco.mj_kinematics(m, d)
+        pending = {m.geom(f"fork_guide{i}").id for i in range(len(self.cfg.guides))}
+        attached = set(np.flatnonzero(m.geom_bodyid == m.body("fork").id)) - pending
+        while pending:
+            joined = {g for g in pending if any(
+                mujoco.mj_geomDistance(m, d, g, a, 1e-5, None) <= 1e-7 for a in attached)}
+            if not joined:
+                raise ForkFitError("each guide must attach to the fork plate, a tine or another mounted guide")
+            pending -= joined
+            attached |= joined
+
+    def station_solid(self):
+        """Printable PLA fixture in mm, generated only on request from scene geometry."""
+        from brixzle.families.capture import hull_solid
+
+        solids = [hull_solid(p[ConvexHull(p).vertices]) for p in self.station_pieces_mm]
+        return solids[0].fuse(*solids[1:]).clean()
+
+    def _contacts(self, *, fork_only=False):
+        """Resolve assembly contacts, or just the contacts loading the fork during engagement."""
         d = self.data
         pair = d.contact.geom
         assembly = self.assembly_geoms[pair]
-        active = np.flatnonzero(assembly.any(axis=1) & (d.contact.efc_address >= 0))
+        relevant = self.fork_geoms[pair] if fork_only else assembly
+        active = np.flatnonzero(relevant.any(axis=1) & (d.contact.efc_address >= 0))
         supported = floor = False
         normals = grip = strike = 0.
         resultant = np.zeros(3)
@@ -506,13 +550,20 @@ class HeldRig:
         pick_R = Rotation.from_euler("yz", [pick.dpitch_rad, pick.dyaw_rad])*rot
         approach = station + rot.apply(self.mount+self.aim) + [pick.dx_m, pick.dy_m, pick.dz_m]
         back = self.stroke_m + PickConfig.standoff_mm*MM
-        self.command = station + rot.apply(self.mount + self.aim - 2*back*self.fork_axis)
+        start_back = 2*back
+        if cfg.station:
+            back = self.entry_m + cfg.station.mouth_width_m/3
+            start_back = back + self.stroke_m
+        standoff = approach + pick_R.apply(-back*self.fork_axis)
+        self.command = station + rot.apply(self.mount + self.aim - start_back*self.fork_axis)
+        if cfg.station:
+            standoff[2] += cfg.station.height_m
+            self.command[2] += cfg.station.height_m
         self.orientation = rot
         d.qpos[self.fa:self.fa+3] = self.command
         d.qpos[self.fa+3:self.fa+7] = _wxyz(rot*self.drone_in_brick)
         d.qvel[self.fv:self.fv+6] = 0.
         mujoco.mj_forward(m, d)
-        standoff = approach + pick_R.apply(-back*self.fork_axis)
         self._move(standoff, pick_R, cfg.transport_m_s, hold=cfg.hold_s)
         tracking = np.linalg.norm(d.xpos[self.carrier]-standoff)
         reached = tracking <= PickConfig.insert_tol_mm*MM
@@ -534,9 +585,15 @@ class HeldRig:
         window = _ForceWindow(self.model.opt.timestep)
         brick_weight = (self.payload - self.gripper_kg) * G
 
+        station_contact = False
+
         def engage_contact():
-            nonlocal peak_engage, sustained_engage
-            loads = self._contacts()
+            nonlocal peak_engage, sustained_engage, station_contact
+            if cfg.station and not station_contact:
+                pairs = d.contact.geom[d.contact.efc_address >= 0]
+                station_contact = bool(np.any(self.fork_geoms[pairs].any(axis=1)
+                                              & self.rail_geoms[pairs].any(axis=1)))
+            loads = self._contacts(fork_only=True)
             peak_engage = max(peak_engage, loads.fork_brick_N + loads.fork_strike_N)
             mean = window.mean(loads.fork_force_N)
             # Between fork resting on brick and brick hanging on fork, gravity
@@ -544,7 +601,18 @@ class HeldRig:
             mean[2] -= np.clip(mean[2], -brick_weight, self.gripper_kg * G)
             sustained_engage = max(sustained_engage, float(np.linalg.norm(mean)))
 
+        if cfg.station:
+            # Drive against the guide floor and end stops. The stroke spans
+            # approach uncertainty; contact and the wrist determine the fork pose.
+            engage = engage + self.orientation.apply(self.fork_axis * (cfg.station.mouth_width_m/2))
+            engage[2] -= .012  # floor preload travel (m), a station design starting point
+            lowered = self.command.copy()
+            lowered[2] = engage[2]
+            self._move(lowered, self.orientation, PickConfig.v_lift, observe=engage_contact)
         self._move(engage, self.orientation, PickConfig.v_engage, observe=engage_contact, hold=cfg.hold_s)
+        if cfg.station:
+            # Fly up from the achieved stop position, unloading the horizontal preload.
+            self.command = d.xpos[self.carrier].copy()
         inserted = self._inserted()
         approach = self.command
         raised = approach.copy()
@@ -568,7 +636,8 @@ class HeldRig:
             outcome = "off_centre"
         elif not grip:
             outcome = "forceful"
-        return dict(passed=bool(grip), outcome=outcome, captured=bool(captured), tines_inserted=inserted,
+        return dict(passed=bool(grip), outcome=outcome, captured=bool(captured), station_contact=station_contact,
+                    tines_inserted=inserted,
                     tines_after_lift=after_lift, rise_m=float(rise), peak_engage_N=peak_engage,
                     sustained_engage_N=sustained_engage, within_force_limit=gentle,
                     offset_m=offset.tolist(), angle_rad=angle)
