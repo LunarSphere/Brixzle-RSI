@@ -154,3 +154,11 @@ def test_same_hardware_must_fit_both_courses():
     b = dict(a, tines=[[-4, 8], [6, 8]], plate=[[-6,-3,4], [8,-2,11]], drone_pos_mm=[1,0,12])
     assert same_fork(a, b)
     assert not same_fork(a, dict(b, tines=[[-4, 8], [7, 8]]))
+
+
+def test_station_fit_failure_reports_an_infeasible_candidate():
+    from brixzle.engine import heldmap as hm
+    from brixzle.engine.sim.funnel import FunnelStation
+    from brixzle.families.ab.family import FAMILY
+    report = hm.heldmap(FAMILY, FAMILY.defaults, held.HeldConfig(station=FunnelStation(mouth_width_m=.001)))
+    assert report["violations"] == ["held_gripper_fit"] and "mouth" in report["fit_error"]

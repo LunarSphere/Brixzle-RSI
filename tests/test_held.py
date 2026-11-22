@@ -71,7 +71,9 @@ def test_sustained_overpressure_fails_release_force_check(family, monkeypatch):
 
 @pytest.mark.parametrize(("cap", "gentle"), [(0.01, True), (0.001, False)])
 def test_grip_caps_sustained_fork_load(family, cap, gentle):
-    row = held.held_trial(family, family.defaults, 0, held.HeldSample(), held.HeldConfig(press_force_N=cap))
+    # Isolate the original fork/brick force from the optional station rail reactions.
+    cfg = held.HeldConfig(station=None, press_force_N=cap)
+    row = held.held_trial(family, family.defaults, 0, held.HeldSample(), cfg)
     grip = row["phases"]["grip"]
     assert grip["captured"] and grip["peak_engage_N"] > cap
     assert (grip["sustained_engage_N"] <= cap) == gentle

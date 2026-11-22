@@ -43,7 +43,7 @@ def gripper_config(spec, override=None):
     else:
         path = Path(override)
     data = json.loads(path.read_text())
-    allowed = {f.name for f in fields(HeldConfig)} - {"drone", "physics", "release_at_contact"}
+    allowed = {f.name for f in fields(HeldConfig)} - {"drone", "physics", "release_at_contact", "station"}
     if not isinstance(data, dict) or data.keys() - allowed:
         raise ValueError(f"invalid gripper settings in {path}; allowed keys are {sorted(allowed)}")
     wrist = data.pop("wrist", {})
