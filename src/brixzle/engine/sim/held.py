@@ -401,12 +401,13 @@ class HeldRig:
         solids = [hull_solid(p[ConvexHull(p).vertices]) for p in self.station_pieces_mm]
         return solids[0].fuse(*solids[1:]).clean()
 
-    def _contacts(self):
-        """Separate external support loads, fork/brick contact and any direct fork strike."""
+    def _contacts(self, *, fork_only=False):
+        """Resolve assembly contacts, or just the contacts loading the fork during engagement."""
         d = self.data
         pair = d.contact.geom
         assembly = self.assembly_geoms[pair]
-        active = np.flatnonzero(assembly.any(axis=1) & (d.contact.efc_address >= 0))
+        relevant = self.fork_geoms[pair] if fork_only else assembly
+        active = np.flatnonzero(relevant.any(axis=1) & (d.contact.efc_address >= 0))
         supported = floor = False
         normals = grip = strike = 0.
         resultant = np.zeros(3)
@@ -592,7 +593,7 @@ class HeldRig:
                 pairs = d.contact.geom[d.contact.efc_address >= 0]
                 station_contact = bool(np.any(self.fork_geoms[pairs].any(axis=1)
                                               & self.rail_geoms[pairs].any(axis=1)))
-            loads = self._contacts()
+            loads = self._contacts(fork_only=True)
             peak_engage = max(peak_engage, loads.fork_brick_N + loads.fork_strike_N)
             mean = window.mean(loads.fork_force_N)
             # Between fork resting on brick and brick hanging on fork, gravity
