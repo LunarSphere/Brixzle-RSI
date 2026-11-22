@@ -19,7 +19,7 @@ from brixzle.engine.sim import trials as T
 from brixzle.engine.sim import approach_error
 from brixzle.engine.sim.config import read_json
 from brixzle.engine.sim.drone import CF21B, DroneConfig, G, HoverGains
-from brixzle.engine.sim.fork import ForkParams, build_fork
+from brixzle.engine.sim.fork import ForkGuide, ForkParams, build_fork
 from brixzle.engine.sim.funnel import FunnelStation
 from brixzle.engine.sim.pickup import (
     PickConfig, _R, _wxyz, add_fork_parts, bored_collision, withdrawal_stroke_mm,
@@ -110,11 +110,14 @@ class HeldConfig:
     tip_engagement_m: float = 0.004    # past mid-depth for an oblique fork
     oblique_yaw_rad: float = math.atan(0.55)  # fixed candidate mount angle, guess
     release_at_contact: bool = False
+    guides: tuple[ForkGuide, ...] = ()
     station: FunnelStation | None = field(default_factory=FunnelStation)
 
     def __post_init__(self):
         if self.station is not None and not isinstance(self.station, FunnelStation):
             raise ValueError("station must be a FunnelStation or None")
+        if not isinstance(self.guides, tuple) or not all(isinstance(g, ForkGuide) for g in self.guides):
+            raise ValueError("guides must be a tuple of ForkGuide objects")
         if not isinstance(self.release_at_contact, bool):
             raise ValueError("release_at_contact must be a boolean")
         if self.drone.mass_g <= 0:
@@ -181,7 +184,7 @@ def _fork_fit(family, p, part, cfg):
         seats = [(b.x_mm, b.z_mm + b.radius_mm - r) for b in bores]
         aim = (0., -min(b.radius_mm-r for b in bores))
     fork = build_fork(family, p, part, ForkParams(tine_d=2*r), tines=seats, y_tip_mm=tip,
-                      with_drone=False, tine_dx_dy=slope)
+                      with_drone=False, tine_dx_dy=slope, guides=cfg.guides)
     collision = bored_collision(core, p, part)
     if cap:
         collision.extend(cap.feature_sets(p, part))
@@ -334,6 +337,8 @@ class HeldRig:
         for i in range(saddle_count, len(pieces)):
             self.rail_geoms[m.geom(f"static_{i}").id] = True
         self.data = d = mujoco.MjData(m)
+        if self.cfg.guides:
+            self._validate_guide_mounts()
         self.owner = T._brick_geoms(m, self.info)
         self.target_body = self.info["bodies"][self.j]
         self.gripper_kg = float(m.body_subtreemass[m.body("wrist").id])
@@ -374,6 +379,20 @@ class HeldRig:
         m.body_gravcomp[parked] = 0.
         self.start = mujoco.MjData(m)
         mujoco.mj_copyData(self.start, m, d)
+
+    def _validate_guide_mounts(self):
+        """Every guide must touch a tine, the plate, or another attached guide."""
+        m, d = self.model, self.data
+        mujoco.mj_kinematics(m, d)
+        pending = {m.geom(f"fork_guide{i}").id for i in range(len(self.cfg.guides))}
+        attached = set(np.flatnonzero(m.geom_bodyid == m.body("fork").id)) - pending
+        while pending:
+            joined = {g for g in pending if any(
+                mujoco.mj_geomDistance(m, d, g, a, 1e-5, None) <= 1e-7 for a in attached)}
+            if not joined:
+                raise ForkFitError("each guide must attach to the fork plate, a tine or another mounted guide")
+            pending -= joined
+            attached |= joined
 
     def station_solid(self):
         """Printable PLA fixture in mm, generated only on request from scene geometry."""

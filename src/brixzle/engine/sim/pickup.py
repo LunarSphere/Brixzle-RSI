@@ -189,6 +189,16 @@ def add_fork_parts(body, fork, prefix="fork"):
     ET.SubElement(body, "geom", name=f"{prefix}_plate", type="box", size=_numbers((hi - lo)/2*MM),
                   pos=_numbers((hi + lo)/2*MM), rgba=".8 .8 .8 1", contype="1", conaffinity="1")
 
+    for i, guide in enumerate(fork.get("guides", ())):
+        contact = {}
+        if guide["material"] == "TPU":
+            from brixzle.families.fable_gentle_tpuhook.family import TPU_CONTACT
+            contact = dict(priority="1", solref=_numbers([TPU_CONTACT["timeconst"], TPU_CONTACT["dampratio"]]),
+                           friction=f"{TPU_CONTACT['friction']} 0.005 0.0001")
+        ET.SubElement(body, "geom", name=f"{prefix}_guide{i}", type="box",
+                      size=_numbers(np.asarray(guide["size_m"])/2), pos=_numbers(guide["centre_m"]),
+                      quat=_numbers(guide["quat_wxyz"]), contype="1", conaffinity="1", **contact)
+
 
 def withdrawal_stroke_mm(depth_mm, tip_y_mm):
     """Distance along -Y to bring the tip 5 mm clear of the brick's near face."""

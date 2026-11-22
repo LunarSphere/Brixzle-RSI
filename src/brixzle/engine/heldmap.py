@@ -11,6 +11,7 @@ import numpy as np
 
 from brixzle.engine import boxes, objective, structures, zscore
 from brixzle.engine.sim.drone import CF21B
+from brixzle.engine.sim.fork import ForkGuide
 from brixzle.engine.sim.held import ForkFitError, HeldConfig, HeldRig, WristConfig, mission_samples
 from brixzle.engine.sim.pickup import tine_segment
 
@@ -54,9 +55,16 @@ def gripper_config(spec, override=None):
             if not isinstance(value, list) or not all(type(x) in (float, int) for x in value):
                 raise ValueError(f"{name} needs three numbers")
             wrist[name] = tuple(value)
+    guides = data.pop("guides", [])
+    if not isinstance(guides, list) or not all(isinstance(g, dict) for g in guides):
+        raise ValueError("guides must be an array of guide objects")
+    try:
+        guides = tuple(ForkGuide(**g) for g in guides)
+    except TypeError as exc:
+        raise ValueError(f"invalid fork guide: {exc}") from exc
     if not all(type(v) in (int, float) for v in data.values()):
         raise ValueError("gripper dimensions and motion settings must be numbers")
-    return HeldConfig(**data, wrist=WristConfig(**wrist))
+    return HeldConfig(**data, wrist=WristConfig(**wrist), guides=guides)
 
 
 def mean_samples(n, seed):
@@ -136,11 +144,16 @@ def build_corbel(structure, stage_rig, seed, radius):
 
 
 def same_fork(a, b):
-    """Compare plate and shaft geometry relative to the mount in the carried pose."""
+    """Compare the plate, shafts and printed guides relative to the drone mount."""
+    if [g["material"] for g in a.get("guides", ())] != [g["material"] for g in b.get("guides", ())]:
+        return False
+
     def geometry(fork):
         mount = np.asarray(fork["drone_pos_mm"])
         segments = [tine_segment(fork, x, z) - mount for x, z in sorted(fork["tines"])]
-        return np.concatenate(([fork["tine_r"], fork["tine_dx_dy"]],
+        guides = [np.concatenate((np.asarray(g["centre_m"])*1000 - mount, g["size_m"], g["quat_wxyz"]))
+                  for g in fork.get("guides", ())]
+        return np.concatenate((np.ravel(guides), [fork["tine_r"], fork["tine_dx_dy"]],
                                (np.asarray(fork["plate"]) - mount).ravel(), np.ravel(segments)))
 
     left, right = geometry(a), geometry(b)

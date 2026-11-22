@@ -1,5 +1,6 @@
-"""Passive fork pickup station (#196), simulated, uncalibrated contact."""
+"""Passive station and fork guides (#196), simulated, uncalibrated contact."""
 from dataclasses import replace
+import json
 import math
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 from brixzle.agents.check_family import load_family
+from brixzle.engine.heldmap import gripper_config
 from brixzle.engine.sim import held
 
 
@@ -45,6 +47,33 @@ def test_same_p95_misses_without_rails(family):
     assert not row["phases"]["grip"]["captured"]
 
 
+def test_gripper_guides_are_physical_and_charge_payload(tmp_path, family, rig):
+    path = tmp_path / "gripper.json"
+    guide = dict(material="TPU", size_m=[.004, .006, .012],
+                 centre_m=[0, -.026, .035], quat_wxyz=[math.sqrt(.5), 0, 0, math.sqrt(.5)])
+    path.write_text(json.dumps(dict(guides=[guide])))
+    cfg = gripper_config("unused", path)
+    guided = held.HeldRig(family, family.defaults, 0, cfg)
+    geom = guided.model.geom("fork_guide0")
+    assert geom.bodyid == guided.jaw and geom.contype and geom.conaffinity
+    np.testing.assert_allclose(geom.size, np.array(guide["size_m"])/2)
+    np.testing.assert_allclose(geom.pos, guide["centre_m"])
+    np.testing.assert_allclose(geom.quat, guide["quat_wxyz"])
+    assert guided.payload - rig.payload == pytest.approx(np.prod(guide["size_m"])*cfg.guides[0].density_kg_m3)
+    assert guided.force_cap < rig.force_cap
+
+
+@pytest.mark.parametrize("change", [dict(material="PETG"), dict(size_m=[0,.01,.01]),
+                                    dict(centre_m=[0,0,float("inf")]), dict(quat_wxyz=[0,0,0,0]),
+                                    dict(density=0)])
+def test_gripper_rejects_invalid_guides(tmp_path, change):
+    path = tmp_path / "gripper.json"
+    guide = dict(material="PLA", size_m=[.01]*3, centre_m=[0,0,0])
+    path.write_text(json.dumps(dict(guides=[dict(guide, **change)])))
+    with pytest.raises(ValueError):
+        gripper_config("unused", path)
+
+
 def test_station_exports_one_printable_solid(rig, tmp_path):
     import cadquery as cq
     import trimesh
@@ -72,6 +101,13 @@ def test_rail_bed_and_saddle_foot_share_the_print_bed(rig):
     all_vertices = np.vstack(pieces)
     assert first_layer[:, 1].min() == pytest.approx(all_vertices[:, 1].min())
     assert first_layer[:, 1].max() == pytest.approx(all_vertices[:, 1].max())
+
+
+def test_guides_must_connect_to_the_printed_fork(family):
+    from brixzle.engine.sim.fork import ForkGuide
+    guide = ForkGuide("PLA", (.002, .002, .01), (0., .1, .1))
+    with pytest.raises(held.ForkFitError, match="attach"):
+        held.HeldRig(family, family.defaults, 0, held.HeldConfig(guides=(guide,)))
 
 
 def test_station_uses_the_design_friction_margin(family):
