@@ -29,7 +29,12 @@ import time
 LABEL = "simulated, uncalibrated contact"
 ROOT = Path(__file__).resolve().parents[1]                 # src/brixzle
 REPO = ROOT.parents[1]
-STAGE_CACHE = REPO / ".cache" / "stages"
+STAGE_CACHE = REPO / ".cache" / "stages"  # BRIXZLE_STAGE_CACHE moves it (#182: a sandboxed role writes only its run)
+
+
+def stage_cache_dir():
+    where = os.environ.get("BRIXZLE_STAGE_CACHE", "").strip()
+    return Path(where) if where else STAGE_CACHE
 OUTCOMES = ("seated", "jammed", "wrong_valley", "fell")
 
 
@@ -412,12 +417,12 @@ def stage_key(family, p, stage, settings):
 def cached_stage(family, p, stage, settings, run):
     """``run()``'s result, or the one stored for the same key (marked 'cached_from')."""
     key = stage_key(family, p, stage, settings)
-    path = STAGE_CACHE / f"{stage}-{key}.json"
+    path = stage_cache_dir() / f"{stage}-{key}.json"
     if path.exists():
         res = json.loads(path.read_text())
         return {**res, "cached_from": res.get("run")}
     res = run()
-    STAGE_CACHE.mkdir(parents=True, exist_ok=True)
+    stage_cache_dir().mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_finite(res), default=str))
     return res
 
