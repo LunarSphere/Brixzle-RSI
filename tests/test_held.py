@@ -43,6 +43,41 @@ def test_y_withdrawal_leaves_the_seated_brick_in_place(aligned):
     assert aligned["outcome"] == "seated"
 
 
+def test_resting_payload_passes_release_force_check(family):
+    cfg = held.HeldConfig(press_depth_m=0.)
+    row = held.held_trial(family, family.defaults, 0, held.HeldSample(), cfg)
+    assert row["stayed_seated"]
+    assert row["peak_support_N"] > row["payload_kg"] * held.G > row["force_cap_N"]
+    assert row["phases"]["release"]["within_force_limit"]
+    assert row["sustained_push_N"] <= row["force_cap_N"]
+
+
+def test_sustained_overpressure_fails_release_force_check(family, monkeypatch):
+    rig = held.HeldRig(family, family.defaults, 0)
+    control = rig._control
+
+    def excessive_press(pos, vel, acc, orientation, loaded, pressing):
+        control(pos, vel, acc, orientation, loaded, pressing)
+        if pressing:
+            # Fault injection: let the carrier's weight bear on the seated payload.
+            rig.data.xfrc_applied[rig.carrier, 2] = 0.
+
+    monkeypatch.setattr(rig, "_control", excessive_press)
+    row = rig.trial(held.HeldSample())
+    assert row["sustained_push_N"] > row["force_cap_N"]
+    assert not row["phases"]["release"]["within_force_limit"]
+    assert not row["phases"]["release"]["passed"]
+
+
+@pytest.mark.parametrize(("cap", "gentle"), [(0.01, True), (0.001, False)])
+def test_grip_caps_sustained_fork_load(family, cap, gentle):
+    row = held.held_trial(family, family.defaults, 0, held.HeldSample(), held.HeldConfig(press_force_N=cap))
+    grip = row["phases"]["grip"]
+    assert grip["captured"] and grip["peak_engage_N"] > cap
+    assert (grip["sustained_engage_N"] <= cap) == gentle
+    assert grip["within_force_limit"] == gentle
+
+
 def test_beyond_guide_cannot_score_a_seat_with_a_retained_fork(family):
     row = held.held_trial(family, family.defaults, 0, held.HeldSample(dy_m=0.09), held.HeldConfig())
     assert not row["passed"] and not row["withdrawn"], row
@@ -94,8 +129,8 @@ def test_through_fork_stops_at_the_force_limit_and_resets():
     row = rig.trial(sample)
     assert row["descent_stop"] == "force" and row["peak_support_N"] >= cfg.press_force_N
     assert row["fork_layout"] == "through"
-    assert not row["phases"]["release"]["passed"]
     repeat = rig.trial(sample)
+    assert repeat["sustained_push_N"] == pytest.approx(row["sustained_push_N"])
     assert repeat["outcome"] == row["outcome"]
     assert repeat["err_mm"] == pytest.approx(row["err_mm"])
 
@@ -186,14 +221,16 @@ def test_missed_pick_cannot_pass_a_mission(family):
     assert row["err_mm"] is None and not row["settled"]
 
 
-def test_grip_requires_each_tine_in_its_window_and_press_checks_impacts(aligned):
+def test_grip_checks_each_tine_and_release_reports_sustained_and_peak_loads(aligned):
     grip = aligned["phases"]["grip"]
     assert grip["tines_inserted"] == [True, True]
     assert len(grip["tines_after_lift"]) == 2
+    assert grip["within_force_limit"] == (grip["sustained_engage_N"] <= aligned["force_cap_N"])
+    assert grip["peak_engage_N"] >= grip["sustained_engage_N"] >= 0.
     transport = aligned["phases"]["transport"]
     assert not transport["passed"] or all(transport["tines_after_transport"])
     release = aligned["phases"]["release"]
-    assert release["within_force_limit"] == (aligned["peak_support_N"] <= aligned["force_cap_N"])
+    assert release["within_force_limit"] == (aligned["sustained_push_N"] <= aligned["force_cap_N"])
     assert aligned["peak_contact_normals_N"] > aligned["peak_support_N"] > 0.
     assert release["clean_withdrawal"]
     assert not aligned["passed"] or release["within_force_limit"]

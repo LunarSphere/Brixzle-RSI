@@ -1,4 +1,5 @@
 """Crazyflie fork mission (#191), simulated, uncalibrated contact. SI except drop classifier outputs."""
+from collections import deque
 from dataclasses import asdict, dataclass, field, replace
 from functools import cache
 import math
@@ -229,6 +230,22 @@ class _ContactLoads:
     normals_N: float        # sum before opposing contact loads cancel
     fork_brick_N: float
     fork_strike_N: float
+    fork_force_N: np.ndarray  # net world-frame contact force on the fork alone
+
+
+class _ForceWindow:
+    """Mean contact vector over the last 50 ms, with zero contact before the phase."""
+    def __init__(self, timestep):
+        self.steps = max(1, round(0.050 / timestep))
+        self.samples = deque()
+        self.total = np.zeros(3)
+
+    def mean(self, force):
+        if len(self.samples) == self.steps:
+            self.total -= self.samples.popleft()
+        self.samples.append(force)
+        self.total += force
+        return self.total / self.steps
 
 
 class HeldRig:
@@ -322,24 +339,30 @@ class HeldRig:
         supported = floor = False
         normals = grip = strike = 0.
         resultant = np.zeros(3)
+        fork_force = np.zeros(3)
         force = np.empty(6)
         for i in active:
             mujoco.mj_contactForce(self.model, d, i, force)
             normal = float(force[0])
+            # Contact frame rows are world vectors. Force is on geom2, opposite on geom1.
+            world_force = force[:3] @ d.contact[i].frame.reshape(3, 3)
+            fork1, fork2 = self.fork_geoms[pair[i]]
+            if fork1 != fork2:
+                fork_force += world_force if fork2 else -world_force
             if assembly[i].all():
                 if self.target_geoms[pair[i]].any() and self.fork_geoms[pair[i]].any():
                     grip += normal
                 continue
             normals += normal
             side = int(assembly[i, 1])
-            # Contact frame rows are world vectors. Force is on geom2, opposite on geom1.
-            resultant += (1 if side else -1) * (force[:3] @ d.contact[i].frame.reshape(3, 3))
+            resultant += world_force if side else -world_force
             if self.target_geoms[pair[i, side]]:
                 supported = True
                 floor |= pair[i, 1-side] == self.info["floor"]
             else:
                 strike += normal
-        return _ContactLoads(supported, bool(floor), float(np.linalg.norm(resultant)), normals, grip, strike)
+        return _ContactLoads(supported, bool(floor), float(np.linalg.norm(resultant)), normals, grip, strike,
+                             fork_force)
 
     def _inserted(self):
         """Check the actual depth and where each straight shaft crosses the brick mid-plane."""
@@ -479,12 +502,19 @@ class HeldRig:
 
     def _grip(self, engage, station, above, lift):
         cfg, d = self.cfg, self.data
-        peak_engage = 0.
+        peak_engage = sustained_engage = 0.
+        window = _ForceWindow(self.model.opt.timestep)
+        brick_weight = (self.payload - self.gripper_kg) * G
 
         def engage_contact():
-            nonlocal peak_engage
+            nonlocal peak_engage, sustained_engage
             loads = self._contacts()
             peak_engage = max(peak_engage, loads.fork_brick_N + loads.fork_strike_N)
+            mean = window.mean(loads.fork_force_N)
+            # Between fork resting on brick and brick hanging on fork, gravity
+            # alone accounts for this range of vertical contact loads.
+            mean[2] -= np.clip(mean[2], -brick_weight, self.gripper_kg * G)
+            sustained_engage = max(sustained_engage, float(np.linalg.norm(mean)))
 
         self._move(engage, self.orientation, PickConfig.v_engage, observe=engage_contact, hold=cfg.hold_s)
         inserted = self._inserted()
@@ -499,7 +529,8 @@ class HeldRig:
         captured = (not loads.supported and all(inserted) and rise > (raised[2]-approach[2])/2
                     and loads.fork_brick_N > 0 and not self._withdrawn())
         centred = self._centred(offset, angle)
-        grip = captured and all(after_lift) and centred and peak_engage <= self.force_cap
+        gentle = sustained_engage <= self.force_cap
+        grip = captured and all(after_lift) and centred and gentle
         outcome = "picked"
         if not captured:
             outcome = "missed"
@@ -510,7 +541,9 @@ class HeldRig:
         elif not grip:
             outcome = "forceful"
         return dict(passed=bool(grip), outcome=outcome, captured=bool(captured), tines_inserted=inserted,
-                    tines_after_lift=after_lift, rise_m=float(rise), peak_engage_N=peak_engage, offset_m=offset.tolist(), angle_rad=angle)
+                    tines_after_lift=after_lift, rise_m=float(rise), peak_engage_N=peak_engage,
+                    sustained_engage_N=sustained_engage, within_force_limit=gentle,
+                    offset_m=offset.tolist(), angle_rad=angle)
 
     def _transport(self, above, orientation):
         cfg = self.cfg
@@ -594,7 +627,7 @@ class HeldRig:
         result.update(release, carry_force_N=transport["carry_force_N"])
         clean = (release["cleared_along_y"] and release["stayed_seated"]
                  and release["release_drift_m"] <= PickConfig.drift_mm*MM)
-        gentle = release["peak_support_N"] <= self.force_cap
+        gentle = release["sustained_push_N"] <= self.force_cap
         success = clean and gentle and release["climbed"] and not self.cfg.release_at_contact
         failure = "fork_retained" if not release["withdrawn"] else "failed_climb"
         record("release", dict(passed=success, outcome=release["post_departure_outcome"] or failure,
@@ -606,15 +639,20 @@ class HeldRig:
         t0 = d.time
         first = None
         floor = False
-        peak = peak_normals = 0.
+        peak = peak_normals = sustained_push = 0.
+        window = _ForceWindow(m.opt.timestep)
         stop = "depth"
 
         def sense():
-            nonlocal first, peak, peak_normals, floor
+            nonlocal first, peak, peak_normals, sustained_push, floor
             loads = self._contacts()
             floor |= loads.on_floor
             peak = max(peak, loads.reaction_N)
             peak_normals = max(peak_normals, loads.normals_N)
+            # On the fork side the brick's own weight never enters as an
+            # upward load. Discount the weight of the gripper resting on it.
+            push = max(0., float(window.mean(loads.fork_force_N)[2]) - self.gripper_kg * G)
+            sustained_push = max(sustained_push, push)
             if loads.supported and first is None:
                 first = d.time-t0
             return loads.reaction_N
@@ -625,6 +663,8 @@ class HeldRig:
             if cfg.release_at_contact and first is not None:
                 stop = "first_contact"
                 return True
+            # Arrest the descent promptly on contact. This controller trigger
+            # does not determine whether the sustained push passes R12.
             if reaction >= self.force_cap:
                 stop = "force"
                 return True
@@ -691,7 +731,7 @@ class HeldRig:
                     err_mm=err.tolist(), angle_deg=angle, settled=settled,
                     before_release=before, stayed_seated=stayed and outcome == "seated", release_drift_m=drift,
                     first_contact_s=first, release_s=release_time, descent_stop=stop, peak_support_N=peak,
-                    peak_contact_normals_N=peak_normals,
+                    peak_contact_normals_N=peak_normals, sustained_push_N=sustained_push,
                     withdrawn=self._withdrawn(), cleared_along_y=cleared_along_y, climbed=bool(climbed))
 
 
