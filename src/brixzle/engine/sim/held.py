@@ -14,6 +14,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 
 from brixzle.engine.predictor.pickup import _seat, _fork_region, capture_region
+from brixzle.engine.structures import brick_name
 from brixzle.engine.sim import trials as T
 from brixzle.engine.sim import approach_error
 from brixzle.engine.sim.config import read_json
@@ -131,11 +132,15 @@ def _ordered_bands(core, p):
     return sorted((a, b, za, zb) if a < b else (b, a, zb, za) for a, b, za, zb in bands)
 
 
+class ForkFitError(ValueError):
+    """The candidate fork cannot enter the carrying features."""
+
+
 def _fork_fit(family, p, part, cfg):
     cap = capture_geometry(family.geometry)
     core = replace(family, geometry=Prismatic(cap.core_section, cap.core_extrusion)) if cap else family
     if not isinstance(core.geometry, Prismatic):
-        raise ValueError("held fork needs a swept section with known through-Y geometry")
+        raise ForkFitError("held fork needs a swept section with known through-Y geometry")
     features = core.pickup(p, part)
     windows = grip_openings(features)
     r = cfg.tine_d_m / (2*MM)
@@ -145,12 +150,12 @@ def _fork_fit(family, p, part, cfg):
     tip = None
     if windows:
         if len(windows) < 2:
-            raise ValueError("held fork needs two carrying windows")
+            raise ForkFitError("held fork needs two carrying windows")
         regions = [capture_region(w, bands, r) for w in windows]
         if any(q.is_empty for q in regions):
             tip = cfg.tip_engagement_m/MM
             if not -depth/2 < tip < depth/2:
-                raise ValueError("short fork tips must end inside the window")
+                raise ForkFitError("short fork tips must end inside the window")
             clipped = [(a, min(b, tip), za, za+(zb-za)*(min(b, tip)-a)/(b-a))
                        for a, b, za, zb in bands if a < tip]
             # Try a fixed fork yaw in either direction so a level shaft can reach past mid-depth.
@@ -159,16 +164,16 @@ def _fork_fit(family, p, part, cfg):
                 if all(not q.is_empty for q in regions):
                     break
         if any(q.is_empty for q in regions):
-            raise ValueError("single-sided fork does not fit the windows")
+            raise ForkFitError("single-sided fork does not fit the windows")
         seats = [_seat(q) for q in regions]
         region = _fork_region(regions, seats)
         if region.is_empty:
-            raise ValueError("no common fork offset fits the carrying windows")
+            raise ForkFitError("no common fork offset fits the carrying windows")
         aim = shapely.maximum_inscribed_circle(region).coords[0]
     else:
         bores = [b for b in grip_bores(features) if b.size_mm[0] >= 16 and b.radius_mm > r]
         if len(bores) < 2:
-            raise ValueError("held fork needs through-Y windows or two fitting bores at least 16 mm across")
+            raise ForkFitError("held fork needs through-Y windows or two fitting bores at least 16 mm across")
         seats = [(b.x_mm, b.z_mm + b.radius_mm - r) for b in bores]
         aim = (0., -min(b.radius_mm-r for b in bores))
     fork = build_fork(family, p, part, ForkParams(tine_d=2*r), tines=seats, y_tip_mm=tip, with_drone=False, tine_dx_dy=slope)
@@ -250,10 +255,25 @@ class _ForceWindow:
 
 class HeldRig:
     """Compile once per family, placement and gripper. Each trial resets all moving bodies."""
-    def __init__(self, family, p, placement, gripper_cfg=HeldConfig()):
+    def __init__(self, family, p, placement, gripper_cfg=HeldConfig(), *, structure=None):
         self.family, self.p, self.cfg = family, p, gripper_cfg
         lat = family.lattice(p)
-        if isinstance(placement, Placement):
+        self.refs = None
+        if structure is not None:
+            from brixzle.engine.sim.assemble import connectivity
+
+            self.target = placement
+            self.placed = structure.bricks[:structure.bricks.index(placement)]
+            base, = structure.bases
+            graph = connectivity(structure, lat.span_voxels)
+            prior = {}
+            self.refs = []
+            for i, b in enumerate([*self.placed, placement]):
+                parents = graph.predecessors(brick_name(b))
+                self.refs.append(next((prior[name] for name in parents if name in prior), None))
+                prior[brick_name(b)] = (i, b)
+            self.ref = self.refs[-1]
+        elif isinstance(placement, Placement):
             if not isinstance(placement.i0, int) or placement.direction not in (-1, 1):
                 raise ValueError("placement requires an integer voxel and direction +1 or -1")
             # Translate a full-seat layout to the requested voxel.
@@ -276,15 +296,22 @@ class HeldRig:
         self.mid_shift = next(za-a*(zb-za)/(b-a) for a, b, za, zb in bands if a <= 0 <= b)
         bodies = {k: B.sim_bodies(family, p, k) for k in set(parts)}
         bodies["held_target"] = replace(bodies[part], collision=collision)
+        if structure is not None:
+            # Previously placed pieces retain the same physical windows as the carried piece.
+            for key in set(parts[:-1]):
+                previous = collision if key == part else _fork_fit(family, p, key, self.cfg)[1]
+                bodies[key] = replace(bodies[key], collision=previous)
         pos, q = family.seat_pose(p, self.target)
         self.seat_R = _R(q)
-        self.station = np.array([pos[0]*MM, 0., 0.]) + self.seat_R.apply([0., -0.10, 0.])
+        self.station_R = self.seat_R if structure is None else Rotation.identity()
+        station_x = pos[0]*MM if structure is None else 0.
+        self.station = np.array([station_x, 0., 0.]) + self.station_R.apply([0., -0.10, 0.])
         if isinstance(family.geometry, Prismatic) and part == family.part_for(0, 1):
             station_origin, _ = family.seat_pose(p, SEAT)
             pieces = [v-station_origin for v in fixture_pieces(family, p, part)]
         else:
             pieces = _station(core, p, part)
-        fixture = [self.seat_R.apply(piece) + self.station/MM for piece in pieces]
+        fixture = [self.station_R.apply(piece) + self.station/MM for piece in pieces]
         self.model, _, self.info = build_scene(family, p, bodies, [base], len(parts), self.cfg.physics,
                                                body_parts=[*parts[:-1], "held_target"], visual=False,
                                                extra=_carrier(self.cfg, self.fork), static=fixture)
@@ -310,7 +337,8 @@ class HeldRig:
         omega = 2*math.pi*gains.att_hz
         self.gains = (np.array(gains.kp), np.array(gains.kd), np.array(gains.J)*omega**2,
                       2*gains.att_damping*np.array(gains.J)*omega)
-        self.ref = (0, self.placed[0]) if self.placed else None
+        if structure is None:
+            self.ref = (0, self.placed[0]) if self.placed else None
         self.tol = T.Tolerance()
         self.stroke_m = withdrawal_stroke_mm(lat.D_mm, self.fork["y_tip"]) * MM
         # The convex envelope closes the windows: a tine inside a hole is still
@@ -324,7 +352,7 @@ class HeldRig:
         if self.placed:
             T.run_until_settled(m, d, self.info, 0, replace(self.tol, max_time=0.3),
                                 self.owner, watch=range(1, self.j))
-        activate(m, d, self.info, self.j, self.station/MM, _wxyz(self.seat_R))
+        activate(m, d, self.info, self.j, self.station/MM, _wxyz(self.station_R))
         T.run_until_settled(m, d, self.info, self.j, self.tol, self.owner)
         m.body_gravcomp[parked] = 0.
         self.start = mujoco.MjData(m)
@@ -474,7 +502,7 @@ class HeldRig:
 
     def _approach(self, pick, station):
         cfg, m, d = self.cfg, self.model, self.data
-        rot = self.seat_R
+        rot = self.station_R
         pick_R = Rotation.from_euler("yz", [pick.dpitch_rad, pick.dyaw_rad])*rot
         approach = station + rot.apply(self.mount+self.aim) + [pick.dx_m, pick.dy_m, pick.dz_m]
         back = self.stroke_m + PickConfig.standoff_mm*MM
@@ -570,7 +598,28 @@ class HeldRig:
                     tw=tw, tines_after_transport=after_transport, peak_offset_m=peak_offset,
                     peak_angle_rad=peak_angle, travel_m=travel)
 
-    def trial(self, sample=None, *, pickup_sample=None, seed=0):
+    def brick_states(self):
+        """Free-body states for the next mission in a build (mm, wxyz, SI velocities)."""
+        states = []
+        for i, v in enumerate(self.info["qvel"]):
+            pos, quat = body_pose(self.data, self.info, i)
+            states.append((pos, quat, self.data.qvel[v:v+3].copy(), self.data.qvel[v+3:v+6].copy()))
+        return states
+
+    def off_seat(self):
+        """Previously placed bricks that left their supporter or touched the floor at rest."""
+        if self.refs is None:
+            raise ValueError("off_seat requires a structure build")
+        off = []
+        pairs = self.data.contact.geom[self.data.contact.efc_address >= 0]
+        floor_bodies = {self.owner.get(int(g)) for pair in pairs if self.info["floor"] in pair for g in pair}
+        for i, b in enumerate(self.placed):
+            err, angle = T.pose_error(self.family, self.p, self.data, self.info, i, b, self.refs[i])
+            if T.classify(self.family.lattice(self.p), err, angle, self.tol, i in floor_bodies) != "seated":
+                off.append(brick_name(b))
+        return off
+
+    def trial(self, sample=None, *, pickup_sample=None, seed=0, support_states=None):
         """Fly one mission. With explicit target error the default pickup is aligned."""
         trial_start = time.perf_counter()
         measured = sample is None
@@ -582,6 +631,11 @@ class HeldRig:
         sources = dict(pickup="explicit" if pickup_sample is not None else "exp3" if measured else "aligned",
                        placement="exp3" if measured else "explicit", seed=int(seed) if measured else None)
         mujoco.mj_copyData(self.data, self.model, self.start)
+        if support_states is not None:
+            if len(support_states) != self.j:
+                raise ValueError("one state is required per previous brick")
+            for i, state in enumerate(support_states):
+                activate(self.model, self.data, self.info, i, *state)
         self.peak_thrust = 0.
         start = time.perf_counter()
         empty_tw = self.cfg.drone.t_w(self.gripper_kg*1000)
