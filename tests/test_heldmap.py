@@ -66,19 +66,21 @@ def test_cli_writes_fresh_finite_reports(tmp_path, monkeypatch, capsys):
     cfg = tmp_path / "fork.json"
     cfg.write_text('{"tine_d_m":0.003}')
     def fake(family, p, cfg, settings):
-        return {"scores": {"held_full_z": cfg.tine_d_m}, "seed": settings.seed, "rows": []}
+        return {"scores": {"held_full_z": cfg.tine_d_m}, "seed": settings.seed, "full": settings.full, "rows": []}
     monkeypatch.setattr(hm, "heldmap", fake)
     reports = []
-    for _ in range(2):
-        assert cli.main(["--runs", str(tmp_path), "heldmap", spec, "--gripper", str(cfg), "--seed", "42"]) == 0
+    for flags in ([], ["--full"]):
+        assert cli.main(["--runs", str(tmp_path), "heldmap", spec, "--gripper", str(cfg), "--seed", "42", *flags]) == 0
         report = json.loads(capsys.readouterr().out)
         reports.append(Path(report["run"]) / "result.json")
         assert json.loads(reports[-1].read_text())["scores"]["held_full_z"] == .003
-        assert report["seed"] == 42
+        assert report["seed"] == 42 and report["full"] == bool(flags)
     assert reports[0] != reports[1]
 
 
-def test_corbel_credits_only_completed_courses_and_carries_their_states():
+@pytest.mark.parametrize(("failed", "off_seat", "steps", "mission_steps", "attempts"),
+                         [(3, None, 1, 0, 4), (None, 5, 1, 1, 6)])
+def test_corbel_credits_only_completed_courses_and_carries_their_states(failed, off_seat, steps, mission_steps, attempts):
     from brixzle.engine.heldmap import build_corbel
     st = structures.corbel(4)
     seen = []
@@ -88,46 +90,52 @@ def test_corbel_credits_only_completed_courses_and_carries_their_states():
         def trial(self, sample, *, pickup_sample, support_states):
             assert support_states == list(range(self.i))
             seen.append((sample, pickup_sample))
-            return {"outcome": "seated", "passed": self.i != 2}
+            return {"outcome": "seated", "passed": self.i != failed}
         def brick_states(self):
             return list(range(self.i + 1))
         def off_seat(self):
-            return ["b0_0"] if self.i == 5 else []
+            return ["b0_0"] if self.i == off_seat else []
 
     result = build_corbel(st, Stage, 123, None)
-    assert result["steps"] == 1 and result["mission_steps"] == 0
-    assert result["stages"][-1]["off_seat"] == ["b0_0"]
-    assert len(set(seen)) == len(seen) == 6
+    assert result["steps"] == steps and result["mission_steps"] == mission_steps
+    assert not result["stages"][-1]["trial"]["passed"] or result["stages"][-1]["off_seat"]
+    assert len(set(seen)) == len(seen) == attempts
 
 
 def test_incompatible_fork_reports_an_infeasible_candidate(tmp_path):
     from brixzle.engine import heldmap as hm
     from brixzle.families.ab.family import FAMILY
-    report = hm.heldmap(FAMILY, FAMILY.defaults, held.HeldConfig(tine_d_m=1.), hm.HeldMapSettings())
+    report = hm.heldmap(FAMILY, FAMILY.defaults, held.HeldConfig(tine_d_m=1.), hm.HeldMapSettings(workers=1))
     assert "held_gripper_fit" in report["violations"]
     assert not report["mission_passed"] and report["fit_error"]
     json.dumps(report, allow_nan=False)
 
 
-def test_report_splits_release_from_mission_and_exposes_radius_scores(monkeypatch):
+@pytest.mark.parametrize("full", [False, True])
+def test_report_splits_release_from_mission_and_exposes_radius_scores(monkeypatch, full):
     from brixzle.engine import heldmap as hm
     from brixzle.families.ab.family import FAMILY
+    compiled = []
     class Rig:
         fork = dict(tines=[[-5, 6], [5, 6]], plate=[[-7,-3,2], [7,-2,9]], drone_pos_mm=[0,0,10],
                     tine_dx_dy=0., tine_r=1., y_face=-2., y_tip=12.)
         payload = .036  # injected overweight fixture in kg, not a simulated result
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, family, p, placement, cfg, **kwargs):
+            compiled.append(placement)
         def trial(self, *args, **kwargs):
-            phases = {key: {"passed": key != "transport", "outcome": "over_budget" if key == "transport" else "ok",
-                            "wall_s": .01} for key in ("takeoff", "approach", "grip", "transport", "release")}
-            return {"outcome": "seated", "passed": False, "phases": phases}
+            build = "support_states" in kwargs
+            phases = {key: {"passed": True, "outcome": "ok", "wall_s": .01}
+                      for key in ("takeoff", "approach", "grip", "transport", "release")}
+            if not build:
+                phases["transport"].update(passed=False, outcome="over_budget")
+            return {"outcome": "seated", "passed": build, "phases": phases}
         def brick_states(self):
             return []
         def off_seat(self):
             return []
     monkeypatch.setattr(hm, "HeldRig", Rig)
-    result = hm.heldmap(FAMILY, FAMILY.defaults, settings=hm.HeldMapSettings(samples=1, builds=1, reaches=3))
+    settings = hm.HeldMapSettings(samples=1, builds=2, workers=1, full=full)
+    result = hm.heldmap(FAMILY, FAMILY.defaults, settings=settings)
     assert set(result["nominal_guard_access"]) == {"corbel", *structures.CATALOG}
     assert len(result["nominal_guard_access"]["bridge"]) == len(structures.bridge(3).bricks)
     assert result["mission_cases"]["full"]["guard_strikes"] == 0
@@ -135,15 +143,25 @@ def test_report_splits_release_from_mission_and_exposes_radius_scores(monkeypatc
     assert result["cases"]["full"]["N"] == 2
     assert result["scores"]["held_full_z"] == 1 and result["scores"]["held_mission_rate"] == 0
     assert result["missions"]["phases"]["transport"] == dict(passed=0, skipped=0, failed=5, wall_s=.05)
-    assert result["median_steps_by_radius"] == {str(r): 3 for r in range(6)}
-    assert result["scores"]["held_median_steps_5mm"] == 3
-    assert result["scores"]["held_overhang_mean_steps"] == 3
-    assert result["builds"]["measured"]["r4_passed"] and not result["builds"]["measured"]["missions"]["r4_passed"]
+    reaches = 4 if full else hm.R4_STEPS
+    assert len(compiled) == len(set(compiled)) == 5 + len(structures.corbel(reaches + 1).bricks)
+    assert result["settings"]["reaches"] == result["scores"]["held_reliable_steps"] == reaches
+    assert set(result["cases"]) == set(result["mission_cases"]) == {"full", "plus_bare", "minus_bare", "first_reach"}
+    assert set(result["first_reach_by_radius"]) == ({str(r) for r in range(6)} if full else set())
+    if full:
+        assert result["median_steps_by_radius"] == {str(r): reaches for r in range(6)}
+        assert result["scores"]["held_median_steps_5mm"] == result["scores"]["held_overhang_mean_steps"] == reaches
+    else:
+        assert set(result["builds"]) == {"measured"}
+        assert "held_overhang_mean_steps" not in result["scores"]
+        assert not result["median_steps_by_radius"]
+    assert result["builds"]["measured"]["r4_passed"]
     assert not result["mission_passed"] and "held_payload" in result["violations"]
-    assert result["scores"]["held_mission_reach_mm"] == 0
+    assert result["scores"]["held_mission_reach_mm"] == reaches * FAMILY.lattice(FAMILY.defaults).U_mm
 
 
-@pytest.mark.parametrize("kwargs", [{"seed": -1}, {"samples": True}, {"builds": 0}, {"reaches": 2}])
+@pytest.mark.parametrize("kwargs", [{"seed": -1}, {"samples": True}, {"builds": 0}, {"reaches": 2},
+                                    {"workers": 0}, {"workers": True}, {"full": 1}])
 def test_invalid_sampling_settings(kwargs):
     from brixzle.engine.heldmap import HeldMapSettings
     with pytest.raises(ValueError):
@@ -174,7 +192,8 @@ def test_station_fit_failure_reports_an_infeasible_candidate():
     from brixzle.engine import heldmap as hm
     from brixzle.engine.sim.funnel import FunnelStation
     from brixzle.families.ab.family import FAMILY
-    report = hm.heldmap(FAMILY, FAMILY.defaults, held.HeldConfig(station=FunnelStation(mouth_width_m=.001)))
+    cfg = held.HeldConfig(station=FunnelStation(mouth_width_m=.001))
+    report = hm.heldmap(FAMILY, FAMILY.defaults, cfg, hm.HeldMapSettings(workers=1))
     assert report["violations"] == ["held_gripper_fit"] and "mouth" in report["fit_error"]
 
 
@@ -191,3 +210,37 @@ def test_guard_access_records_a_structure_with_no_assembly_order(monkeypatch):
     checks, errors = hm.nominal_guard_access(FAMILY, FAMILY.defaults, held.HeldConfig(), structures.corbel(2))
     assert errors == {"bridge": "No clear insertion path"}
     assert checks["tower"] and "bridge" not in checks
+
+
+def test_seeded_parallel_map_matches_serial_measurements():
+    """Force a take-off rejection to exercise actual spawned rigs without long contact trials."""
+    from dataclasses import asdict, replace
+    from brixzle.engine import heldmap as hm
+    from brixzle.tools.core import load
+
+    family = load(f"{Path(__file__).parent / 'fixtures'}:gentle_inboard_sill")
+
+    def measurements(value):
+        if isinstance(value, dict):
+            return {k: measurements(v) for k, v in value.items()
+                    if k not in ("workers", "seconds", "wall_s", "trial_wall_s")}
+        if isinstance(value, list):
+            return [measurements(v) for v in value]
+        return value
+
+    cfg = held.HeldConfig()
+    cfg = replace(cfg, drone=replace(cfg.drone, tw_min=100.))
+    serial = hm.HeldMapSettings(samples=1, builds=1, workers=1, seed=17)
+    def measure(settings):
+        return hm.heldmap(family, family.defaults, cfg, settings)
+
+    expected = measure(serial)
+    assert len(expected["rows"]) == 10 and len(expected["builds"]["measured"]["builds"]) == 1
+    assert expected["missions"]["phases"]["takeoff"]["failed"] == 5
+    pickup, target = held.mission_samples(serial.seed)
+    aligned_target, = hm.mean_samples(1, serial.seed)
+    for row in expected["rows"]:
+        measured = row["case"].startswith("mission_")
+        assert row["trial"]["pickup_sample"] == asdict(pickup if measured else held.HeldSample())
+        assert row["trial"]["placement_sample"] == asdict(target if measured else aligned_target)
+    assert measurements(measure(replace(serial, workers=2))) == measurements(expected)

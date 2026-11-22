@@ -1,8 +1,12 @@
 """Seeded stage-B release scores and sequential Crazyflie corbel builds (#192)."""
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, fields, replace
 from functools import cache
 import json
 import math
+import multiprocessing
+import os
 from pathlib import Path
 from statistics import median
 from time import perf_counter
@@ -14,12 +18,14 @@ from brixzle.engine.sim.assemble import assembly_order
 from brixzle.engine.sim.drone import CF21B
 from brixzle.engine.sim.fork import ForkGuide
 from brixzle.engine.sim.guards import placement_clearances
-from brixzle.engine.sim.held import ForkFitError, HeldConfig, HeldRig, WristConfig, _fork_fit, mission_samples
+from brixzle.engine.sim.held import ForkFitError, HeldConfig, HeldRig, HeldSample, WristConfig, _fork_fit, mission_samples
 from brixzle.engine.sim.pickup import tine_segment
 from brixzle.families import builders as B
 
 RADII = objective.OVERHANG_SCORE_RADII_MM
 R4_STEPS = objective.Settings.tolerance_steps
+KEY_SEATS = {"full": (0, 1), "plus_bare": ("plus_bare",), "minus_bare": ("minus_bare",),
+             "first_reach": ("plus_anchored",)}
 
 
 @dataclass(frozen=True)
@@ -27,10 +33,16 @@ class HeldMapSettings:
     seed: int = 192
     samples: int = 2
     builds: int = 3
-    reaches: int = 4
+    reaches: int | None = None
+    full: bool = False
+    workers: int = 4
 
     def __post_init__(self):
-        for key, minimum in (("seed", 0), ("samples", 1), ("builds", 1), ("reaches", R4_STEPS)):
+        if type(self.full) is not bool:
+            raise ValueError("full must be a boolean")
+        if self.reaches is None:
+            object.__setattr__(self, "reaches", 4 if self.full else R4_STEPS)
+        for key, minimum in (("seed", 0), ("samples", 1), ("builds", 1), ("reaches", R4_STEPS), ("workers", 1)):
             value = getattr(self, key)
             if type(value) is not int or value < minimum:
                 raise ValueError(f"{key} must be an integer >= {minimum}")
@@ -121,12 +133,11 @@ def reach_summary(steps, limit, pitch_mm):
 
 
 def build_corbel(structure, stage_rig, seed, radius):
-    """Carry forward every free body's measured pose and velocity; stop on a miss or collapse."""
+    """Carry forward seated bodies and stop at the first failed mission, missed seat or collapse."""
     start = perf_counter()
     rng = np.random.default_rng(seed)
     states, stages = [], []
     steps = mission_steps = 0
-    passed = True
     for i, b in enumerate(structure.bricks):
         draw = int(rng.integers(2**32))
         pickup, target = mission_samples(draw)
@@ -136,14 +147,15 @@ def build_corbel(structure, stage_rig, seed, radius):
         row = rig.trial(target, pickup_sample=pickup, support_states=states)
         off = rig.off_seat()
         stages.append(dict(brick=structures.brick_name(b), draw_seed=draw, off_seat=off, trial=row))
-        passed &= row["passed"]
         if row["outcome"] != "seated" or off:
             break
-        states = rig.brick_states()
         if b.i0 == b.course:
             steps = b.course
-            if passed:
+            if row["passed"]:
                 mission_steps = steps
+        if not row["passed"]:
+            break
+        states = rig.brick_states()
     return dict(seed=seed, stages=stages, steps=steps, mission_steps=mission_steps, seconds=perf_counter()-start)
 
 
@@ -183,6 +195,80 @@ def nominal_guard_access(family, p, cfg, corbel):
     return checks, errors
 
 
+@dataclass(frozen=True)
+class _SeatBatch:
+    case: str
+    placement: str | int
+    # Each batch uses one rig for aligned pickups or one sequence of empirical seeds.
+    targets: tuple[HeldSample, ...] = ()
+    seeds: range = range(0)
+
+
+@dataclass(frozen=True)
+class _Build:
+    radius: float | None
+    seed: int
+
+
+def _jobs(settings, radii):
+    targets = tuple(mean_samples(settings.samples, settings.seed))
+    seeds = range(settings.seed, settings.seed + settings.samples)
+    for name, placements in KEY_SEATS.items():
+        for placement in placements:
+            yield _SeatBatch(name, placement, targets=targets)
+            yield _SeatBatch("mission_" + name, placement, seeds=seeds)
+    for radius in radii:
+        draws = tuple(disc_sample(mission_samples(seed)[1], radius, seed) for seed in seeds)
+        yield _SeatBatch(f"first_reach_{radius:g}mm", "plus_anchored", targets=draws)
+    for radius in (None, *radii):
+        for seed in range(settings.seed, settings.seed + settings.builds):
+            yield _Build(radius, seed)
+
+
+def _runner(family, p, cfg, structure):
+    """Keep compiled rigs private to this design and process. Each trial resets its rig."""
+    hardware = []
+
+    @cache
+    def rig_for(placement, build=False):
+        rig = HeldRig(family, p, placement, cfg, structure=structure if build else None)
+        hardware.append((rig.fork, rig.payload))
+        return rig
+
+    def stage_rig(i):
+        return rig_for(structure.bricks[i], build=True)
+
+    def run(job):
+        hardware.clear()
+        if isinstance(job, _Build):
+            result = build_corbel(structure, stage_rig, job.seed, job.radius)
+        else:
+            rig = rig_for(job.placement)
+            result = [rig.trial(s) for s in job.targets] + [rig.trial(seed=s) for s in job.seeds]
+        return result, hardware.copy()
+
+    return run
+
+
+def _init_worker(*args):
+    global _worker_run
+    _worker_run = _runner(*args)
+
+
+def _run_job(job):
+    return _worker_run(job)
+
+
+def _results(jobs, workers, args):
+    workers = min(workers, len(jobs), os.cpu_count() or 1)
+    if workers == 1:
+        yield from map(_runner(*args), jobs)
+    else:
+        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
+                                 initializer=_init_worker, initargs=args) as pool:
+            yield from pool.map(_run_job, jobs)
+
+
 def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
     start = perf_counter()
     lat = family.lattice(p)
@@ -198,50 +284,33 @@ def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
     fork = None
     max_payload = 0.
 
-    def make_rig(placement, build=None):
-        nonlocal fork, max_payload
-        rig = HeldRig(family, p, placement, cfg, structure=build)
-        if fork is not None and not same_fork(fork, rig.fork):
-            raise ForkFitError("courses would require differently shaped mounted forks")
-        fork = rig.fork
-        max_payload = max(max_payload, rig.payload)
-        return rig
-
-    @cache
-    def stage_rig(i):
-        return make_rig(structure.bricks[i], structure)
-
-    def record(name, placement, rows):
-        report["rows"].extend(dict(case=name, placement=placement, trial=r) for r in rows)
-        return rows
-
-    sample_seeds = range(settings.seed, settings.seed + settings.samples)
+    radii = RADII if settings.full else ()
+    jobs = list(_jobs(settings, radii))
+    cases, build_rows = defaultdict(list), defaultdict(list)
     empirical = []
     try:
-        targets = mean_samples(settings.samples, settings.seed)
-        for name, placements in (("full", (0, 1)), ("plus_bare", ("plus_bare",)),
-                                 ("minus_bare", ("minus_bare",)), ("first_reach", ("plus_anchored",))):
-            rows, missions = [], []
-            for placement in placements:
-                rig = make_rig(placement)
-                rows.extend(record(name, placement, [rig.trial(s) for s in targets]))
-                missions.extend(record("mission_" + name, placement, [rig.trial(seed=s) for s in sample_seeds]))
-                if placement == "plus_anchored":
-                    first_reach = rig
+        results = _results(jobs, settings.workers, (family, p, cfg, structure))
+        for job, (result, hardware) in zip(jobs, results, strict=True):
+            for mounted, payload in hardware:
+                if fork is None:
+                    fork = mounted
+                elif not same_fork(fork, mounted):
+                    raise ForkFitError("courses would require differently shaped mounted forks")
+                max_payload = max(max_payload, payload)
+            if isinstance(job, _Build):
+                build_rows[job.radius].append(result)
+            else:
+                cases[job.case].extend(result)
+                report["rows"].extend(dict(case=job.case, placement=job.placement, trial=r) for r in result)
+        for name in KEY_SEATS:
+            missions = cases["mission_" + name]
             empirical.extend(missions)
             report["mission_cases"][name] = case_summary(missions)
-            report["cases"][name] = case_summary(rows)
+            report["cases"][name] = case_summary(cases[name])
             report["scores"][f"held_{name}_z"] = report["cases"][name]["Z"]
-
-        for radius in RADII:
-            targets = [disc_sample(mission_samples(seed)[1], radius, seed) for seed in sample_seeds]
-            rows = record(f"first_reach_{radius:g}mm", "plus_anchored",
-                          [first_reach.trial(s) for s in targets])
-            report["first_reach_by_radius"][f"{radius:g}"] = case_summary(rows)
-
-        for radius in (None, *RADII):
-            builds = [build_corbel(structure, stage_rig, seed, radius)
-                      for seed in range(settings.seed, settings.seed + settings.builds)]
+        for radius in radii:
+            report["first_reach_by_radius"][f"{radius:g}"] = case_summary(cases[f"first_reach_{radius:g}mm"])
+        for radius, builds in build_rows.items():
             key = "measured" if radius is None else f"{radius:g}"
             report["builds"][key] = dict(
                 **reach_summary([b["steps"] for b in builds], settings.reaches, lat.U_mm),
@@ -259,11 +328,12 @@ def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
                     seconds=perf_counter()-start)
 
     measured = report["builds"]["measured"]
-    medians = {f"{r:g}": report["builds"][f"{r:g}"]["median_steps"] for r in RADII}
+    medians = {f"{r:g}": report["builds"][f"{r:g}"]["median_steps"] for r in radii}
     report["median_steps_by_radius"] = medians
     report["scores"].update({f"held_median_steps_{r}mm": steps for r, steps in medians.items()})
-    report["scores"].update(held_overhang_mean_steps=objective.overhang_mean_steps(medians),
-                            held_mission_reach_mm=measured["missions"]["reliable_reach_mm"],
+    if medians:
+        report["scores"]["held_overhang_mean_steps"] = objective.overhang_mean_steps(medians)
+    report["scores"].update(held_mission_reach_mm=measured["missions"]["reliable_reach_mm"],
                             held_reliable_reach_mm=measured["reliable_reach_mm"],
                             held_reliable_steps=measured["reliable_steps"],
                             held_mission_rate=sum(r["passed"] for r in empirical)/len(empirical))
