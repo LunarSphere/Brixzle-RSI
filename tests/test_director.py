@@ -389,3 +389,34 @@ def test_verify_measures_the_edge_target_on_request_and_checkpoints_it(repo, mon
     measured = RN.read_json(d / "verified.json")["measured"]
     assert measured["edge_z"] == 0.3
     assert RN.read_json(measured["edge"]["report"])["edge_z"] == 0.3
+
+
+def _git_repo(path, files):
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    for f, text in files.items():
+        (path / f).parent.mkdir(parents=True, exist_ok=True)
+        (path / f).write_text(text)
+    (path / ".gitignore").write_text("runs/\n.rsi-loop-active\n")
+    subprocess.run(["git", "-C", str(path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"], check=True)
+
+
+def test_guard_and_finish_find_the_run_lock_through_a_runs_link(tmp_path, monkeypatch):
+    """#179: runs/ is a link from the loop's worktree into another checkout with its own uncommitted work.
+    The guard must compare the loop's checkout, and finish must remove the loop's lock, from any cwd."""
+    main, work, elsewhere = tmp_path / "main", tmp_path / "work", tmp_path / "elsewhere"
+    _git_repo(main, {"README.md": "x\n"})
+    (main / "runs").mkdir()
+    (main / "dirty.py").write_text("someone's uncommitted work\n")   # untracked in the main checkout
+    _git_repo(work, {"README.md": "x\n"})
+    (work / "runs").symlink_to(main / "runs")
+    elsewhere.mkdir()
+    monkeypatch.chdir(work)
+    run = RN.init_run(work / "runs" / "rsi" / "r1", goal="g", baseline="ab", repo=work)
+    monkeypatch.chdir(elsewhere)
+    assert GU.changed_tracked(run) == []
+    (work / "README.md").write_text("changed\n")
+    assert GU.changed_tracked(run) == ["README.md"]
+    (work / "README.md").write_text("x\n")
+    RN.finish(run, reason="done")
+    assert not (work / GU.LOCK).exists()

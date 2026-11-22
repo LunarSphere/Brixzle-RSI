@@ -91,12 +91,23 @@ def decide(event):
 
 
 def changed_tracked(run):
-    """Tracked or untracked files (not git-ignored) that changed since the run began."""
-    lock_path = find_lock(run) or find_lock(Path.cwd())  # runs/ may be a link out of the checkout
-    repo = Path(json.loads(lock_path.read_text())["repo"]) if lock_path else Path(run).resolve().parents[2]
-    before = set()
-    if lock_path:
-        before = {l[3:] for l in json.loads(lock_path.read_text())["status"].splitlines() if l}
+    """Tracked or untracked files (not git-ignored) of the loop's checkout that changed since the run began.
+
+    The checkout and its status at the start are read from the run's ``run.json`` (#179), because ``runs/``
+    may be a link into another checkout. An older run without it falls back to the lock found from the run
+    or the working directory; with neither, it raises rather than compare some other repo."""
+    run = Path(run)
+    where = run / "run.json"
+    if where.exists():
+        info = json.loads(where.read_text())
+        repo, status = Path(info["repo"]), info["status"]
+    else:
+        lock_path = find_lock(run) or find_lock(Path.cwd())
+        if lock_path is None:
+            raise FileNotFoundError(f"{run} has no run.json and no loop lock was found: cannot tell which checkout to check")
+        lock = json.loads(lock_path.read_text())
+        repo, status = Path(lock["repo"]), lock["status"]
+    before = {l[3:] for l in status.splitlines() if l}
     out = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout
     now = {l[3:] for l in out.splitlines() if l}
     return sorted(f for f in now - before if f != LOCK)
