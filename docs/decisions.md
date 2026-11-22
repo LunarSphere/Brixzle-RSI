@@ -467,3 +467,22 @@ In `gate2-20261116-mean` (`--budget-usd 15 --max-minutes 60`; simulated, uncalib
 Under the objective proposed in #164 (hard constraints on grip, length ≤ 70 mm, release ≤ 30 mm, arm overhang ≥ 11 and bridge riser ≤ 10 mm, then a Pareto order on Z, error-tolerant overhang, Z at μ 0.8 and overhang steps), allround breaks five constraints and is not kept. A/B, twinhook4 and gentle are all feasible, and none dominates another.
 
 **Lesson:** an objective of capture alone is won by growing the brick. Grip, size and release height have to be terms, or constraints, from the start.
+
+## Gentle's half-supported seat: what jams it, and candidate rules (issue #178)
+
+All simulated, uncalibrated contact unless marked predicted. Runs: `runs/diag-gentle-edge-20261122/` (edge maps, contacts, sweeps, tune) and `runs/rsi/gentle-edge-20261122/` (one loop iteration).
+
+**What jams it.** On its +x bare edge gentle seats only from -2 to 0 mm in X and within +-2 mm in Y (edge-map Z -0.38, 60 of 87 jam); A/B's same edge is +0.40. Two mechanisms (`gentle_plus_bare.json`):
+
+- About +1 mm in X: the supporter's +x horn props the falling brick's centre-band body beside the pocket that should take it (contact normal 44 deg from vertical) while the brick's -x tooth bears on the supporter's slot wall (72 deg). A two-point wedge (DR2), at rest 2.7 mm high and 4 deg tilted.
+- About 3 mm in X or Y: the brick tips about 16 deg toward the free side and its body is caught under the supporter's horn (contact normal pointing down).
+
+**What parameters can do.** A one-at-a-time sweep of nine parameters (`sweep1.json`, 47 values, about 10 min) found only the hook lean (23 -> 18 deg: +x -0.38 -> -0.08); below 18 deg it levels off (`lean_low.json`). A joint Py-BOBYQA tune of eight parameters on the edge map (`tune-edge/tune.json`, 13 candidates, 11 min) found nothing beyond noise. The 18 deg lean breaks R4's hook depth; the loop's first fix (tip chamfer 0.4 mm) restored it: `gentle_lean18_ch04` keeps capture, improves both edges and the error-tolerant overhang (mean median steps 3.33 against 3.0), and costs friction margin (+0.83 against +0.93 at mu 0.8) and one gate overhang step (9 against 10). It is in the run's archive as a trade-off, not a replacement for gentle.
+
+**Rule added:** DR12 (a lower hook lean shrinks the undercut).
+
+**Candidate rules, not added** (one family, one seed each; to add once a design built on them confirms them):
+
+1. On a half-supported seat, the hold-down undercut on the free side also traps a brick that tips toward the free side. Keep the undercut only where the seated hook needs it, and the body above it clear of a 16 deg tip.
+2. The body beside a horn's pocket is a landing face: about 1 mm of X error gives a two-point wedge, so the pocket needs a lead-in at least as wide as the expected error.
+3. On gentle a lower lean helped both bare edges, unlike the opposing centre-of-mass trade-off between the edges in #145's allround campaign; that trade-off is not general across families.
