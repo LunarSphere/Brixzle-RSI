@@ -90,9 +90,9 @@ def test_one_iteration_runs_every_step_in_order(tmp_path):
     d, f = _driver(tmp_path, {"actions": ["push", "stop"]})
     d.run()
     order = [c[1] for c in f.calls]
-    assert order == ["baseline", "director", "decide",
-                     "designer", "check", "verify", "verifier", "critic", "director", "decide", "guard",
-                     "finish"]
+    assert sorted(order[6:8]) == ["critic", "verifier"]  # these two run in parallel: either order
+    assert order[:6] + order[8:] == ["baseline", "director", "decide", "designer", "check", "verify",
+                                     "director", "decide", "guard", "finish"]
 
 
 def test_a_refused_change_goes_back_to_the_designer_once(tmp_path):
