@@ -486,3 +486,15 @@ All simulated, uncalibrated contact unless marked predicted. Runs: `runs/diag-ge
 1. On a half-supported seat, the hold-down undercut on the free side also traps a brick that tips toward the free side. Keep the undercut only where the seated hook needs it, and the body above it clear of a 16 deg tip.
 2. The body beside a horn's pocket is a landing face: about 1 mm of X error gives a two-point wedge, so the pocket needs a lead-in at least as wide as the expected error.
 3. On gentle a lower lean helped both bare edges, unlike the opposing centre-of-mass trade-off between the edges in #145's allround campaign; that trade-off is not general across families.
+
+## The all-placement campaigns: rules and method (issue #184)
+
+Two loop campaigns aimed at one brick that handles every placement (`runs/rsi/all-placement-20261122`, Claude roles, six iterations; `runs/rsi/all-placement-codex-20261122`, Codex roles, four iterations), simulated, uncalibrated contact. Best so far: `gentle_inboard_sill` (full-seat Z +0.978, Z at mu 0.8 +0.91, noisy corbel six steps to 2 mm, bare edges -0.13 / +0.60). Five local trims in the first campaign plateaued near 0 on the +x edge.
+
+**Rules added:** DR13 (keep the centre of mass over the supported side) and DR14 (stop the pitch before the first load-bearing contact).
+
+**Method:**
+
+- **Check seated controls when you add a guide.** The guide tongue intercepted an approach the sill had seated; reworking it into a cheek moved the load to an adjacent tooth.
+- **An edge-seat gain must carry through.** The corner rocker made the +x edge positive (+0.15) but lost full-seat Z (+0.922) and stayed at one step at 4 mm. Judge a change on both bare edges, the full seat and the noisy builds together, as the archive does.
+
