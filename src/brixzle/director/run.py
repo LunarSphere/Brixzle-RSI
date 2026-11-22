@@ -54,8 +54,14 @@ def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=
         raise FileExistsError(f"{run} exists: a run is never overwritten")
     if (repo / GU.LOCK).exists():
         raise FileExistsError(f"another loop holds {repo / GU.LOCK}")
+    if settings is not None and not isinstance(settings, dict):
+        raise ValueError("campaign settings must be a JSON object")
+    s = asdict(OB.Settings())
+    if settings and settings.get("stage") == "held":
+        from brixzle.director.archive import HELD_TERMS
+        s["scored"] = HELD_TERMS
+    s.update(settings or {})
     run.mkdir(parents=True)
-    s = settings or asdict(OB.Settings())
     budget = {"iterations": 8, "wall_clock_min": 240, "stall": 3, **(budget or {})}
     write_json(run / "goal.json", {"text": goal, "baseline": baseline, "settings": s, "budget": budget,
                                    "human_checkpoints": list(human_checkpoints),

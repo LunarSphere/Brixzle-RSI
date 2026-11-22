@@ -63,6 +63,7 @@ replay hides the designs it replays, and the guard refuses the read: then work f
     Ask for contacts from that edge and review the other edge for regressions. In the prior allround
     campaign the opposite edges benefited from opposite centre-of-mass shifts. Check both sides before
     using that mechanism on another family. Keep the structure gate and noisy corbel for acceptance.
+  - For `settings.stage = "held"`, read the verified held report for the failed phase, force margin, release Z and success rate by reach. A fork or wrist brief can name a unit such as `gripper:tine_d_m` or `gripper:wrist.linear_k`. The model uses PLA and TPU and its wrist stiffness and damping defaults are a guess until #193.
 - **`stop`:**
   - the budget is nearly spent;
   - three iterations in a row added nothing to the archive;

@@ -13,6 +13,7 @@ lists what the iteration may change (``may_change``); ``check`` refuses a candid
 anything else, so the rest stays frozen.
 """
 import ast
+import json
 from pathlib import Path
 
 FREE = {"name", "version", "description"}
@@ -55,6 +56,13 @@ def units(path):
             for name in names:
                 if name not in FREE:
                     out[f"const:{name}"] = ast.dump(n.value) if n.value is not None else ""
+    sidecar = Path(path).with_name("gripper.json")
+    if sidecar.exists():
+        for key, value in json.loads(sidecar.read_text()).items():
+            if key == "wrist":
+                out.update({f"gripper:wrist.{axis}": setting for axis, setting in value.items()})
+            else:
+                out[f"gripper:{key}"] = value
     return out
 
 

@@ -9,7 +9,9 @@ one standard error of Z for its counts (zscore.z_band); the overhang terms use a
 from brixzle.engine import zscore as ZS
 
 LEGACY_TERMS = ("z_target", "tolerance_mm", "z_mu08", "overhang_n")
-Z_COUNTS = {"z_target": "z_counts", "z_mu08": "z_mu08_counts"}
+HELD_Z_TERMS = ("held_full_z", "held_plus_bare_z", "held_minus_bare_z", "held_first_reach_z")
+HELD_TERMS = ("z_target", *HELD_Z_TERMS, "held_reliable_reach_mm", "held_mission_rate")
+Z_COUNTS = {**{term: f"{term}_counts" for term in HELD_Z_TERMS}, "z_target": "z_counts", "z_mu08": "z_mu08_counts"}
 
 
 def _value(rec, term):

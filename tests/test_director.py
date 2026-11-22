@@ -420,3 +420,112 @@ def test_guard_and_finish_find_the_run_lock_through_a_runs_link(tmp_path, monkey
     (work / "README.md").write_text("x\n")
     RN.finish(run, reason="done")
     assert not (work / GU.LOCK).exists()
+
+
+def test_held_goal_measures_baseline_and_candidate_and_ranks_verified_reach(repo, monkeypatch):
+    from brixzle.director import __main__ as cli
+    from brixzle.engine import heldmap as hm
+    from brixzle.tools import core as tc
+
+    run = _init(repo, settings={"stage": "held", "scored": ["held_reliable_reach_mm"], "min_drop_z": .85})
+    calls = []
+    def fake(family, p, cfg, settings):
+        reach = 100 if cfg.tine_d_m == .003 else 75
+        calls.append(reach)
+        return dict(scores={"held_reliable_reach_mm": reach}, cases={}, mission_passed=True,
+                    violations=[], seconds=.1, wrist_defaults="guess")
+
+    monkeypatch.setattr(hm, "heldmap", fake)
+    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
+    for name, z in (("baseline", .9), ("iter-01", .91), ("iter-02", .8)):
+        d = run / name
+        m = d / "measured"
+        m.mkdir(parents=True)
+        RN.write_json(m / "measured.json", dict(check_family={"ok": True}, gate={"passed": True},
+                      ring={"status": "complete"}, z={"mean": {"Z": z}}, objective=_rec(name, z=z), seconds=1.))
+        if name == "baseline":
+            args = ["baseline"]
+        else:
+            pkg = d / "new"
+            pkg.mkdir()
+            (pkg / "family.py").touch()
+            RN.write_json(pkg / "gripper.json", {"tine_d_m": .003})
+            RN.write_json(d / "claim.json", {"numbers": [{"what": "measured reach", "path": "held.scores.held_reliable_reach_mm",
+                                                         "value": 100}]})
+            args = ["verify", "--iter", name[-2:]]
+        assert cli.main(args + ["--run", str(run)]) == 0
+        record = RN.read_json(d / "verified.json")
+        report = RN.read_json(record["measured"]["held"]["report"])
+        assert report["scores"]["held_reliable_reach_mm"] == calls[-1]
+        assert record["offer"]["kept"] == (name != "iter-02")
+        if name == "iter-02":
+            assert "drop_full_z" in record["measured"]["violations"]
+    assert calls == [75, 100, 100]
+    members = RN.read_json(run / "archive.json")["members"]
+    assert [rec["name"] for rec in members] == ["iter-01:new"]
+    assert members[0]["held_reliable_reach_mm"] == 100
+
+
+def test_held_feasibility_survives_resume(tmp_path, monkeypatch):
+    from brixzle.engine import heldmap as hm
+    from brixzle.tools import core as tc
+
+    run = tmp_path / "measured"
+    run.mkdir()
+    RN.write_json(run / "measured.json", dict(check_family={"ok": False}, gate={"passed": False},
+                  ring={"status": "complete"}, z={"mean": {"Z": 1}}, objective=_rec("test", feasible=False)))
+    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
+    monkeypatch.setattr(hm, "heldmap", lambda *args: dict(scores={}, cases={}, mission_passed=False,
+                        violations=["held_r4", "held_payload"], seconds=0))
+    m = VE.measure("ab", run, measure_held=True)
+    again = VE.measure("ab", run, measure_held=True)
+    assert m == again
+    assert set(m["violations"]) == {"grip", "check_family", "structure_gate", "held_r4", "held_payload"}
+
+
+def test_gripper_only_iteration_obeys_the_brief(tmp_path):
+    parent = _module(tmp_path, "parent", PARENT)
+    child = _module(tmp_path, "child", PARENT)
+    RN.write_json(child.with_name("gripper.json"), {"wrist": {"linear_k": [80, 80, 120]}})
+    unit = "gripper:wrist.linear_k"
+    assert CH.check(parent, child, [unit])["changed"] == [unit]
+    assert CH.check(parent, child, [unit])["ok"]
+    assert not CH.check(parent, child, ["param:b"])["ok"]
+    RN.write_json(parent.with_name("gripper.json"), {"wrist": {"linear_k": [80, 80, 120]}})
+    assert CH.changed(parent, child) == []
+
+
+def test_init_accepts_campaign_settings_before_the_first_baseline(repo, monkeypatch):
+    from brixzle.director import __main__ as cli
+    monkeypatch.chdir(repo)
+    settings = {"stage": "held", "scored": ["held_reliable_reach_mm", "held_full_z"]}
+    cfg = repo / "settings.json"
+    RN.write_json(cfg, settings)
+    run = repo / "runs" / "stageb"
+    assert cli.main(["init", "--run", str(run), "--goal", "Reliable reach", "--settings", str(cfg)]) == 0
+    saved = RN.read_json(run / "goal.json")["settings"]
+    assert saved["scored"] == settings["scored"]
+    assert saved["grip_mm"] > 0  # omitted stage-A settings can still be tightened by the director
+
+
+def test_fresh_held_verification_keeps_drop_floor_on_resume(tmp_path, monkeypatch):
+    from brixzle.engine import heldmap as hm
+    from brixzle.tools import core as tc
+
+    def evaluate(spec, directory, **kwargs):
+        directory.mkdir()
+        return {"check_family": {"ok": True}, "gate": {"passed": True}, "ring": {"status": "complete"},
+                "z": {"mean": {"Z": .5}}}
+
+    calls = []
+    def measure(family, params, gripper, settings):
+        calls.append(settings.seed)
+        return {"scores": {}, "cases": {}, "mission_passed": True, "violations": [], "seconds": 0}
+
+    monkeypatch.setattr(tc, "evaluate", evaluate)
+    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
+    monkeypatch.setattr(hm, "heldmap", measure)
+    out = VE.measure("ab", tmp_path, objective=False, measure_held=True, min_drop_z=.75)
+    assert out["violations"] == ["drop_full_z"]
+    assert VE.measure("ab", tmp_path, objective=False, measure_held=True) == out
+    assert calls == [hm.HeldMapSettings.seed]
