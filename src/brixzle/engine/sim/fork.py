@@ -55,11 +55,13 @@ def _combine(parts):
 
 
 def build_fork(family, p, part, fp: ForkParams = ForkParams(), drone: DroneConfig = DroneConfig(),
-               gains: HoverGains = HoverGains(), tines=None):
+               gains: HoverGains = HoverGains(), tines=None, *, y_tip_mm=None, with_drone=True, tine_dx_dy=0.):
     """Fork geometry and the rigid drone+fork body's mass properties, in the carry frame (mm, g).
 
     ``tines`` are the tine centres (x, z) in the carry frame; by default each sits at the top of
-    its bore (tine top on bore top). Through openings they are the seats (issue #12)."""
+    its bore (tine top on bore top). With oblique tines, these centres are at y = 0 and
+    ``tine_dx_dy`` is their fixed slope in plan. Through openings they are the seats (issue #12). A short
+    fork can end inside the window at ``y_tip_mm``. Set ``with_drone=False`` for a separate wrist."""
     bodies = B.sim_bodies(family, p, part)
     D = family.lattice(p).D_mm
     r = fp.tine_d/2
@@ -67,9 +69,15 @@ def build_fork(family, p, part, fp: ForkParams = ForkParams(), drone: DroneConfi
         tines = [(float(b.x_mm), float(b.z_mm + b.radius_mm - r)) for b in grip_bores(family.pickup(p, part))]
     tines = [(float(x), float(z)) for x, z in tines]
     y_face, y_tip = -(D/2 + fp.gap), D/2 + fp.protrude
+    if y_tip_mm is not None:
+        if not math.isfinite(y_tip_mm) or y_tip_mm - r <= y_face:
+            raise ValueError("fork tip must be finite and extend past the plate by more than its radius")
+        y_tip = y_tip_mm
+    if not math.isfinite(tine_dx_dy):
+        raise ValueError("tine slope must be finite")
     top = max(float(np.max(c[:, 2])) for c in bodies.collision)
     drone_pos = np.array([bodies.com_mm[0], 0.0, top + fp.clear_guard - GUARD_BOTTOM])
-    xs, zs = [t[0] for t in tines], [t[1] for t in tines]
+    xs, zs = [t[0] + y_face*tine_dx_dy for t in tines], [t[1] for t in tines]
     plate_lo = np.array([min(xs) - r - fp.plate_margin, y_face - fp.plate_t, min(zs) - r - fp.wall])
     plate_hi = np.array([max(xs) + r + fp.plate_margin, y_face, drone_pos[2] + HEADER_BOTTOM])
     b_size = np.array([2*(HEADER_HALF[0] + 2), 2*(HEADER_HALF[1] + 2), fp.bracket_t])
@@ -79,16 +87,21 @@ def build_fork(family, p, part, fp: ForkParams = ForkParams(), drone: DroneConfi
     parts.append((m, (plate_lo + plate_hi)/2, _box_inertia(m, plate_hi - plate_lo)))
     m = float(np.prod(b_size))*PLA_DENSITY
     parts.append((m, b_com, _box_inertia(m, b_size)))
-    L = y_tip - y_face
+    axis = np.array([tine_dx_dy, 1., 0.])
+    scale = np.linalg.norm(axis)
+    axis /= scale
+    L = (y_tip - y_face)*scale
+    y_mid = (y_face + y_tip)/2
     for x, z in tines:
         m = math.pi*r*r*L*PLA_DENSITY
-        I = np.diag([m*L*L/12, m*r*r/2, m*L*L/12])
-        parts.append((m, (x, (y_face + y_tip)/2, z), I))
+        I = m*(L*L/12*np.eye(3) + (r*r/2-L*L/12)*np.outer(axis, axis))
+        parts.append((m, (x+tine_dx_dy*y_mid, y_mid, z), I))
     gripper_g = sum(m for m, _, _ in parts)
-    J = np.diag(gains.J)*1e9  # kg m^2 -> g mm^2
-    parts.append((drone.mass_g, drone_pos, J))
+    if with_drone:
+        J = np.diag(gains.J)*1e9  # kg m^2 -> g mm^2
+        parts.append((drone.mass_g, drone_pos, J))
     mass, com, inertia = _combine(parts)
-    return {"tines": tines, "tine_r": r, "y_face": y_face, "y_tip": y_tip,
+    return {"tine_dx_dy": tine_dx_dy, "tines": tines, "tine_r": r, "y_face": y_face, "y_tip": y_tip,
             "plate": (plate_lo.tolist(), plate_hi.tolist()), "drone_pos_mm": drone_pos.tolist(),
             "gripper_mass_g": gripper_g, "body_mass_kg": mass*1e-3, "com_mm": com.tolist(),
             "inertia_g_mm2": inertia.tolist(), "params": fp.to_dict()}

@@ -168,21 +168,38 @@ def bored_collision(family, p, part, sub_bands=3):
 # --- the rig ---
 
 
+def tine_segment(fork, x, z):
+    """Endpoints of the capsule axis in the brick carry frame (mm)."""
+    slope = fork.get("tine_dx_dy", 0.)
+    end = fork["y_tip"] - fork["tine_r"]/math.hypot(slope, 1)
+    return np.array([[x + slope*y, y, z] for y in (fork["y_face"], end)])
+
+
+def add_fork_parts(body, fork, prefix="fork"):
+    """Append the fork inertia and its colliding tines and plate in the carry frame."""
+    I = np.asarray(fork["inertia_g_mm2"])*1e-9
+    ET.SubElement(body, "inertial", mass=str(fork["body_mass_kg"]), pos=_numbers(np.asarray(fork["com_mm"])*MM),
+                  fullinertia=_numbers([I[0, 0], I[1, 1], I[2, 2], I[0, 1], I[0, 2], I[1, 2]]))
+    r = fork["tine_r"]
+    for k, (x, z) in enumerate(fork["tines"]):
+        ET.SubElement(body, "geom", name=f"{prefix}_tine{k}", type="capsule", size=str(r*MM),
+                      fromto=_numbers(tine_segment(fork, x, z)*MM),
+                      rgba=".8 .8 .8 1", contype="1", conaffinity="1")
+    lo, hi = (np.asarray(v) for v in fork["plate"])
+    ET.SubElement(body, "geom", name=f"{prefix}_plate", type="box", size=_numbers((hi - lo)/2*MM),
+                  pos=_numbers((hi + lo)/2*MM), rgba=".8 .8 .8 1", contype="1", conaffinity="1")
+
+
+def withdrawal_stroke_mm(depth_mm, tip_y_mm):
+    """Distance along -Y to bring the tip 5 mm clear of the brick's near face."""
+    return tip_y_mm + depth_mm/2 + 5.0
+
+
 def _fork_mjcf(fork):
     def add(asset, world):
         body = ET.SubElement(world, "body", name="fork", pos=_numbers(PARK))
         ET.SubElement(body, "freejoint", name="fork_free")
-        I = np.asarray(fork["inertia_g_mm2"])*1e-9
-        ET.SubElement(body, "inertial", mass=str(fork["body_mass_kg"]), pos=_numbers(np.asarray(fork["com_mm"])*MM),
-                      fullinertia=_numbers([I[0, 0], I[1, 1], I[2, 2], I[0, 1], I[0, 2], I[1, 2]]))
-        r = fork["tine_r"]
-        for k, (x, z) in enumerate(fork["tines"]):
-            ET.SubElement(body, "geom", name=f"fork_tine{k}", type="capsule", size=str(r*MM),
-                          fromto=_numbers(np.array([x, fork["y_face"], z, x, fork["y_tip"] - r, z])*MM),
-                          rgba=".8 .8 .8 1", contype="1", conaffinity="1")
-        lo, hi = (np.asarray(v) for v in fork["plate"])
-        ET.SubElement(body, "geom", name="fork_plate", type="box", size=_numbers((hi - lo)/2*MM),
-                      pos=_numbers((hi + lo)/2*MM), rgba=".8 .8 .8 1", contype="1", conaffinity="1")
+        add_fork_parts(body, fork)
     return add
 
 
@@ -193,6 +210,20 @@ def _R(q):
 def _wxyz(R):
     q = R.as_quat()
     return np.array([q[3], q[0], q[1], q[2]])
+
+
+def hover_wrench(mass, kp, kd, k_att, c_att, pos, R, velocity, sp_pos, sp_vel, sp_acc, sp_R):
+    """Mellinger position PD with weight feedforward and the estimated attitude hold."""
+    f = mass*(np.asarray(sp_acc) + [0., 0., G]) + kp*(sp_pos - pos) + kd*(sp_vel - velocity[:3])
+    omega = R.apply(velocity[3:6])  # body-frame angular velocity of a free joint
+    return f, k_att*(sp_R*R.inv()).as_rotvec() - c_att*omega
+
+
+def minimum_jerk(t, duration):
+    """Position, velocity and acceleration fractions of a smooth line segment."""
+    u = min(max(t/duration, 0.), 1.)
+    return (10*u**3 - 15*u**4 + 6*u**5, (30*u**2 - 60*u**3 + 30*u**4)/duration,
+            (60*u - 180*u**2 + 120*u**3)/duration**2)
 
 
 class PickRig:
@@ -270,9 +301,8 @@ class PickRig:
         # Mellinger (crazyflow state2attitude): m (a_des + g) + kp e + kd de, with m the controller's
         # mass (the payload is switched on for LIFT).
         mass = self.body_kg + (self.brick_kg if loaded else 0.)
-        f = mass*(np.asarray(sp_acc) + [0., 0., G]) + self.kp*(sp_pos - pos) + self.kd*(sp_vel - d.qvel[v:v+3])
-        w = R.apply(d.qvel[v+3:v+6])  # free-joint angular velocity is in the body frame
-        tau = self.k_att*(sp_R*R.inv()).as_rotvec() - self.c_att*w
+        f, tau = hover_wrench(mass, self.kp, self.kd, self.k_att, self.c_att, pos, R, d.qvel[v:v+6],
+                              sp_pos, sp_vel, sp_acc, sp_R)
         d.xfrc_applied[self.fork_body, :3] = f
         d.xfrc_applied[self.fork_body, 3:] = tau
 
@@ -340,10 +370,7 @@ class PickRig:
         step = aim_R.apply(delta)*MM
 
         def sp(t):
-            u = min(max(t/T, 0.), 1.)
-            s = 10*u**3 - 15*u**4 + 6*u**5
-            ds = (30*u**2 - 60*u**3 + 30*u**4)/T if t < T else 0.
-            dds = (60*u - 180*u**2 + 120*u**3)/T**2 if t < T else 0.
+            s, ds, dds = minimum_jerk(t, T)
             local = yaw_off + [dx, y0 + s*(y1 - y0), dz + z0 + s*(z1 - z0)]
             return (aim_pos + aim_R.apply(local))*MM, step*ds, step*dds, R
         return sp, T
@@ -438,7 +465,7 @@ class PickRig:
         unload, Tu = self._path(self.seat_pos, seat_R, (0., 0., 0.), 0., 0., 0., -self.aim_low, cfg.v_lift)
         peak = self._run(Tu, unload, False, contacts, t0)
         D = self.family.lattice(self.p).D_mm
-        back = -(D + cfg.fork.protrude + 5.0)
+        back = -withdrawal_stroke_mm(D, self.fork["y_tip"])
         out, To = self._path(self.seat_pos, seat_R, (0., 0., 0.), 0., back, -self.aim_low, -self.aim_low, cfg.v_release)
         peak = max(peak, self._run(To + cfg.hold_s, out, False, contacts, t0))
         drift = float(np.linalg.norm(self._brick_pose()[0] - start))

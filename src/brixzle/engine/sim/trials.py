@@ -196,9 +196,10 @@ def _trace_rows(contacts):
 
 
 def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), frames=None, fps=60,
-                      contacts=None, names=None):
+                      contacts=None, names=None, before_step=None):
     """Step until brick j (and watched bricks) are still; return impact metrics.
 
+    ``before_step`` can maintain a held rig's hover while the brick settles.
     ``contacts`` (a dict, with ``names`` = geom names) collects brick j's contact sequence: one
     entry per (own collision piece, touched geom) with first and last contact time, the number
     of separate touches, peak normal force and the first contact point. It only reads contact
@@ -212,6 +213,8 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
     every = max(1, round(1/(fps*model.opt.timestep)))
     step = 0
     while data.time - t0 < tol.max_time:
+        if before_step is not None:
+            before_step()
         mujoco.mj_step(model, data)
         if frames is not None and step % every == 0:
             frames.append(data.qpos.copy())
