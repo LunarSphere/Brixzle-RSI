@@ -8,6 +8,7 @@
       archive.json      the Pareto archive of verified, feasible designs (archive.Archive)
       iter-NN/          one per iteration: brief.json, <module>/family.py, claim.json, verified.json,
                         diagnosis.md, decision.json
+      run.json          where the lock and the loop's checkout are, and the checkout's status at the start (#179)
       summary.json      written when the run ends
 
 ``init_run`` also writes the loop's lock (guard.LOCK) at the repo root, which turns the bounds on.
@@ -67,6 +68,9 @@ def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=
     lock = {"run": str(run), "started": now(), "head": _git(repo, "rev-parse", "HEAD").strip(),
             "status": _git(repo, "status", "--porcelain"), "deny_read": list(deny_read), "repo": str(repo)}
     write_json(repo / GU.LOCK, lock)
+    # Where the lock and the loop's checkout are, kept in the run (#179): runs/ may be a link into another
+    # checkout, so neither can be found from the run's resolved path.
+    write_json(run / "run.json", {"lock": str(repo / GU.LOCK), "repo": str(repo), "status": lock["status"]})
     return run
 
 
@@ -78,7 +82,8 @@ def finish(run, repo=".", reason=""):
                "tracked_changes": GU.changed_tracked(run)}
     write_json(run / "summary.json", summary)
     write_json(run / "next.json", {"step": "finish", "time": now(), "reason": reason})
-    lock = repo / GU.LOCK
+    where = read_json(run / "run.json", {})
+    lock = Path(where["lock"]) if where.get("lock") else repo / GU.LOCK
     if lock.exists() and read_json(lock, {}).get("run") == str(run):
         lock.unlink()
     return summary
