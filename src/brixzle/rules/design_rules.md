@@ -9,8 +9,11 @@ The critic agent (#19) reads this file. Each rule states a mechanism, says what 
 - **paper:** stated in the cited source, and read in this repo (`citations.md` says how far);
 - **principle:** standard mechanics that the cited source sets out; not checked against the source's text in this repo;
 - **user observation:** found by the maintainer on hardware; not in any paper.
+- **simulation:** found in this repo's sim and geometry, simulated, uncalibrated contact (#178). It cites the closest
+  mechanics source and lists its runs on a Runs line; it holds until hardware or a paper says otherwise.
 
-Results the loop produces are "simulated, uncalibrated contact" or "predicted, quasi-static 2D". A rule is not a result.
+Results the loop produces are "simulated, uncalibrated contact" or "predicted, quasi-static 2D". A rule is not a result,
+except a **simulation** rule, which the maintainer accepted from several results in a reviewed PR (#178).
 
 <!-- Each rule starts with "## DR<n>." and has "Cites:" and "Evidence:" lines; tests/test_rules_corpus.py checks them. -->
 
@@ -90,3 +93,11 @@ Results the loop produces are "simulated, uncalibrated contact" or "predicted, q
 - **In a design.** Context only: these systems motivate R5 and R11. Do not copy their parts, joints or structures.
 - **Cites:** petersen-nagpal-werfel-2011, lindsey-mellinger-kumar-2011, augugliaro-2014, jenett-2019
 - **Evidence:** principle
+
+## DR12. A lower hook lean shrinks the hook's undercut
+
+- **Mechanism.** A leaning hook blocks a straight lift by the undercut of its hook wall, about (hook length - tip chamfer - tip set-back) x sin(lean) on the twin-hook line (predicted, quasi-static 2D). Lowering the lean helps a half-supported brick seat (gentle's bare edges: +x -0.38 -> -0.08, -x +0.33 -> +0.59 edge-map Z at 23 -> 18 deg), but below about asin(1 mm / effective hook length), 18.8 deg for gentle's hook, the undercut falls under 1 mm and R4's hook depth breaks (-0.04 mm at 18 deg).
+- **In a design.** When the lean comes down to free a half-supported seat, lengthen the hook's effective length in the same change: less tip chamfer or set-back, or a longer hook. On gentle a 0.4 mm chamfer at 18 deg restored the margin (+0.08 mm) and kept most of the edge gain (`gentle_lean18_ch04`: +x -0.20, -x +0.56), at a cost in friction margin (Z at mu 0.8 +0.83 against +0.93).
+- **Cites:** whitney-1982
+- **Evidence:** simulation
+- **Runs:** runs/diag-gentle-edge-20261122/sweep1.json, runs/diag-gentle-edge-20261122/measured-lean18, runs/rsi/gentle-edge-20261122/iter-01/verified.json, runs/edgemap-20261122T031954257942Z-gentle_lean18_ch04

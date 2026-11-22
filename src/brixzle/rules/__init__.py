@@ -1,7 +1,7 @@
 """Design rules corpus (issue #16): ``design_rules.md`` and ``citations.md``, parsed for the critic.
 
 Each rule in design_rules.md starts with ``## DR<n>. <title>`` and has Mechanism, In a design,
-Cites and Evidence lines. Each source in citations.md starts with ``## <key>`` and has Citation,
+Cites and Evidence lines, and a simulation rule a Runs line (#178). Each source in citations.md starts with ``## <key>`` and has Citation,
 Link and Read lines. The repo holds links, not papers.
 """
 
@@ -12,7 +12,7 @@ import re
 DIR = Path(__file__).resolve().parent
 RULES_PATH = DIR / "design_rules.md"
 CITATIONS_PATH = DIR / "citations.md"
-EVIDENCE = ("paper", "principle", "user observation")
+EVIDENCE = ("paper", "principle", "user observation", "simulation")  # simulation: found in this repo's sim (#178)
 
 _RULE = re.compile(r"^## (DR\d+)\. (.+)$")
 _KEY = re.compile(r"^## ([a-z0-9-]+)$")
@@ -27,6 +27,7 @@ class Rule:
     in_design: str
     cites: tuple
     evidence: str
+    runs: tuple = ()  # a simulation rule's runs (#178)
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,10 @@ def load_rules(path=RULES_PATH):
             if not f.get(name):
                 raise ValueError(f"{rid} has no '{name.capitalize()}' line")
         cites = tuple(k.strip() for k in f["cites"].split(",") if k.strip())
-        rules.append(Rule(rid, title.strip(), f["mechanism"], f["in a design"], cites, f["evidence"]))
+        runs = tuple(k.strip().strip("`") for k in f.get("runs", "").split(",") if k.strip())
+        if f["evidence"] == "simulation" and not runs:
+            raise ValueError(f"{rid} is a simulation rule with no 'Runs' line")
+        rules.append(Rule(rid, title.strip(), f["mechanism"], f["in a design"], cites, f["evidence"], runs))
     return rules
 
 

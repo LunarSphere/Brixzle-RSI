@@ -56,3 +56,20 @@ def test_a_rule_without_a_citation_is_rejected(tmp_path):
                    encoding="utf-8")
     with pytest.raises(ValueError, match="Cites"):
         RL.load_rules(bad)
+
+
+def test_a_simulation_rule_names_the_runs_behind_it(tmp_path):
+    """Rules found in this repo's sim (#178) are labelled 'simulation' and list their runs."""
+    assert "simulation" in RL.EVIDENCE
+    sims = [r for r in RL.load_rules() if r.evidence == "simulation"]
+    assert sims and all(r.runs and all(x.startswith("runs/") for x in r.runs) for r in sims)
+    bad = tmp_path / "rules.md"
+    bad.write_text("## DR99. A rule\n\n- **Mechanism.** m\n- **In a design.** d\n- **Cites:** whitney-1982\n"
+                   "- **Evidence:** simulation\n")
+    with pytest.raises(ValueError, match="Runs"):
+        RL.load_rules(bad)
+
+
+def test_dr12_relates_hook_lean_to_the_undercut():
+    (r,) = [r for r in RL.load_rules() if r.id == "DR12"]
+    assert "lean" in r.title.lower() and r.evidence == "simulation"
