@@ -73,3 +73,9 @@ def test_a_simulation_rule_names_the_runs_behind_it(tmp_path):
 def test_dr12_relates_hook_lean_to_the_undercut():
     (r,) = [r for r in RL.load_rules() if r.id == "DR12"]
     assert "lean" in r.title.lower() and r.evidence == "simulation"
+
+
+@pytest.mark.parametrize("rid, word", [("DR13", "centre of mass"), ("DR14", "pitch")])
+def test_the_campaign_rules_are_simulation_rules_with_runs(rid, word):
+    (r,) = [r for r in RL.load_rules() if r.id == rid]
+    assert r.evidence == "simulation" and r.runs and word in (r.title + r.mechanism).lower()

@@ -101,3 +101,20 @@ except a **simulation** rule, which the maintainer accepted from several results
 - **Cites:** whitney-1982
 - **Evidence:** simulation
 - **Runs:** runs/diag-gentle-edge-20261122/sweep1.json, runs/diag-gentle-edge-20261122/measured-lean18, runs/rsi/gentle-edge-20261122/iter-01/verified.json, runs/edgemap-20261122T031954257942Z-gentle_lean18_ch04
+
+## DR13. Keep the centre of mass over the supported side of a half-supported seat
+
+- **Mechanism.** A reaching brick sits half over its supporter's edge and pivots about that edge. The more of its mass lies inboard, over the supporter, the larger the moment that holds it level while its hooks engage. On gentle, adding material on the inboard side (the inboard sill) took the noisy corbel's full six-step median from 1 mm to 2 mm of placement error (medians 6/6/6/3/1/1 at 0 to 5 mm), with full-seat Z unchanged (+0.978) (simulated, uncalibrated contact). #145's campaign found the same direction: each edge wanted the centre of mass moved inboard.
+- **In a design.** Bias mass toward the end of the brick that sits on the supporter in an overhang step, for example with thicker walls or ribs there and lightening at the reaching end, before adding guide features. Check both bare edges, since the reaching direction differs between them.
+- **Cites:** balkcom-trinkle-2002
+- **Evidence:** simulation
+- **Runs:** runs/rsi/all-placement-codex-20261122/iter-01/verified.json, runs/rsi/all-placement-codex-20261122/archive.json, runs/rsi/all-placement-20261122/iter-03/verified.json
+
+## DR14. Stop the reaching brick's pitch before its first load-bearing contact
+
+- **Mechanism.** A half-supported brick that has started to pitch outward keeps pitching through whatever it meets next. On gentle, three different guides added near the seat (a guide tongue, a swept cheek and a corner rocker) each took load only after the outward pitch had begun, and the free-side tooth still struck the supporter's end wall, leaving the brick jammed short (simulated, uncalibrated contact). The rocker recovered +x edge seats (+0.15, from -0.13) but kept the end-wall strike in the noisy builds.
+- **In a design.** Give the reaching brick an anti-pitch reaction at or before its first contact with the supporter, not a guide downstream of it. Follow the load from first touch to seating (DR9) and check that the first load-bearing contact already resists outward pitch.
+- **Cites:** xiao-ji-2001, balkcom-trinkle-2002
+- **Evidence:** simulation
+- **Runs:** runs/rsi/all-placement-codex-20261122/iter-02/verified.json, runs/rsi/all-placement-codex-20261122/iter-03/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/diagnosis.md
+
