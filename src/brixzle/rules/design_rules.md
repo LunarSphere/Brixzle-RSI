@@ -114,7 +114,31 @@ except a **simulation** rule, which the maintainer accepted from several results
 
 - **Mechanism.** A half-supported brick that has started to pitch outward keeps pitching through whatever it meets next. On gentle, three different guides added near the seat (a guide tongue, a swept cheek and a corner rocker) each took load only after the outward pitch had begun, and the free-side tooth still struck the supporter's end wall, leaving the brick jammed short (simulated, uncalibrated contact). The rocker recovered +x edge seats (+0.15, from -0.13) but kept the end-wall strike in the noisy builds.
 - **In a design.** Give the reaching brick an anti-pitch reaction at or before its first contact with the supporter, not a guide downstream of it. Follow the load from first touch to seating (DR9) and check that the first load-bearing contact already resists outward pitch.
+- **Refinement (all-placement-codex2).** Moving the first contact is not enough. A band facet moved the first loaded contact 1.20 mm outward in matched +x drops, but the net first-contact moment still pitched the brick outward, and in the tipped jams neither the hook nor the pilot ever overlapped the socket's retaining section (simulated, uncalibrated contact). Check the net pitching moment and whether the hook actually enters the retaining section, together.
 - **Cites:** xiao-ji-2001, balkcom-trinkle-2002
 - **Evidence:** simulation
-- **Runs:** runs/rsi/all-placement-codex-20261122/iter-02/verified.json, runs/rsi/all-placement-codex-20261122/iter-03/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/diagnosis.md
+- **Runs:** runs/rsi/all-placement-codex-20261122/iter-02/verified.json, runs/rsi/all-placement-codex-20261122/iter-03/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/diagnosis.md, runs/rsi/all-placement-codex2-20261122/iter-03/diagnosis.md, runs/rsi/all-placement-codex2-20261122/iter-03/audit.md
 
+## DR15. On a half-supported seat, the free side's hold-down undercut is also a trap
+
+- **Mechanism.** A hold-down undercut keeps a seated brick from lifting out. On a half-supported seat the brick can tip toward the free side before it seats, and the same undercut then catches it short: on gentle, a brick tipped about 16 deg toward the bare +x edge came to rest under the supporter's horn undercut, and a bevel that put an upward component on the end-face reaction just moved jams into that undercut (simulated, uncalibrated contact). R4.hook_depth and the free-side edge pull against each other.
+- **In a design.** Put the retention that must hold a reaching brick on the supported side, or make the free-side undercut unreachable by a brick tipped by the expected error. Check a tipped approach (about 16 deg on gentle) against every undercut on the free side.
+- **Cites:** balkcom-trinkle-2002, whitney-1982
+- **Evidence:** simulation
+- **Runs:** runs/diag-gentle-edge-20261122/gentle_plus_bare.json, runs/rsi/gentle-edge-20261122/iter-01/contacts-20261122T025342055042Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/iter-01/diagnosis.md
+
+## DR16. A sharp free-side tooth hooks a bare vertical end face
+
+- **Mechanism.** A brick tipped 20 to 32 deg toward a bare edge brings its free-side tooth against the supporter's vertical end face. The tip bears with a horizontal normal about 5 mm above the face's bottom corner, low on the face, not at its top corner, and holds the brick short. On gentle it was the main +x jam in every edge layout: 36 of 50 plus_bare jams, 4 of 5 plus_anchored, 4 of 5 plus_cantilever (simulated, uncalibrated contact). A top-corner bevel does not reach this contact.
+- **In a design.** Keep the free-side tooth of a tipped brick from meeting a bare vertical end face: a tooth that cannot reach past the face, a face that slopes the tooth inboard along its whole height, or no tooth on the free side. Check the contact height, not just the corner.
+- **Cites:** whitney-1982, balkcom-trinkle-2002
+- **Evidence:** simulation
+- **Runs:** runs/contacts-20261122T031344558193Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/edge/contacts-20261122T035544558275Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/edge/contacts-20261122T035554515201Z-gentle_lean18_ch04
+
+## DR17. The face beside a socket pocket wedges against the opposite tooth
+
+- **Mechanism.** A brick offset about 1 mm toward a bare edge lands its body on the flat face beside the pocket that should take its horn, while its opposite tooth bears on the slot wall. The two contacts form a wedge (DR2) and the brick jams above its seat. On gentle, a pocket lead-in opened to the underside rescued 3 of 8 diagnosed wedge cells but lost seats elsewhere on the edge and in the 4 mm corbel (simulated, uncalibrated contact).
+- **In a design.** Do not leave a flat landing face beside a pocket within the expected placement error; slope it into the pocket at least as wide as the error, and check that the opposite tooth's contact cannot see the landing face's friction cone (DR2).
+- **Cites:** whitney-1982, balkcom-trinkle-2002
+- **Evidence:** simulation
+- **Runs:** runs/contacts-20261122T031008301714Z-gentle_lean18_ch04, runs/contacts-20261122T031101278271Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/iter-06/design_note.md, runs/rsi/all-placement-20261122/iter-06/screen.json
