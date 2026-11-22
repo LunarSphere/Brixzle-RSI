@@ -38,9 +38,11 @@ def compare(claim, measured, tol=1e-6):
     return {"ok": bad == 0, "mismatches": bad, "numbers": rows}
 
 
-def _with_violations(measured, stages, min_drop_z=None):
-    """Combine objective violations with verdicts for the requested feasibility stages."""
+def _with_violations(measured, stages, min_drop_z=None, held_targets=()):
+    """Combine objective violations with verdicts for the requested feasibility stages. Held violations
+    named in ``held_targets`` (a goal setting, #202) are campaign targets: listed as unmet, not infeasible."""
     violations = list((measured.get("objective") or {}).get("violations") or [])
+    unmet = []
     if "check" in stages and (measured.get("check_family") or {}).get("ok") is not True:
         violations.append("check_family")
     if "gate" in stages and (measured.get("gate") or {}).get("passed") is not True:
@@ -51,11 +53,12 @@ def _with_violations(measured, stages, min_drop_z=None):
         if min_drop_z is None:
             min_drop_z = measured["held"].get("min_drop_z")
         measured = {**measured, "held": {**measured["held"], "min_drop_z": min_drop_z}}
-        violations.extend(measured["held"]["violations"])
+        for v in measured["held"]["violations"]:
+            (unmet if v in held_targets else violations).append(v)
         z = lookup(measured, "z.mean.Z")
         if z is None or (min_drop_z is not None and z < min_drop_z):
             violations.append("drop_full_z")
-    return {**measured, "violations": violations}
+    return {**measured, "violations": violations, "held_targets_unmet": unmet}
 
 
 def _with_edge_measurement(spec, out_dir, measured):
@@ -95,7 +98,7 @@ def _with_held_measurement(spec, out_dir, measured, seed):
 
 
 def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", "ring"), objective=True,
-            seed=None, measure_edge=False, measure_held=False, min_drop_z=None):
+            seed=None, measure_edge=False, measure_held=False, min_drop_z=None, held_targets=()):
     """The candidate's evaluation (tools.core.evaluate) and, with ``objective``, the #164 terms. Z at
     mu 0.8 comes from tools.core.friction (seed 1, mean box). An edge push adds the named
     half-supported drop map and makes its weaker-edge Z available for claim checks. A held goal
@@ -122,7 +125,7 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
             out = _with_held_measurement(spec, out_dir, out, seed)
         if out is not previous:
             out["seconds"] = round(out.get("seconds", 0) + time.perf_counter()-start, 3)
-        out = _with_violations(out, stages, min_drop_z)
+        out = _with_violations(out, stages, min_drop_z, tuple(held_targets))
         if out != previous:
             write_json(done, TC._finite(out))
         return out
@@ -163,6 +166,6 @@ def measure(spec, out_dir, stages=("check", "quick", "map", "held_out", "gate", 
     if measure_held:
         out = _with_held_measurement(spec, out_dir, out, seed)
     out["seconds"] = round(time.time() - t0, 1)
-    out = _with_violations(out, stages, min_drop_z)
+    out = _with_violations(out, stages, min_drop_z, tuple(held_targets))
     write_json(done, TC._finite(out))
     return out

@@ -144,7 +144,7 @@ def _measure(run, spec, directory, **options):
     if settings.get("stage") == "held":
         baseline = RN.read_json(run / "baseline" / "verified.json", {})
         floor = settings.get("min_drop_z", VE.lookup(baseline, "measured.z.mean.Z"))
-        options.update(measure_held=True, min_drop_z=floor)
+        options.update(measure_held=True, min_drop_z=floor, held_targets=tuple(settings.get("held_targets", ())))
     return VE.measure(spec, directory / "measured", **options)
 
 

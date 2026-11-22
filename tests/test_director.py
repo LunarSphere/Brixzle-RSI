@@ -529,3 +529,24 @@ def test_fresh_held_verification_keeps_drop_floor_on_resume(tmp_path, monkeypatc
     assert out["violations"] == ["drop_full_z"]
     assert VE.measure("ab", tmp_path, objective=False, measure_held=True) == out
     assert calls == [hm.HeldMapSettings.seed]
+
+
+def test_a_held_target_is_recorded_as_unmet_not_as_a_violation(tmp_path, monkeypatch):
+    """#202: a stage B goal can treat held_r4 as a target while the archive needs feasible members."""
+    from brixzle.engine import heldmap as hm
+    from brixzle.tools import core as tc
+
+    def measured_dir(name):
+        d = tmp_path / name
+        d.mkdir()
+        RN.write_json(d / "measured.json", dict(check_family={"ok": True}, gate={"passed": True},
+                      ring={"status": "complete"}, z={"mean": {"Z": 1}}, objective={"violations": []}))
+        return d
+
+    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
+    monkeypatch.setattr(hm, "heldmap", lambda *args: dict(scores={}, cases={}, mission_passed=False,
+                        violations=["held_r4", "held_payload"], seconds=0))
+    soft = VE.measure("ab", measured_dir("soft"), measure_held=True, held_targets=("held_r4",))
+    assert soft["violations"] == ["held_payload"] and soft["held_targets_unmet"] == ["held_r4"]
+    hard = VE.measure("ab", measured_dir("hard"), measure_held=True)
+    assert set(hard["violations"]) == {"held_r4", "held_payload"} and hard["held_targets_unmet"] == []
