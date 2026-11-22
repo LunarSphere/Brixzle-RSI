@@ -10,10 +10,13 @@ from time import perf_counter
 import numpy as np
 
 from brixzle.engine import boxes, objective, structures, zscore
+from brixzle.engine.sim.assemble import assembly_order
 from brixzle.engine.sim.drone import CF21B
 from brixzle.engine.sim.fork import ForkGuide
-from brixzle.engine.sim.held import ForkFitError, HeldConfig, HeldRig, WristConfig, mission_samples
+from brixzle.engine.sim.guards import placement_clearances
+from brixzle.engine.sim.held import ForkFitError, HeldConfig, HeldRig, WristConfig, _fork_fit, mission_samples
 from brixzle.engine.sim.pickup import tine_segment
+from brixzle.families import builders as B
 
 RADII = objective.OVERHANG_SCORE_RADII_MM
 R4_STEPS = objective.Settings.tolerance_steps
@@ -99,6 +102,7 @@ def case_summary(rows):
         phases[name] = dict(passed=passed, skipped=skipped, failed=len(rows)-passed-skipped,
                             wall_s=sum(p["wall_s"] for p in observations))
     return {**zscore.counts(r["outcome"] for r in rows), "phases": phases,
+            "guard_strikes": sum(r["outcome"] == "guard_strike" for r in rows),
             "missions_passed": sum(r["passed"] for r in rows)}
 
 
@@ -160,6 +164,25 @@ def same_fork(a, b):
     return left.shape == right.shape and np.allclose(left, right, rtol=0, atol=1e-8)
 
 
+def nominal_guard_access(family, p, cfg, corbel):
+    """Check every planned seat, including courses the dynamic builds never reach."""
+    parts, checks, errors = {}, {}, {}
+    layouts = {"corbel": corbel, **{key: make() for key, make in structures.CATALOG.items()}}
+    for name, structure in layouts.items():
+        try:
+            order = structure.bricks if structure.ordered else assembly_order(family, p, structure)
+        except ValueError as exc:
+            errors[name] = str(exc)
+            continue
+        for b in order:
+            key = family.part_for(b.course, b.direction)
+            if key not in parts:
+                fork, collision, *_ = _fork_fit(family, p, key, cfg)
+                parts[key] = (fork, collision + B.sim_bodies(family, p, key).soft_collision)
+        checks[name] = placement_clearances(family, p, order, parts)
+    return checks, errors
+
+
 def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
     start = perf_counter()
     lat = family.lattice(p)
@@ -167,7 +190,7 @@ def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
                   wrist_defaults="guess", gripper=asdict(cfg), settings=asdict(settings),
                   mean_box=boxes.default_boxes()["placement"]["mean"].to_dict(),
                   approach_source="error-exp3-r4.json", hover_source="hover-exp3-r2.json",
-                  rows=[], cases={}, first_reach_by_radius={}, builds={}, scores={}, violations=[])
+                  rows=[], cases={}, mission_cases={}, first_reach_by_radius={}, builds={}, scores={}, violations=[])
     if lat.span_voxels != structures.SPAN:
         return dict(report, mission_passed=False, violations=["held_corbel_span"], seconds=perf_counter()-start)
     structure = structures.corbel(settings.reaches + 1, lat.span_voxels)
@@ -198,13 +221,15 @@ def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
         targets = mean_samples(settings.samples, settings.seed)
         for name, placements in (("full", (0, 1)), ("plus_bare", ("plus_bare",)),
                                  ("minus_bare", ("minus_bare",)), ("first_reach", ("plus_anchored",))):
-            rows = []
+            rows, missions = [], []
             for placement in placements:
                 rig = make_rig(placement)
                 rows.extend(record(name, placement, [rig.trial(s) for s in targets]))
-                empirical.extend(record("mission_" + name, placement, [rig.trial(seed=s) for s in sample_seeds]))
+                missions.extend(record("mission_" + name, placement, [rig.trial(seed=s) for s in sample_seeds]))
                 if placement == "plus_anchored":
                     first_reach = rig
+            empirical.extend(missions)
+            report["mission_cases"][name] = case_summary(missions)
             report["cases"][name] = case_summary(rows)
             report["scores"][f"held_{name}_z"] = report["cases"][name]["Z"]
 
@@ -221,7 +246,14 @@ def heldmap(family, p, cfg=HeldConfig(), settings=HeldMapSettings()):
             report["builds"][key] = dict(
                 **reach_summary([b["steps"] for b in builds], settings.reaches, lat.U_mm),
                 missions=reach_summary([b["mission_steps"] for b in builds], settings.reaches, lat.U_mm),
+                guard_strikes=sum(s["trial"]["outcome"] == "guard_strike" for b in builds for s in b["stages"]),
                 builds=builds)
+        checks, errors = nominal_guard_access(family, p, cfg, structure)
+        report["nominal_guard_access"] = checks
+        if errors:
+            report["guard_access_order_errors"] = errors
+        if errors or any(row["blocked_by"] for rows in checks.values() for row in rows):
+            report["violations"].append("held_guard_access")
     except ForkFitError as exc:
         return dict(report, mission_passed=False, violations=["held_gripper_fit"], fit_error=str(exc),
                     seconds=perf_counter()-start)

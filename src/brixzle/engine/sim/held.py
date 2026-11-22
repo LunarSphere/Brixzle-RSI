@@ -16,7 +16,7 @@ from scipy.spatial.transform import Rotation
 from brixzle.engine.predictor.pickup import _seat, _fork_region, capture_region
 from brixzle.engine.structures import brick_name
 from brixzle.engine.sim import trials as T
-from brixzle.engine.sim import approach_error
+from brixzle.engine.sim import approach_error, guards
 from brixzle.engine.sim.config import read_json
 from brixzle.engine.sim.drone import CF21B, DroneConfig, G, HoverGains
 from brixzle.engine.sim.fork import ForkGuide, ForkParams, build_fork
@@ -97,7 +97,7 @@ class WristConfig:
 class HeldConfig:
     wrist: WristConfig = field(default_factory=WristConfig)
     physics: T.Physics = field(default_factory=lambda: T.TrialConfig().physics)
-    drone: DroneConfig = field(default_factory=DroneConfig)
+    drone: DroneConfig = field(default_factory=guards.guarded_drone)
     transport_m_s: float = 0.08
     descent_m_s: float = PickConfig.v_lift
     press_depth_m: float = 0.003        # maximum commanded distance below the seat
@@ -112,6 +112,7 @@ class HeldConfig:
     release_at_contact: bool = False
     guides: tuple[ForkGuide, ...] = ()
     station: FunnelStation | None = field(default_factory=FunnelStation)
+    clear_guard_m: float = ForkParams.clear_guard * MM
 
     def __post_init__(self):
         if self.station is not None and not isinstance(self.station, FunnelStation):
@@ -124,6 +125,8 @@ class HeldConfig:
             raise ValueError("drone needs positive body mass")
         if not math.isfinite(self.oblique_yaw_rad) or not 0 <= self.oblique_yaw_rad < math.pi/2:
             raise ValueError("oblique fork yaw must be in [0, pi/2)")
+        if not math.isfinite(self.clear_guard_m) or self.clear_guard_m < guards.MIN_CLEARANCE_M:
+            raise ValueError("guard clearance must be finite and at least 1 mm")
         positive = (self.transport_m_s, self.descent_m_s, self.press_force_N, self.release_m_s, self.tine_d_m,
                     self.tip_engagement_m)
         nonnegative = (self.press_depth_m, self.hold_s, self.wobble_m, self.wobble_hz)
@@ -183,7 +186,8 @@ def _fork_fit(family, p, part, cfg):
             raise ForkFitError("held fork needs through-Y windows or two fitting bores at least 16 mm across")
         seats = [(b.x_mm, b.z_mm + b.radius_mm - r) for b in bores]
         aim = (0., -min(b.radius_mm-r for b in bores))
-    fork = build_fork(family, p, part, ForkParams(tine_d=2*r), tines=seats, y_tip_mm=tip,
+    params = ForkParams(tine_d=2*r, clear_guard=cfg.clear_guard_m/MM)
+    fork = build_fork(family, p, part, params, tines=seats, y_tip_mm=tip,
                       with_drone=False, tine_dx_dy=slope, guides=cfg.guides)
     collision = bored_collision(core, p, part)
     if cap:
@@ -220,6 +224,7 @@ def _carrier(cfg, fork):
         ET.SubElement(base, "freejoint", name="carrier_free")
         ET.SubElement(base, "inertial", mass=str(cfg.drone.mass_g*1e-3), pos="0 0 0",
                       diaginertia=_numbers(HoverGains().J))
+        guards.add_airframe(base)
         body = ET.SubElement(base, "body", name="wrist", quat=_numbers(_wxyz(brick_in_drone)),
                              pos=_numbers(brick_in_drone.apply(-MM*np.array(fork["drone_pos_mm"]))))
         # Lumped TPU carriage mass/inertia, guesses until #193 (SI).
@@ -244,6 +249,14 @@ class _ContactLoads:
     fork_brick_N: float
     fork_strike_N: float
     fork_force_N: np.ndarray  # net world-frame contact force on the fork alone
+
+
+class _FlightFailure(Exception):
+    """A collision or unsafe carried clearance ends the current phase immediately."""
+    def __init__(self, outcome, **metrics):
+        super().__init__(outcome)
+        self.outcome = outcome
+        self.metrics = metrics
 
 
 class _ForceWindow:
@@ -272,7 +285,7 @@ class HeldRig:
 
             self.target = placement
             self.placed = structure.bricks[:structure.bricks.index(placement)]
-            base, = structure.bases
+            bases = structure.bases
             graph = connectivity(structure, lat.span_voxels)
             prior = {}
             self.refs = []
@@ -289,10 +302,11 @@ class HeldRig:
             shift = placement.i0 - target.i0
             self.placed = [replace(b, i0=b.i0+shift, direction=placement.direction) for b in placed]
             self.target = placement
-            base = (base[0]+shift, base[1]+shift, placement.direction)
+            bases = [(base[0]+shift, base[1]+shift, placement.direction)]
         else:
             layout = T.edge_layout if placement in T.EDGE_CASES else T.rig_layout
             self.placed, self.target, base = layout(lat, placement)
+            bases = [base]
         self.j = len(self.placed)
         parts = [family.part_for(b.course, b.direction) for b in (*self.placed, self.target)]
         part = parts[-1]
@@ -329,7 +343,7 @@ class HeldRig:
                 raise ForkFitError(str(exc)) from exc
         self.station_pieces_mm = pieces
         fixture = [self.station_R.apply(piece) + self.station/MM for piece in pieces]
-        self.model, _, self.info = build_scene(family, p, bodies, [base], len(parts), self.cfg.physics,
+        self.model, _, self.info = build_scene(family, p, bodies, bases, len(parts), self.cfg.physics,
                                                body_parts=[*parts[:-1], "held_target"], visual=False,
                                                extra=_carrier(self.cfg, self.fork), static=fixture)
         m = self.model
@@ -349,6 +363,7 @@ class HeldRig:
         self.drone_in_brick = Rotation.from_euler("z", -math.atan(self.fork["tine_dx_dy"]))
         self.fork_axis = np.array([self.fork["tine_dx_dy"], 1., 0.])
         self.mount = np.array(self.fork["drone_pos_mm"])*MM
+        self.airframe_geoms = m.geom_bodyid == self.carrier
         self.fork_geoms = m.geom_bodyid == self.jaw
         self.target_geoms = m.geom_bodyid == self.target_body
         self.assembly_geoms = self.target_geoms | self.fork_geoms
@@ -366,7 +381,12 @@ class HeldRig:
         # The convex envelope closes the windows: a tine inside a hole is still
         # engaged even if it momentarily has no contact with the brick.
         all_pieces = collision + bodies[part].soft_collision
-        self.envelope = ConvexHull(np.vstack(all_pieces)*MM).equations
+        vertices = np.vstack(all_pieces)*MM
+        hull = ConvexHull(vertices)
+        self.envelope = hull.equations
+        self.brick_vertices = vertices[hull.vertices]
+        if self.mount[2] - guards.GUARD_HALF_H - vertices[:, 2].max() < guards.MIN_CLEARANCE_M - 1e-12:
+            raise ForkFitError("carried brick does not clear the guard bottom by 1 mm")
         parked = [self.carrier, m.body("wrist").id, self.jaw]
         m.body_gravcomp[parked] = 1.
         for i, b in enumerate(self.placed):
@@ -400,6 +420,51 @@ class HeldRig:
 
         solids = [hull_solid(p[ConvexHull(p).vertices]) for p in self.station_pieces_mm]
         return solids[0].fuse(*solids[1:]).clean()
+
+    def _check_airframe(self):
+        """Abort on the first physical contact, even during an unobserved stroke or hover."""
+        contacts = self.data.contact
+        pair = contacts.geom
+        hits = self.airframe_geoms[pair]
+        if not hits.any():
+            return
+        active = np.flatnonzero(hits.any(axis=1) & (contacts.efc_address >= 0))
+        if active.size:
+            # A frame and a disk can touch in the same solver step. Count the guard strike.
+            pairs = [pair[i] if hits[i, 0] else pair[i, ::-1] for i in active]
+            frame = self.model.geom("cf_frame").id
+            g, other = next((p for p in pairs if p[0] != frame), pairs[0])
+            details = dict(geom=self.model.geom(g).name, other_geom=self.model.geom(other).name)
+            if other in self.owner:
+                j = self.owner[other]
+                obstacle = "payload" if j == self.j else "placed_brick"
+                details["brick"] = brick_name(self.target if j == self.j else self.placed[j])
+            elif other in self.info["static_geoms"]:
+                obstacle = "station"
+            elif other == self.info["floor"]:
+                obstacle = "ground"
+            else:
+                obstacle = "structure"
+            details["obstacle"] = obstacle
+            raise _FlightFailure("frame_strike" if g == frame else "guard_strike", strike=details)
+
+    def brick_guard_clearance_m(self):
+        """Highest actual brick vertex below the guard bottom, along the drone's local Z."""
+        d = self.data
+        up = d.xmat[self.carrier].reshape(3, 3)[:, 2]
+        brick_up = up @ d.xmat[self.target_body].reshape(3, 3)
+        return float((d.xpos[self.carrier]-d.xpos[self.target_body]) @ up
+                     - guards.GUARD_HALF_H - (self.brick_vertices @ brick_up).max())
+
+    def _check_carried_clearance(self):
+        gap = self.brick_guard_clearance_m()
+        if gap < guards.MIN_CLEARANCE_M:
+            # During pickup and seating the station or the structure can carry
+            # the load. The hanging clearance applies when the fork supports it.
+            loads = self._contacts()
+            if loads.fork_brick_N > 0 and not loads.supported:
+                raise _FlightFailure("guard_clearance", guard_clearance_m=gap)
+        return gap
 
     def _contacts(self, *, fork_only=False):
         """Resolve assembly contacts, or just the contacts loading the fork during engagement."""
@@ -511,6 +576,7 @@ class HeldRig:
         delta = end-origin
         duration = max(dt, float(np.linalg.norm(delta))/speed)
         steps = math.ceil((duration+hold)/dt)
+        min_clearance = math.inf
         for i in range(1, steps+1):
             t = i*dt
             s, ds, dds = minimum_jerk(t, duration)
@@ -524,9 +590,15 @@ class HeldRig:
             self.orientation = Rotation.from_rotvec(s*turn)*rotation if turning else orientation
             self._control(pos, vel, acc, self.orientation, loaded, pressing)
             mujoco.mj_step(m, d)
+            self._check_airframe()
+            if loaded:
+                min_clearance = min(min_clearance, self._check_carried_clearance())
             if observe and observe():
                 break
         mujoco.mj_forward(m, d)
+        self._check_airframe()
+        if loaded:
+            return min(min_clearance, self._check_carried_clearance())
 
     def _carry(self):
         """Brick relative to the physical fork, plus absolute tilt from level (R12)."""
@@ -544,26 +616,34 @@ class HeldRig:
                     and abs(offset[1]) <= PickConfig.carry_y_mm*MM
                     and angle <= math.radians(PickConfig.carry_angle_deg))
 
-    def _approach(self, pick, station):
-        cfg, m, d = self.cfg, self.model, self.data
-        rot = self.station_R
-        pick_R = Rotation.from_euler("yz", [pick.dpitch_rad, pick.dyaw_rad])*rot
-        approach = station + rot.apply(self.mount+self.aim) + [pick.dx_m, pick.dy_m, pick.dz_m]
-        back = self.stroke_m + PickConfig.standoff_mm*MM
-        start_back = 2*back
-        if cfg.station:
-            back = self.entry_m + cfg.station.mouth_width_m/3
-            start_back = back + self.stroke_m
-        standoff = approach + pick_R.apply(-back*self.fork_axis)
+    def _station_standoff(self):
+        if self.cfg.station:
+            return self.entry_m + self.cfg.station.mouth_width_m/3
+        return self.stroke_m + PickConfig.standoff_mm*MM
+
+    def _start_hover(self, station):
+        rot, d = self.station_R, self.data
+        back = self._station_standoff()
+        start_back = back + (self.stroke_m if self.cfg.station else back)
         self.command = station + rot.apply(self.mount + self.aim - start_back*self.fork_axis)
-        if cfg.station:
-            standoff[2] += cfg.station.height_m
-            self.command[2] += cfg.station.height_m
+        if self.cfg.station:
+            self.command[2] += self.cfg.station.height_m
         self.orientation = rot
         d.qpos[self.fa:self.fa+3] = self.command
         d.qpos[self.fa+3:self.fa+7] = _wxyz(rot*self.drone_in_brick)
         d.qvel[self.fv:self.fv+6] = 0.
-        mujoco.mj_forward(m, d)
+        mujoco.mj_forward(self.model, d)
+        self._check_airframe()
+
+    def _approach(self, pick, station):
+        cfg, d = self.cfg, self.data
+        rot = self.station_R
+        pick_R = Rotation.from_euler("yz", [pick.dpitch_rad, pick.dyaw_rad])*rot
+        back = self._station_standoff()
+        approach = station + rot.apply(self.mount+self.aim) + [pick.dx_m, pick.dy_m, pick.dz_m]
+        standoff = approach + pick_R.apply(-back*self.fork_axis)
+        if cfg.station:
+            standoff[2] += cfg.station.height_m
         self._move(standoff, pick_R, cfg.transport_m_s, hold=cfg.hold_s)
         tracking = np.linalg.norm(d.xpos[self.carrier]-standoff)
         reached = tracking <= PickConfig.insert_tol_mm*MM
@@ -625,6 +705,7 @@ class HeldRig:
         captured = (not loads.supported and all(inserted) and rise > (raised[2]-approach[2])/2
                     and loads.fork_brick_N > 0 and not self._withdrawn())
         centred = self._centred(offset, angle)
+        clearance = self.brick_guard_clearance_m()
         gentle = sustained_engage <= self.force_cap
         grip = captured and all(after_lift) and centred and gentle
         outcome = "picked"
@@ -632,11 +713,15 @@ class HeldRig:
             outcome = "missed"
         elif not all(after_lift):
             outcome = "loose"
+        elif clearance < guards.MIN_CLEARANCE_M:
+            outcome = "guard_clearance"
+            grip = False
         elif not centred:
             outcome = "off_centre"
         elif not grip:
             outcome = "forceful"
         return dict(passed=bool(grip), outcome=outcome, captured=bool(captured), station_contact=station_contact,
+                    guard_clearance_m=clearance,
                     tines_inserted=inserted,
                     tines_after_lift=after_lift, rise_m=float(rise), peak_engage_N=peak_engage,
                     sustained_engage_N=sustained_engage, within_force_limit=gentle,
@@ -655,7 +740,8 @@ class HeldRig:
             peak_angle = max(peak_angle, angle)
             secure &= self._centred(offset, angle)
 
-        self._move(above, orientation, cfg.transport_m_s, loaded=True, observe=watch_carry, hold=PickConfig.hold_s)
+        clearance = self._move(above, orientation, cfg.transport_m_s, loaded=True,
+                               observe=watch_carry, hold=PickConfig.hold_s)
         tw = cfg.drone.t_w(self.payload*1000)
         budget = self.payload*1000 <= min(cfg.drone.payload_max_g, CF21B.payload_max_g) and tw >= cfg.drone.tw_min
         loads = self._contacts()
@@ -663,7 +749,10 @@ class HeldRig:
         attached = not loads.supported and loads.fork_brick_N > 0 and not self._withdrawn()
         transport = attached and all(after_transport) and secure and budget
         outcome = "carried" if transport else "loose" if budget else "over_budget"
-        return dict(passed=bool(transport), outcome=outcome, attached=bool(attached), carry_force_N=loads.fork_brick_N,
+        if clearance < guards.MIN_CLEARANCE_M:
+            transport, outcome = False, "guard_clearance"
+        return dict(passed=bool(transport), outcome=outcome, attached=bool(attached),
+                    min_guard_clearance_m=clearance, carry_force_N=loads.fork_brick_N,
                     tw=tw, tines_after_transport=after_transport, peak_offset_m=peak_offset,
                     peak_angle_rad=peak_angle, travel_m=travel)
 
@@ -716,6 +805,7 @@ class HeldRig:
         result = dict(outcome=None, post_departure_outcome=None, err_mm=None, angle_deg=None, settled=False,
                       phases=phases, label="simulated, uncalibrated contact",
                       wrist_defaults="guess", gripper_mass_kg=self.gripper_kg, payload_kg=self.payload,
+                      thrust_margin_N=self.cfg.drone.thrust_margin_N(self.payload*1000),
                       force_cap_N=self.force_cap, fork_layout="oblique" if self.fork["tine_dx_dy"] else "through",
                       fork_yaw_rad=-math.atan(self.fork["tine_dx_dy"]), sample_source=sources,
                       pickup_sample=asdict(pick), placement_sample=asdict(sample))
@@ -734,19 +824,30 @@ class HeldRig:
             return finish()
         start = time.perf_counter()
         station = body_pose(self.data, self.info, self.j)[0]*MM
-        engage, approach = self._approach(pick, station)
-        record("approach", approach)
-        goal, orientation, lift = self._target(sample)
-        above = goal + [0., 0., lift]
-        grip = self._grip(engage, station, above, lift)
-        record("grip", grip)
-        if not grip["captured"]:
+        phase = "takeoff"
+        try:
+            self._start_hover(station)
+            phase = "approach"
+            engage, approach = self._approach(pick, station)
+            record("approach", approach)
+            goal, orientation, lift = self._target(sample)
+            above = goal + [0., 0., lift]
+            phase = "grip"
+            grip = self._grip(engage, station, above, lift)
+            record("grip", grip)
+            if not grip["captured"]:
+                return finish()
+            phase = "transport"
+            transport = self._transport(above, orientation)
+            record("transport", transport)
+            if not transport["attached"]:
+                return finish()
+            phase = "release"
+            release = self._release(goal, orientation, lift)
+        except _FlightFailure as failure:
+            record(phase, dict(passed=False, outcome=failure.outcome))
+            result.update(outcome=failure.outcome, **failure.metrics)
             return finish()
-        transport = self._transport(above, orientation)
-        record("transport", transport)
-        if not transport["attached"]:
-            return finish()
-        release = self._release(goal, orientation, lift)
         result.update(release, carry_force_N=transport["carry_force_N"])
         clean = (release["cleared_along_y"] and release["stayed_seated"]
                  and release["release_drift_m"] <= PickConfig.drift_mm*MM)
@@ -839,11 +940,14 @@ class HeldRig:
             zero = np.zeros(3)
 
             def hover():
+                self._check_airframe()
                 self._control(self.command, zero, zero, orientation, False, False)
 
             metrics = T.run_until_settled(m, d, self.info, self.j, self.tol, self.owner,
                                           watch=range(self.j), before_step=hover)
+            self._check_airframe()
             mujoco.mj_forward(m, d)
+            self._check_airframe()
             if self._withdrawn():
                 settled = metrics["settled"]
                 outcome = self._outcome(floor or metrics["floor"])[0]
