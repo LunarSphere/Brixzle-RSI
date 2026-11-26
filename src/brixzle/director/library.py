@@ -216,8 +216,12 @@ def add_design(spec, grid_dir, lib, builds=None, name=None, renders=True):
     fam = TC.load(spec)
     root, module = TC._root_module(spec)
     module_file = Path(root) / module / "family.py"
-    entry = entry_from(name=name or fam.name, spec=spec, origin=f"grid run {grid_dir.name}", grid=grid, builds=builds,
-                       idea=_idea(_docstring(module_file)), sources={"grid": str(grid_dir), "code": str(module_file)})
+    run_dir = grid_dir.parent.parent if grid_dir.name == "grid" and grid_dir.parent.name == "measured" else grid_dir
+    measured = grid_dir.parent / "measured.json"  # a verify's measurement beside its grid: the constraints broken
+    violations = json.loads(measured.read_text()).get("violations") if measured.exists() else ()
+    entry = entry_from(name=name or fam.name, spec=spec, origin=f"run {run_dir.name}", grid=grid, builds=builds,
+                       idea=_idea(_docstring(module_file)), violations=violations,
+                       sources={"grid": str(grid_dir), "code": str(module_file)})
     out = write_entry(lib, entry, {"family.py": module_file, **_bases(module_file), **_grid_files(grid_dir)})
     if renders:
         _renders(spec, out)
