@@ -152,3 +152,8 @@ def test_a_design_filed_from_a_verify_folder_names_the_run_and_its_broken_constr
     out = LB.add_design("ab", measured / "grid", tmp_path / "lib", renders=False)
     card = (out / "card.md").read_text()
     assert "from run seed-ab" in card and "gripper_interface" in card
+    diag = tmp_path / "diagnosis.md"
+    diag.write_text("Mechanism: the tooth props on the bare end face\n")
+    out = LB.add_design("ab", measured / "grid", tmp_path / "lib", renders=False, diagnosis=diag, origin="campaign 1")
+    card = (out / "card.md").read_text()
+    assert "the tooth props on the bare end face" in card and "from campaign 1" in card
