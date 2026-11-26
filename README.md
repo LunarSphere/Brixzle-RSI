@@ -41,7 +41,7 @@ The bounds are enforced by code, not by the prompts: while a run is active, a ho
 
 ### The score
 
-- **`green_mm`**, the headline: the largest placement error, as a disc radius about the aim, inside which every free drop seats with no jam, wrong valley or fall, on every placement type. The weakest placement sets it. The placement types are the full seat (stacking), both bare edges, and three bricks of a back-first corbel (the first reach, a later back brick and the second reach). A lone failure that does not repeat at other frictions is tolerated as solver noise.
+- **`green_mm`**, the headline: the largest placement error, as a disc radius about the aim, inside which every free drop seats with no jam, wrong valley or fall, on every placement type. The weakest placement sets it. The placement types are the full seat (stacking), both bare edges, and three bricks of a back-first corbel (the first reach, a later back brick and the second reach). Only a failure that repeats counts: each failure nearest the aim is rerun at other frictions with small shifts, and one that does not come back is solver noise.
 - Within a band, designs rank by every placement's green zone, weakest first (ties within 1.25 mm), then by the overhang and stack height that the noisy builds reach at 16 mm, then by **Z**.
 - **Z = (seated − jammed) / N**, per ring at 16, 28 and 40 mm, counted by cell area. It runs from −1 to 1, and shows how much of the error disc works beyond the green zone.
 - The minimum worth printing is a green zone of 16 mm, a stack of 3 and an overhang of 3.
