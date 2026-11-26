@@ -30,9 +30,9 @@ class RuleSettings:
     mass_min: float = 1.         # g (R9)
     mass_max: float = 25.        # g (R9)
     payload_max: float = 35.     # g, the drone's payload limit: brick plus gripper (R10; issue #9)
-    # g counted for the gripper until it is designed (issue #24). A guess: the fork model in
-    # engine/sim/fork.py gives 3.3 to 4.6 g on the three registered families, rounded up.
-    gripper_allowance: float = 5.
+    # g counted for the gripper and the brick's steel insert: engine/gripper_spec.py's magnet
+    # gripper (10 g) and insert (0.5 g), guesses until the bench tests (#206).
+    gripper_allowance: float = 10.5
     min_feature: float = 1.2     # printable wall (3 perimeters @ 0.4 mm)
     hang_margin: float = 1.0     # the carrying points must sit this far above the COM (mm)
     carry_opening_min: float = 5.0  # mm: a carrying opening fits a circle this wide (issue #87)
@@ -54,7 +54,8 @@ def shared_margins(family: Family, p, part, bodies: SimBodies, s: RuleSettings =
     # assumed (issue #50), so its mass is an allowance.
     out["R10.grippable"] = float(len(features) - 1)
     out["R10.within_payload"] = s.payload_max - (bodies.mass_g + s.gripper_allowance)
-    out.update(carrying_margins(features, bodies, s))
+    # The fork's two carrying openings (issue #87) are no longer required: the gripper is a magnet
+    # (#206, engine/gripper_spec.py). carrying_margins stays for reports on fork-carried designs.
     bores = grip_bores(features)
     if bores:
         # R13: printable material around every bore, to the outline and to any lightening hole

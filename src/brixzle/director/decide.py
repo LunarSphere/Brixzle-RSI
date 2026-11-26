@@ -20,6 +20,7 @@ from pathlib import Path
 from brixzle.director import run as RN
 
 ACTIONS = ("fix", "push", "stop")
+NEW_FAMILY = "new_family"
 MAX_UNITS = 3
 TIGHTER = {  # setting -> +1 if a larger value is tighter, -1 if a smaller one is
     "max_length_mm": -1, "max_release_mm": -1, "min_arm_overhang": +1, "max_bridge_riser_mm": -1,
@@ -51,12 +52,91 @@ def problems(decision, goal):
     return ""
 
 
+def is_new_family(decision):
+    return not decision.get("design") and list(decision.get("may_change") or []) == [NEW_FAMILY]
+
+
+def explore_due(run, goal, iteration):
+    """Why iteration ``iteration`` must try a new family (#206), or "" if it need not: the archive is
+    empty (nothing to refine), every ``explore_every``-th iteration, or after ``stall_explore``
+    iterations in a row that added nothing to the archive. Only for the error-radius goal."""
+    settings = goal.get("settings") or {}
+    if settings.get("stage") != "radius":
+        return ""
+    archive = RN.read_json(Path(run) / "archive.json", {"members": [], "offers": []})
+    if not archive.get("members"):
+        return "the archive is empty, so there is nothing to refine"
+    every = int(settings.get("explore_every") or 0)
+    if every and iteration % every == 0:
+        return f"every {every}th iteration tries a new family"
+    stall = int(settings.get("stall_explore") or 0)
+    offers = [o for o in archive.get("offers", []) if str(o.get("name", "")).startswith("iter-")]
+    if stall and len(offers) >= stall and not any(o.get("kept") for o in offers[-stall:]):
+        return f"the last {stall} iterations added nothing to the archive"
+    return ""
+
+
+RULES_VERSION = "206"  # which requirements and score a design was judged under (#206)
+
+
+def design_line(run, n):
+    """One line for the record of designs tried (#206): iteration n's design, where it stopped and
+    why (the critic's ``Mechanism:`` line), or None if it was not measured."""
+    run = Path(run)
+    d = run / f"iter-{int(n):02d}"
+    v = RN.read_json(d / "verified.json")
+    if not v or not v.get("measured"):
+        return None
+    m, brief = v["measured"], RN.read_json(d / "brief.json", {})
+    mechanism = None
+    diag = d / "diagnosis.md"
+    if diag.exists():
+        for line in diag.read_text().splitlines():
+            if line.strip().lower().startswith("mechanism:"):
+                mechanism = line.split(":", 1)[1].strip()[:300]
+                break
+    r = m.get("radius") or {}
+    return {"time": RN.now(), "run": run.name, "iteration": int(n), "spec": m.get("spec"),
+            "parent": brief.get("parent") or "", "new_family": brief.get("may_change") == [NEW_FAMILY],
+            "brief": (brief.get("brief") or "")[:300], "r90_mm": m.get("r90_mm"), "weakest": r.get("weakest"),
+            "overhang_steps": m.get("overhang_steps"), "stack_courses": m.get("stack_courses"),
+            "violations": m.get("violations"), "kept": (v.get("offer") or {}).get("kept"),
+            "reason": (v.get("offer") or {}).get("reason"), "mechanism": mechanism, "rules": RULES_VERSION}
+
+
+def log_design(run, n):
+    """Append iteration n's line to ``<run>/designs.jsonl`` and to the shared ``runs/designs.jsonl``
+    (runs/ is git-ignored, so later runs read it), once."""
+    run = Path(run)
+    line = design_line(run, n)
+    if line is None:
+        return None
+    mine = run / "designs.jsonl"
+    if mine.exists() and any(json.loads(x).get("iteration") == line["iteration"]
+                             for x in mine.read_text().splitlines() if x.strip()):
+        return line
+    text = json.dumps(line, default=str) + "\n"
+    with open(mine, "a") as f:
+        f.write(text)
+    shared = run.resolve().parents[1] / "designs.jsonl"
+    with open(shared, "a") as f:
+        f.write(text)
+    return line
+
+
 def record(run, decision):
     run = Path(run)
     goal = RN.read_json(run / "goal.json")
     why = problems(decision, goal)
+    if not why and decision.get("action") != "stop":
+        due = explore_due(run, goal, RN.read_json(run / "next.json", {}).get("iteration", 0) + 1)
+        if due and not is_new_family(decision):
+            why = (f"the next iteration must try a new family ({due}): set design to \"\" and "
+                   f"may_change to [\"{NEW_FAMILY}\"], with a brief for an original concept")
     if why:
         return {"ok": False, "reason": why}
+    if (goal.get("settings") or {}).get("stage") == "radius":
+        log_design(run, RN.read_json(run / "next.json", {}).get("iteration", 0))
     row = {**decision, "time": RN.now()}
     with open(run / "decisions.jsonl", "a") as f:
         f.write(json.dumps(row, default=str) + "\n")

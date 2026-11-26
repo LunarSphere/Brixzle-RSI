@@ -38,6 +38,8 @@ class GateSettings:
     jitter_mm: float = A.JITTER_MM
     aim_at_supporter: bool = True     # drops aim at the supporter's measured pose (#137; maintainer, 2026-11-16)
     overhang_build: str = "corbel"    # 'corbel': back-first, as the maintainer's lab builds (#137); 'staircase'
+    structures: tuple = NAMES         # which of NAMES to build; the MVP gate (#206) builds the tower and the overhang
+    held: bool = False                # held release for every brick (trials.TrialConfig.held, #206)
 
     def __post_init__(self):
         ints = {"overhang_floor": self.overhang_floor, "overhang_ask": self.overhang_ask,
@@ -50,6 +52,8 @@ class GateSettings:
         if (len(self.wall) != 2 or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 1
                                            for v in self.wall)):
             raise ValueError(f"wall must be (bricks wide, courses high), got {self.wall!r}")
+        if not self.structures or set(self.structures) - set(NAMES):
+            raise ValueError(f"structures must be some of {NAMES}, got {self.structures!r}")
         if self.overhang_build not in ("corbel", "staircase"):
             raise ValueError(f"overhang_build must be 'corbel' or 'staircase', got {self.overhang_build!r}")
         if not (isinstance(self.jitter_mm, (int, float)) and math.isfinite(self.jitter_mm) and self.jitter_mm >= 0):
@@ -72,7 +76,7 @@ def _structures(family, p, settings, span):
                 "overhang": lambda: (S.corbel(settings.overhang_ask, span) if settings.overhang_build == "corbel"
                                      else S.overhang(settings.overhang_ask, 1, span))}
     out, errors = {}, {}
-    for name in NAMES:
+    for name in settings.structures:
         try:
             structure = builders[name]()
             A.assembly_order(family, p, structure)
@@ -92,7 +96,7 @@ def _corbel_steps(build):
 
 
 def _cfg(settings):
-    return T.TrialConfig(error=T.ErrorModel(ideal=True, track_supporter=settings.aim_at_supporter))
+    return T.TrialConfig(error=T.ErrorModel(ideal=True, track_supporter=settings.aim_at_supporter), held=settings.held)
 
 
 def _summary(name, res, settings):
@@ -132,7 +136,7 @@ def run_gate(family, p, settings: GateSettings = GateSettings(), runs="runs", se
                                       jitter_mm=settings.jitter_mm, workers=workers)
         results = {name: by_name[s.name] for name, s in structures.items()}
     builds = {}
-    for name in NAMES:
+    for name in settings.structures:
         if name in errors:
             builds[name] = {"passed": False, "status": "error", "error": errors[name], "complete": 0,
                             "n": 0, "statuses": [], "stable_bricks": [], "total": None, "max_sag_mm": [],
@@ -141,7 +145,7 @@ def run_gate(family, p, settings: GateSettings = GateSettings(), runs="runs", se
                 builds[name]["overhang_n"] = 0
         else:
             builds[name] = _summary(name, results[name], settings)
-    overhang_n = builds["overhang"]["overhang_n"]
+    overhang_n = builds["overhang"]["overhang_n"] if "overhang" in builds else None
     out = {"passed": all(b["passed"] for b in builds.values()), "overhang_n": overhang_n,
            "overhang_floor": settings.overhang_floor, "builds": builds, "family": family.name,
            "params": p.to_dict(), "settings": asdict(settings), "repeats": settings.repeats, "seed": seed,
@@ -261,3 +265,8 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+
+# The MVP gate (#206): a stack of 3 and a back-first overhang of at least 3, with ideal placement. The
+# running-bond wall, the bridge and the ring are reported for finalists only.
+MVP = GateSettings(structures=("tower", "overhang"), tower=3, overhang_floor=3, overhang_ask=6, held=True)

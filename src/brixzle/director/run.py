@@ -40,6 +40,16 @@ def read_json(path, default=None):
     return json.loads(path.read_text()) if path.exists() else default
 
 
+# The error-radius goal's settings (#206): the stage, how often an iteration must try a new family,
+# and after how many iterations that add nothing to the archive the next one must.
+RADIUS_DEFAULTS = {"stage": "radius", "explore_every": 3, "stall_explore": 2, "radius": {}, "builds": {}}
+NO_BASELINE = ("", "none", None)
+
+
+def has_baseline(goal):
+    return goal.get("baseline") not in NO_BASELINE
+
+
 def _git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
 
@@ -57,6 +67,8 @@ def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=
     if settings is not None and not isinstance(settings, dict):
         raise ValueError("campaign settings must be a JSON object")
     s = asdict(OB.Settings())
+    if not (settings and settings.get("stage")):
+        s.update(RADIUS_DEFAULTS)  # the error-radius goal (#206) unless the campaign names another stage
     if settings and settings.get("stage") == "held":
         from brixzle.director.archive import HELD_TERMS
         s["scored"] = HELD_TERMS
@@ -67,10 +79,11 @@ def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=
                                    "human_checkpoints": list(human_checkpoints),
                                    "history": [{"time": now(), "text": goal, "by": "maintainer"}]})
     (run / "STATE.md").write_text(f"# State of the problem\n\n## Goal\n\n{goal}\n\n## Best designs\n\n"
-                                  f"(none yet: the baseline {baseline} is scored first)\n\n## What failed and why\n\n(nothing yet)\n")
+                                  f"(none yet: {'the baseline ' + str(baseline) + ' is scored first' if baseline not in NO_BASELINE else 'the run starts from scratch'})\n\n## What failed and why\n\n(nothing yet)\n")
     (run / "decisions.jsonl").write_text("")
     write_json(run / "archive.json", {"members": [], "offers": []})
-    write_json(run / "next.json", {"step": "design", "iteration": 0, "parent": baseline, "time": now()})
+    write_json(run / "next.json", {"step": "design", "iteration": 0,
+                                   "parent": baseline if baseline not in NO_BASELINE else "", "time": now()})
     lock = {"run": str(run), "started": now(), "head": _git(repo, "rev-parse", "HEAD").strip(),
             "status": _git(repo, "status", "--porcelain"), "deny_read": list(deny_read), "repo": str(repo)}
     write_json(repo / GU.LOCK, lock)

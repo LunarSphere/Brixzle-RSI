@@ -99,14 +99,15 @@ def build_record(build):
             "seconds": float(build["seconds"])}
 
 
-def noisy_corbel(family, p, radius_mm, builds=17, steps=6, seed=0, workers=None):
-    """The corbel built ``builds`` times with error inside a disc of ``radius_mm`` (seeds seed..)."""
+def noisy_corbel(family, p, radius_mm, builds=17, steps=6, seed=0, workers=None, held=False):
+    """The corbel built ``builds`` times with error inside a disc of ``radius_mm`` (seeds seed..);
+    ``held``: every brick placed by held release (trials.TrialConfig.held, #206)."""
     from brixzle.engine import structures as S
     from brixzle.engine.sim import assemble as A
     from brixzle.engine.sim import trials as T
 
     t0 = time.time()
-    cfg = T.TrialConfig(error=radius_error(radius_mm))
+    cfg = T.TrialConfig(error=radius_error(radius_mm), held=held)
     res = A.repeat_builds(family, p, S.corbel(steps, family.lattice(p).span_voxels), cfg, n=builds, seed=seed,
                           jitter_mm=0.0, workers=workers)
     recs = [build_record(b) for b in res["builds"]]

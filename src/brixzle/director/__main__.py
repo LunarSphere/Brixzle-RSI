@@ -3,7 +3,8 @@
     init      --run DIR --goal TEXT [--baseline ab] [--iterations N] [--minutes M] [--deny-read P,..]
               [--checkpoints 3,6]
     status    --run DIR                       next step, budget used, archive
-    baseline  --run DIR                       score the baseline (registry family) and seed the archive
+    baseline  --run DIR                       score the baseline (registry family) and seed the archive;
+                                              with --baseline none the run starts from scratch
     check     --run DIR --iter N               the candidate changed only what its brief allows
     verify    --run DIR --iter N               measure the candidate, compare its claim, offer it to the archive
     decide    --run DIR --iter N               validate and log iter-NN/decision.json
@@ -93,6 +94,10 @@ def main(argv=None):
         d = run / "baseline"
         if (d / "verified.json").exists():
             out = RN.read_json(d / "verified.json")["offer"]
+        elif not RN.has_baseline(goal):  # from scratch (#206): nothing to score, the archive starts empty
+            d.mkdir(exist_ok=True)
+            out = {"kept": False, "reason": "no baseline: the run starts from scratch", "replaced": []}
+            RN.write_json(d / "verified.json", {"measured": None, "claim": None, "offer": out})
         else:
             m = _measure(run, goal["baseline"], d)
             out = _offer(run, {**_archive_terms(m), "violations": m["violations"],
@@ -141,6 +146,12 @@ def main(argv=None):
 
 def _measure(run, spec, directory, **options):
     settings = RN.read_json(run / "goal.json")["settings"]
+    if settings.get("stage") == "radius":
+        from brixzle.engine import radius as RA
+        rs = RA.RadiusSettings(**{k: tuple(v) if isinstance(v, list) else v
+                                  for k, v in (settings.get("radius") or {}).items()})
+        bs = RA.BuildSettings(**(settings.get("builds") or {}))
+        return VE.measure_radius(spec, directory / "measured", rs, bs)
     if settings.get("stage") == "held":
         baseline = RN.read_json(run / "baseline" / "verified.json", {})
         floor = settings.get("min_drop_z", VE.lookup(baseline, "measured.z.mean.Z"))
@@ -149,6 +160,8 @@ def _measure(run, spec, directory, **options):
 
 
 def _archive_terms(measured):
+    if measured.get("stage") == "radius":
+        return {k: measured.get(k) for k in ("r90_mm", "floor_passed", "overhang_steps", "stack_courses")}
     held = measured.get("held", {})
     counts = {f"held_{key}_z_counts": {k: value[k] for k in ("S", "J", "N")}
               for key, value in held.get("cases", {}).items()}
@@ -163,8 +176,11 @@ def _offer(run, rec):
         if previous["name"] == rec["name"]:
             return {key: saved for key, saved in previous.items() if key not in {"name", "time"}}
     settings = RN.read_json(Path(run) / "goal.json", {}).get("settings", {})
-    defaults = AR.HELD_TERMS if settings.get("stage") == "held" else AR.LEGACY_TERMS
-    arc = AR.Archive(data["members"], terms=settings.get("scored", defaults))
+    if settings.get("stage") == "radius":
+        arc = AR.BandArchive(data["members"])
+    else:
+        defaults = AR.HELD_TERMS if settings.get("stage") == "held" else AR.LEGACY_TERMS
+        arc = AR.Archive(data["members"], terms=settings.get("scored", defaults))
     res = arc.offer(rec)
     data["members"] = arc.members
     offers.append({"name": rec["name"], **res, "time": RN.now()})

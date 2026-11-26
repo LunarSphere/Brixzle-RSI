@@ -27,6 +27,8 @@ def repo(tmp_path):
 
 
 def _init(repo, **kw):
+    # These tests cover the #164/#165 objective; the error-radius goal (#206) has its own tests.
+    kw.setdefault("settings", {"stage": "legacy"})
     return RN.init_run(repo / "runs" / "rsi" / "r1", goal="Beat A/B on the #164 objective.", baseline="ab", repo=repo, **kw)
 
 

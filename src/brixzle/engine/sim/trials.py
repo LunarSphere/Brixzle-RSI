@@ -93,6 +93,15 @@ class TrialConfig:
                                                              contact_timeconst=0.004, iterations=50))
     error: ErrorModel = field(default_factory=ErrorModel)
     tolerance: Tolerance = field(default_factory=Tolerance)
+    # Held release (#206): the gripper holds the brick's attitude and lowers it no faster than
+    # held_speed until it stops sinking (below held_stop of that speed for held_dwell s), then lets
+    # go (the drone's yaw shears the magnet off). Sideways the brick is free: contacts steer it, as a
+    # compliant mount would. False: the free drop.
+    held: bool = False
+    held_speed: float = 0.1     # m/s, the drone's descent onto the seat (a guess)
+    held_stop: float = 0.2      # the fraction of held_speed below which the brick counts as stopped
+    held_dwell: float = 0.05    # s stopped before release
+    held_max: float = 1.5       # s held at most
 
 
 def release_pose(family: Family, p, placement, sample, seat_pose=None):
@@ -195,6 +204,38 @@ def _trace_rows(contacts):
     return [{**c, 'first_pos_mm': [float(v) for v in c['first_pos_mm']]} for c in rows]
 
 
+def held_hold(model, data, info, j, quat, cfg: TrialConfig):
+    """The ``before_step`` of a held release (TrialConfig.held), or None for a free drop. Each step
+    until release it resets brick j's attitude to ``quat`` and its spin to zero, and caps its
+    downward speed; it releases once the brick has stopped sinking for ``held_dwell`` s, or after
+    ``held_max`` s. ``hold.state`` records when it released."""
+    if not cfg.held:
+        return None
+    a, v = info['qpos'][j], info['qvel'][j]
+    q = np.asarray(quat, dtype=float)
+    state = {'released': False, 'stopped_since': None, 't0': data.time, 'release_s': None}
+
+    def hold():
+        if state['released']:
+            return
+        now = data.time - state['t0']
+        vz = float(data.qvel[v + 2])
+        if now > 0.01 and vz > -cfg.held_stop * cfg.held_speed:
+            state['stopped_since'] = state['stopped_since'] if state['stopped_since'] is not None else now
+        else:
+            state['stopped_since'] = None
+        if (state['stopped_since'] is not None and now - state['stopped_since'] >= cfg.held_dwell) or now >= cfg.held_max:
+            state['released'], state['release_s'] = True, now
+            return
+        data.qpos[a + 3:a + 7] = q
+        data.qvel[v + 3:v + 6] = 0.0
+        if vz < -cfg.held_speed:
+            data.qvel[v + 2] = -cfg.held_speed
+
+    hold.state = state
+    return hold
+
+
 def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), frames=None, fps=60,
                       contacts=None, names=None, before_step=None):
     """Step until brick j (and watched bricks) are still; return impact metrics.
@@ -255,7 +296,10 @@ def run_until_settled(model, data, info, j, tol: Tolerance, owner, watch=(), fra
         in_contact = touching
         speeds = [np.linalg.norm(data.qvel[info['qvel'][m]:info['qvel'][m]+3]) for m in moving]
         spins = [np.linalg.norm(data.qvel[info['qvel'][m]+3:info['qvel'][m]+6]) for m in moving]
-        if max(speeds) < tol.lin_speed and max(spins) < tol.ang_speed and in_contact:
+        held = getattr(before_step, 'state', None)
+        if held is not None and not held['released']:
+            still_since = None  # a held brick has not been placed yet (held_hold)
+        elif max(speeds) < tol.lin_speed and max(spins) < tol.ang_speed and in_contact:
             still_since = still_since if still_since is not None else data.time
             if data.time - still_since >= tol.settle_hold:
                 break
@@ -398,8 +442,11 @@ class DropRig:
         activate(model, data, info, self.j, pos, quat, linvel=sample['vel'])
         frames = [] if self.record else None
         contacts = {} if trace else None
+        hold = held_hold(model, data, info, self.j, quat, self.cfg)
         m = run_until_settled(model, data, info, self.j, self.cfg.tolerance, self.owner, frames=frames, fps=self.record_fps,
-                              watch=range(self.j), contacts=contacts, names=self.names)
+                              watch=range(self.j), contacts=contacts, names=self.names, before_step=hold)
+        if hold is not None:
+            m['held_release_s'] = hold.state['release_s']
         ref = (0, self.support) if self.support is not None else None
         err, angle = pose_error(family, p, data, info, self.j, self.target, ref)
         outcome = classify(family.lattice(p), err, angle, self.cfg.tolerance, m['floor'])
@@ -497,4 +544,7 @@ def capture_margin(family: Family, p, tolerance, level=0.9, step=1.0, course=0, 
 
 
 def as_dict(cfg: TrialConfig):
-    return {'physics': asdict(cfg.physics), 'error': asdict(cfg.error), 'tolerance': asdict(cfg.tolerance)}
+    out = {'physics': asdict(cfg.physics), 'error': asdict(cfg.error), 'tolerance': asdict(cfg.tolerance)}
+    if cfg.held:  # only when held, so a free drop's cache key and its records stay as they were
+        out['held'] = {'speed': cfg.held_speed, 'stop': cfg.held_stop, 'dwell': cfg.held_dwell, 'max': cfg.held_max}
+    return out
