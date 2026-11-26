@@ -70,7 +70,7 @@ requirements:
 
   - id: R11
     name: Coarse placement
-    text: "The drone places bricks with 16 to 40 mm of error, and a brick must seat by its own geometry; the score is the largest error at which every placement type seats at least 90 % of the time."
+    text: "The drone places bricks with 16 to 40 mm of error, and a brick must seat by its own geometry; the score is the largest error radius inside which every placement type always seats (the green zone)."
     checks: [sim]
 
   - id: R12

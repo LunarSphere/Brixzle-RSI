@@ -62,12 +62,12 @@ class Archive:
 # --- the archive by error band (#206) ---
 
 BAND_EDGES_MM = (16.0, 22.0, 28.0, 34.0)  # below 16, 16-22, 22-28, 28-34, 34 and above
-R90_TIE_MM = 1.0                          # r90 within this is a tie, broken by overhang, then stack
+GREEN_TIE_MM = 1.25                       # half a fine grid cell (#208): closer is a tie (see better)
 
 
-def band_of(r90_mm, edges=BAND_EDGES_MM):
+def band_of(green_mm, edges=BAND_EDGES_MM):
     """The band's name for an error radius: 'below 16', '16-22', ..., '34+'."""
-    r = float(r90_mm or 0.0)
+    r = float(green_mm or 0.0)
     if r < edges[0]:
         return f"below {edges[0]:g}"
     for lo, hi in zip(edges, edges[1:]):
@@ -77,9 +77,21 @@ def band_of(r90_mm, edges=BAND_EDGES_MM):
 
 
 def band_key(rec):
-    """How a band ranks its designs: error radius (ties within R90_TIE_MM), then overhang, then stack."""
-    return (round(float(rec.get("r90_mm") or 0.0) / R90_TIE_MM), float(rec.get("overhang_steps") or 0.0),
-            float(rec.get("stack_courses") or 0.0), float(rec.get("r90_mm") or 0.0))
+    """What a band ranks its designs on after the green zone: overhang, then stack, then the weakest
+    placement's Z within 16 mm, then the green zone itself."""
+    g = float(rec.get("green_mm") or 0.0)
+    z16 = (rec.get("z_rings") or {}).get("16")
+    return (float(rec.get("overhang_steps") or 0.0), float(rec.get("stack_courses") or 0.0),
+            -1.0 if z16 is None else float(z16), g)
+
+
+def better(a, b, tie_mm=GREEN_TIE_MM):
+    """``a`` ranks above ``b`` in a band: a green zone larger by at least ``tie_mm``, or a tie on it
+    and a larger ``band_key``."""
+    ga, gb = float(a.get("green_mm") or 0.0), float(b.get("green_mm") or 0.0)
+    if abs(ga - gb) >= tie_mm:
+        return ga > gb
+    return band_key(a) > band_key(b)
 
 
 class BandArchive:
@@ -93,10 +105,10 @@ class BandArchive:
     def offer(self, rec):
         if rec.get("violations"):
             return {"kept": False, "reason": f"infeasible: {rec['violations']}", "replaced": [], "band": None}
-        band = band_of(rec.get("r90_mm"), self.edges)
+        band = band_of(rec.get("green_mm"), self.edges)
         rec = {**rec, "band": band}
         same = [m for m in self.members if m.get("band") == band]
-        if same and band_key(same[0]) >= band_key(rec):
+        if same and not better(rec, same[0]):
             return {"kept": False, "reason": f"not better than {same[0]['name']} in band {band}", "replaced": [],
                     "band": band}
         gone = [m["name"] for m in same]

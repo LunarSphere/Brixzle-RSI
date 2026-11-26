@@ -58,8 +58,8 @@ def test_radius_search_runs_on_ab():
 # --- the band archive ---
 
 
-def _rec(name, r90, steps=3.0, stack=3.0, violations=()):
-    return {"name": name, "r90_mm": r90, "overhang_steps": steps, "stack_courses": stack, "violations": list(violations)}
+def _rec(name, green, steps=3.0, stack=3.0, violations=()):
+    return {"name": name, "green_mm": green, "overhang_steps": steps, "stack_courses": stack, "violations": list(violations)}
 
 
 def test_bands_name_the_error_ranges():
@@ -73,8 +73,8 @@ def test_the_band_archive_keeps_the_best_per_band():
     arc = AR.BandArchive()
     assert arc.offer(_rec("a", 18.0))["kept"]
     assert arc.offer(_rec("b", 30.0))["kept"]                      # another band: both stay
-    assert not arc.offer(_rec("c", 18.5, steps=2.0))["kept"]       # a tie on r90, fewer steps
-    res = arc.offer(_rec("d", 18.4, steps=5.0))                     # a tie on r90, more steps
+    assert not arc.offer(_rec("c", 18.5, steps=2.0))["kept"]       # a tie on the green zone, fewer steps
+    res = arc.offer(_rec("d", 18.4, steps=5.0))                     # a tie on the green zone, more steps
     assert res["kept"] and res["replaced"] == ["a"]
     assert arc.offer(_rec("e", 21.0))["kept"]                       # clearly more error in the same band
     assert not arc.offer(_rec("f", 39.0, violations=["mvp_gate"]))["kept"]
@@ -113,7 +113,7 @@ def test_a_new_run_defaults_to_the_radius_goal_and_can_start_from_scratch(repo, 
 
 
 def _decision(**kw):
-    d = {"action": "push", "design": "ab", "term": "r90_mm", "brief": "Lengthen the guide.",
+    d = {"action": "push", "design": "ab", "term": "green_mm", "brief": "Lengthen the guide.",
          "may_change": ["param:ramp"], "goal_change": None, "evidence": []}
     d.update(kw)
     return d
@@ -150,13 +150,40 @@ def test_each_decided_iteration_is_recorded_once_with_its_mechanism(repo):
     run = _run(repo)
     assert DE.record(run, _decision(action="fix", design="", may_change=["new_family"], brief="An original seat."))["ok"]
     d = run / "iter-01"
-    RN.write_json(d / "verified.json", {"measured": {"spec": "x:y", "r90_mm": 9.5, "radius": {"weakest": "plus_bare"},
+    RN.write_json(d / "verified.json", {"measured": {"spec": "x:y", "green_mm": 9.5, "grid": {"weakest": "plus_bare"},
                                                      "overhang_steps": 3.0, "stack_courses": 3.0, "violations": []},
                                         "claim": {"ok": True}, "offer": {"kept": True, "reason": "best in band below 16"}})
     (d / "diagnosis.md").write_text("# Diagnosis\n\nMechanism: the tooth props on the bare end face\n")
     assert DE.record(run, _decision(action="fix", design="", may_change=["new_family"], brief="Another idea."))["ok"]
     lines = [json.loads(x) for x in (run / "designs.jsonl").read_text().splitlines()]
     assert len(lines) == 1 and lines[0]["mechanism"] == "the tooth props on the bare end face"
-    assert lines[0]["new_family"] and lines[0]["rules"] == "206"
+    assert lines[0]["new_family"] and lines[0]["rules"] == "208"
+    assert lines[0]["green_mm"] == 9.5 and lines[0]["weakest"] == "plus_bare"
     shared = run.resolve().parents[1] / "designs.jsonl"
     assert len(shared.read_text().splitlines()) == 1
+
+
+def test_the_radius_measurement_scores_the_grid_and_builds_at_the_green_zone(tmp_path, monkeypatch):
+    from brixzle.agents import check_family as CF
+    from brixzle.director import verify as VE
+    from brixzle.engine import gridscore as GS
+    from brixzle.engine import gripper_spec as GSP
+    from brixzle.engine import structure_gate as SG
+    from brixzle.tools import core as TC
+
+    monkeypatch.setattr(CF, "check_in_subprocess", lambda root, module: {"ok": True, "violations": [], "mass_g": 9.0})
+    monkeypatch.setattr(TC, "load", lambda spec: type("F", (), {"defaults": None, "name": "fake"})())
+    monkeypatch.setattr(GSP, "target_check", lambda fam, p: {"violations": []})
+    monkeypatch.setattr(SG, "run_gate", lambda *a, **k: {"passed": True, "overhang_n": 3, "builds": [], "seconds": 1,
+                                                         "run": "r"})
+    fake = GS.search(lambda pts: ["seated" if abs(x) < 18 else "jammed" for _, x, _ in pts],
+                     GS.GridSettings(placements=("full", "corbel_reach")))
+    monkeypatch.setattr(GS, "grid_search", lambda fam, p, s, workers=None: {**fake, "drops_rows": [], "jams": None})
+    seen = {}
+    monkeypatch.setattr(RA, "noisy_builds", lambda fam, p, r, bs, workers=None: seen.setdefault(
+        "r", {"radius_mm": r, "overhang_steps": 3.0, "stack_courses": 3.0}))
+    m = VE.measure_radius("x:y", tmp_path / "measured", GS.GridSettings(placements=("full", "corbel_reach")))
+    assert m["green_mm"] == fake["green_mm"] and seen["r"]["radius_mm"] == fake["green_mm"]
+    assert m["weakest"] == fake["weakest"] and m["z_rings"]["16"] == 1.0
+    assert (tmp_path / "measured" / "grid" / "map-full.png").exists()
+    assert m["grid"]["maps"] and "r90_mm" not in m

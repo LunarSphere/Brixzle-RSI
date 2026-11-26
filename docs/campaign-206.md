@@ -42,8 +42,10 @@ same steps with Claude subagents (#205 will make it call Codex roles).
 - Iteration 1, every 3rd iteration and any iteration after two that added nothing must be a new family
   (`decide` refuses anything else).
 - Each iteration: a designer call (8 to 15 min in earlier Codex runs), the check, the verifier's measurement
-  (about 11 min for A/B on a 2-core machine with 2 workers; faster with more cores), the audit and the critique
+  (the grid score of A/B took 45 s on 14 workers, `runs/grid208-20261126-090821-ab-all`; the MVP gate and the noisy
+  builds add to it), the audit and the critique
   in parallel, and the director.
+- Each iteration's maps are in `iter-NN/measured/grid/map-<placement>.png` and its jam analysis in `jams.json`.
 - Watch `runs/rsi/radius-scratch-1/STATE.md`, `archive.json` (the best design per error band) and `designs.jsonl`.
   `python -m brixzle.director status --run runs/rsi/radius-scratch-1` prints the next step and the budget.
 

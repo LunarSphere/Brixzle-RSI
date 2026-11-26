@@ -413,7 +413,13 @@ class _Frames:
         self.family, self.p = family, p
         g = family.geometry
         self.extrusion = g.extrusion(p) if isinstance(g, Prismatic) else None
-        self.part = family.part_for(course, 1)
+        lat = family.lattice(p)
+        if course in T.EDGE_CASES:  # a half-supported seat or the corbel's reach (#208)
+            _, target, (v0, v1) = T.edge_layout(lat, course)
+            self.part = family.part_for(target.course, target.direction)
+        else:
+            _, _, (v0, v1) = T.rig_layout(lat, course)
+            self.part = family.part_for(course, 1)
         self.section = B.section(family, p, self.part)
         self.pos, self.rot = np.asarray(rest["pos_mm"], float), _rot(rest["quat"])
         self.below_part, self.below_section, self.below = None, None, None
@@ -426,9 +432,9 @@ class _Frames:
         for b in rest.get("placed") or ():
             self.placed[b["brick"]] = (b["part"], B.section(family, p, b["part"]),
                                        (np.asarray(b["pos_mm"], float), _rot(b["quat"])))
-        _, _, (v0, v1) = T.rig_layout(family.lattice(p), course)
-        base = family.base(p, v1 - v0, 1)  # the rig's base, base frame = world
+        base = family.base(p, v1 - v0, 1)  # the rig's base, its frame shifted v0 voxels along world X
         self.base_section = base if isinstance(base, Section) else None
+        self.base_frame = (np.array([v0 * float(lat.U_mm), 0.0, 0.0]), Rotation.identity())
 
     def _shift(self, y):
         if self.extrusion is None:
@@ -456,7 +462,7 @@ class _Frames:
                              self._mean(site["_positions"], self.below), corner_mm)
             below = {"part": self.below_part, **f, "label": f"{self.below_part}: {f['label']}"}
         elif self.base_section is not None:
-            f = name_feature(self.base_section.outer, (), self._mean(site["_positions"], None), corner_mm)
+            f = name_feature(self.base_section.outer, (), self._mean(site["_positions"], self.base_frame), corner_mm)
             below = {"part": "base", **f, "label": f"base: {f['label']}"}
         else:
             below = {"part": "base", "feature": "unknown", "label": "base"}

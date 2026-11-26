@@ -185,21 +185,25 @@ def _part(path, fn):
     return rec
 
 
-def measure_radius(spec, out_dir, radius_settings=None, build_settings=None, workers=None):
-    """The candidate's measurement for the error-radius goal (#206), cheapest first:
+def measure_radius(spec, out_dir, grid_settings=None, build_settings=None, workers=None):
+    """The candidate's measurement for the error-radius goal (#206, scored on the grid since #208),
+    cheapest first:
 
     1. ``check``: the family contract and rule margins (``check_family``), and the gripper interface
        (``engine/gripper_spec.target_check``);
     2. ``gate``: the MVP build with ideal placement, a stack of 3 and an overhang of at least 3;
-    3. ``radius``: the error-radius search, ``r90_mm`` (``engine/radius.radius_search``);
-    4. ``builds``: the noisy tower and corbel at that radius, until they fail
+    3. ``grid``: the self-alignment grid (``engine/gridscore.grid_search``): ``green_mm``, the
+       largest error radius inside which every cell of every placement seats, Z per ring, the jam
+       analysis (``grid/jams.json``) and one map per placement (``grid/map-<placement>.png``);
+    4. ``builds``: the noisy tower and corbel at the green zone's radius, until they fail
        (``engine/radius.noisy_builds``), only for a brick that passed the gate.
 
-    Each part is saved as it finishes (``check.json``, ``gate.json``, ``radius.json``,
+    Each part is saved as it finishes (``check.json``, ``gate.json``, ``grid/grid.json``,
     ``builds.json``), so a step cut off at 10 minutes resumes. A brick that fails the check stops
     there. Every result is simulated, uncalibrated contact."""
     from brixzle.agents import check_family as CF
-    from brixzle.engine import gripper_spec as GS
+    from brixzle.engine import gridscore as GS
+    from brixzle.engine import gripper_spec as GSP
     from brixzle.engine import radius as RA
     from brixzle.engine import structure_gate as SG
     from brixzle.tools import core as TC
@@ -211,9 +215,18 @@ def measure_radius(spec, out_dir, radius_settings=None, build_settings=None, wor
     out_dir.mkdir(parents=True, exist_ok=True)
     TC.cache_on()
     t0 = time.time()
-    rs = radius_settings or RA.RadiusSettings()
+    gs = grid_settings or GS.GridSettings()
     bs = build_settings or RA.BuildSettings()
     root, module = TC._root_module(spec)
+    seconds = {}
+
+    def timed(name, fn):
+        def run():
+            t = time.time()
+            rec = fn()
+            seconds[name] = round(time.time() - t, 1)
+            return rec
+        return run
 
     def check():
         chk = CF.check_in_subprocess(root, module)
@@ -222,13 +235,13 @@ def measure_radius(spec, out_dir, radius_settings=None, build_settings=None, wor
         if chk.get("ok") or not chk.get("violations"):
             try:
                 fam = TC.load(spec)
-                rec["gripper"] = GS.target_check(fam, fam.defaults)
+                rec["gripper"] = GSP.target_check(fam, fam.defaults)
             except Exception as e:  # a family that cannot even be loaded has failed the check already
                 rec["gripper"] = {"violations": [f"{type(e).__name__}: {e}"[:300]]}
         return rec
 
-    measured = {"stage": "radius", "label": RA.LABEL, "spec": spec}
-    measured["check_family"] = _part(out_dir / "check.json", check)
+    measured = {"stage": "radius", "score": "grid", "label": RA.LABEL, "spec": spec}
+    measured["check_family"] = _part(out_dir / "check.json", timed("check", check))
     violations = []
     if measured["check_family"].get("ok") is not True:
         violations.append("check_family")
@@ -242,21 +255,25 @@ def measure_radius(spec, out_dir, radius_settings=None, build_settings=None, wor
             g = SG.run_gate(fam, p, SG.MVP, runs=str(out_dir / "runs"), workers=workers)
             return {k: g[k] for k in ("passed", "overhang_n", "builds", "seconds", "run")}
 
-        measured["gate"] = _part(out_dir / "gate.json", gate)
+        measured["gate"] = _part(out_dir / "gate.json", timed("gate", gate))
         if not measured["gate"].get("passed"):
             violations.append("mvp_gate")
-        measured["radius"] = _part(out_dir / "radius" / "radius.json",
-                                   lambda: RA.write_search(RA.radius_search(fam, p, rs, workers=workers),
-                                                           out_dir / "radius"))
-        if measured["radius"].get("error"):
+        measured["grid"] = _part(out_dir / "grid" / "grid.json", timed("grid", lambda: GS.write_grid(
+            GS.grid_search(fam, p, gs, workers=workers), out_dir / "grid", getattr(fam, "name", None))))
+        if measured["grid"].get("error"):
             violations.append("placements")
         if measured["gate"].get("passed"):
-            measured["builds"] = _part(out_dir / "builds.json",
-                                       lambda: RA.noisy_builds(fam, p, measured["radius"]["r90_mm"], bs, workers=workers))
-    r = measured.get("radius") or {}
+            measured["builds"] = _part(out_dir / "builds.json", timed("builds", lambda: RA.noisy_builds(
+                fam, p, measured["grid"]["green_mm"], bs, workers=workers)))
+    g = measured.get("grid") or {}
     b = measured.get("builds") or {}
-    measured.update(r90_mm=r.get("r90_mm", 0.0), floor_passed=bool(r.get("floor_passed")),
+    rings = {}
+    for pl in (g.get("placements") or {}).values():
+        for k, v in pl["rings"].items():
+            rings[k] = min(rings.get(k, 1.0), v["Z"])
+    measured.update(green_mm=g.get("green_mm", 0.0), floor_passed=bool(g.get("floor_passed")),
+                    weakest=g.get("weakest"), z_rings=rings, maps=g.get("maps", []), jams=g.get("jams_file"),
                     overhang_steps=b.get("overhang_steps", 0.0), stack_courses=b.get("stack_courses", 0.0),
-                    violations=violations, seconds=round(time.time() - t0, 1))
+                    violations=violations, stage_seconds=seconds, seconds=round(time.time() - t0, 1))
     write_json(done, measured)
     return measured
