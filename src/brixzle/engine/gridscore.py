@@ -557,7 +557,7 @@ def main(argv=None):
     ap.add_argument("--workers", type=int)
     ap.add_argument("--no-early-stop", action="store_true")
     ap.add_argument("--no-jams", action="store_true", help="skip the jam analysis (a quicker probe)")
-    ap.add_argument("--builds", action="store_true", help="also build the noisy tower and corbel at the green zone")
+    ap.add_argument("--builds", action="store_true", help="also build the noisy tower and corbel (at 16 mm, #210)")
     a = ap.parse_args(argv)
     TC.cache_on()
     kw = {}
@@ -579,8 +579,12 @@ def main(argv=None):
     if res.get("jams_summary") or res.get("jams"):
         summary["jams"] = res.get("jams_summary") or jams_summary(res["jams"])
     if a.builds:
-        b = RA.noisy_builds(fam, fam.defaults, res["green_mm"], workers=a.workers)
-        summary["builds"] = {k: b[k] for k in ("radius_mm", "overhang_steps", "stack_courses", "seconds")}
+        b = RA.noisy_builds(fam, fam.defaults, None, workers=a.workers)
+        summary["builds"] = {k: b[k] for k in ("radius_mm", "overhang_steps", "stack_courses", "overhang_failed_at",
+                                               "seconds")}
+        summary["builds"]["corbel_failures"] = [
+            {k: f.get(k) for k in ("build", "brick", "kind", "outcome", "release_mm", "layout", "replay_outcome",
+                                   "mechanism")} for f in b["corbel_failures"]]
     summary["label"] = LABEL
     print(json.dumps(summary, indent=1, default=str))
     return 0

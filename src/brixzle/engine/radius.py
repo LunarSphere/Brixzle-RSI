@@ -28,7 +28,8 @@ import time
 import numpy as np
 
 LABEL = "simulated, uncalibrated contact"
-PLACEMENTS = {"full": 1, "plus_bare": "plus_bare", "minus_bare": "minus_bare", "corbel_reach": "plus_anchored"}
+PLACEMENTS = {"full": 1, "plus_bare": "plus_bare", "minus_bare": "minus_bare", "corbel_reach": "plus_anchored",
+              "corbel_back": "back_cantilever", "corbel_reach2": "plus_cantilever"}  # the last two: #210
 GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 
 
@@ -99,7 +100,7 @@ def _counts(outcomes):
     return c
 
 
-_COURSE = {"full": 1, "plus_bare": 1, "minus_bare": 1, "corbel_reach": 1}
+_COURSE = {pl: 1 for pl in PLACEMENTS}
 
 
 def seat_rates(pool, cfg, radius_mm, settings: RadiusSettings, drops=None):
@@ -243,6 +244,60 @@ class BuildSettings:
     corbel: int = 8           # reaching steps asked of the overhang
     seed: int = 0
     held: bool = True         # held release, as in RadiusSettings
+    radius_mm: float = 16.0   # the error the builds are placed with: the floor worth printing (#210), the
+                              # same for every design, not its own green zone
+    replay: bool = True       # replay each corbel build's failed brick on its layout and reduce its contacts
+
+    def __post_init__(self):
+        if not (isinstance(self.radius_mm, (int, float)) and math.isfinite(self.radius_mm) and self.radius_mm >= 0):
+            raise ValueError(f"radius_mm must be finite and >= 0, got {self.radius_mm!r}")
+
+
+def corbel_layout(brick):
+    """The single-brick drop rig that replays a back-first corbel brick (``b<course>_<voxel>``): course 0
+    on the base (0), the course-1 back brick across two course-0 bricks (1), the first reach
+    ('plus_anchored'), later back bricks ('back_cantilever') and later reaches ('plus_cantilever')."""
+    from brixzle.engine import objective as OB
+
+    c, v = OB._placement(brick)
+    if c == 0:
+        return 0
+    if v == c:
+        return "plus_anchored" if c == 1 else "plus_cantilever"
+    if v == c - 2:
+        return 1 if c == 1 else "back_cantilever"
+    raise ValueError(f"{brick} is not a back-first corbel brick")
+
+
+def replay_failures(family, p, failures, held=True):
+    """Each corbel build's failed brick dropped again with the same release error, on the
+    single-brick layout of its place in the corbel (everything below it ideally seated), with its
+    contacts at rest reduced and named (engine/jam_analysis). ``repeats_on_ideal_layout`` False means
+    the failure needed the build's accumulated error, not just this brick's release. Sim results:
+    simulated, uncalibrated contact; mechanisms: predicted, quasi-static 2D."""
+    from brixzle.engine import jam_analysis as JA
+    from brixzle.engine.sim import trials as T
+
+    cfg = _ideal_cfg(held)
+    rigs, out = {}, []
+    for f in failures:
+        t0 = time.time()
+        layout = corbel_layout(f["brick"])
+        if layout not in rigs:
+            rigs[layout] = T.DropRig(family, p, cfg, course=layout)
+        row = rigs[layout].drop(f["sample"], trace=False, rest=True)
+        try:
+            reduced = JA.reduce_row(family, p, layout, row, float(cfg.physics.friction))
+        except Exception as e:  # a reduction that cannot run is reported, not fatal to the measurement
+            reduced = {"sites": [], "mechanism": f"not reduced: {type(e).__name__}: {e}"[:300]}
+        out.append({"label": LABEL, **{k: v for k, v in f.items() if k != "sample"},
+                    "release_mm": [round(float(f["sample"].get("dx", 0.0) - f["sample"].get("aim", 0.0)), 3),
+                                   round(float(f["sample"].get("dy", 0.0)), 3)],
+                    "layout": layout, "replay_outcome": row["outcome"],
+                    "repeats_on_ideal_layout": row["outcome"] != "seated",
+                    **{k: reduced.get(k) for k in ("sites", "holding", "mechanism", "three_d")},
+                    "seconds": round(time.time() - t0, 2)})
+    return out
 
 
 def _tower_courses(build):
@@ -253,24 +308,34 @@ def _tower_courses(build):
     return k
 
 
-def noisy_builds(family, p, radius_mm, settings: BuildSettings = BuildSettings(), workers=None):
+def noisy_builds(family, p, radius_mm=None, settings: BuildSettings = BuildSettings(), workers=None):
     """A tower and a back-first corbel built brick by brick, every brick released with error inside a
-    disc of ``radius_mm`` (objective.radius_error), each new brick aimed at its supporter's measured
-    pose. Returns the median stack height (courses) and overhang length (reaching steps)."""
+    disc of ``radius_mm`` (objective.radius_error; None: ``settings.radius_mm``, 16 mm since #210),
+    each new brick aimed at its supporter's measured pose. Returns the median stack height (courses)
+    and overhang length (reaching steps), and each corbel build's failure (which brick, how, and its
+    release error), replayed on its layout with its contacts reduced (``replay_failures``)."""
     from brixzle.engine import objective as OB
     from brixzle.engine import structures as S
     from brixzle.engine.sim import assemble as A
     from brixzle.engine.sim import trials as T
 
     t0 = time.time()
-    radius_mm = max(0.0, float(radius_mm))
+    radius_mm = max(0.0, float(settings.radius_mm if radius_mm is None else radius_mm))
     corbel = OB.noisy_corbel(family, p, radius_mm, builds=settings.builds, steps=settings.corbel,
                              seed=settings.seed, workers=workers, held=settings.held)
     cfg = T.TrialConfig(error=OB.radius_error(radius_mm), held=settings.held)
     res = A.repeat_builds(family, p, S.tower(settings.tower, family.lattice(p).span_voxels), cfg,
                           n=settings.builds, seed=settings.seed, jitter_mm=0.0, workers=workers)
     courses = [_tower_courses(b) for b in res["builds"]]
+    failures = [{"build": k, "brick": b["failed_brick"], "kind": b["failed_kind"], "outcome": b["failed_outcome"],
+                 "steps": b["steps"], "sample": b["failed_sample"]}
+                for k, b in enumerate(corbel["builds"]) if b.get("failed_brick") and b.get("failed_sample")]
+    t1 = time.time()
+    replays = replay_failures(family, p, failures, settings.held) if settings.replay and failures else []
     return {"label": LABEL, "radius_mm": radius_mm,
+            "corbel_failures": replays if settings.replay else
+            [{k: v for k, v in f.items() if k != "sample"} for f in failures],
+            "replay_seconds": round(time.time() - t1, 1),
             "overhang_steps": corbel["median_steps"], "overhang_by_build": [b["steps"] for b in corbel["builds"]],
             "overhang_failed_at": corbel["failed_at"],
             "stack_courses": float(np.median(courses)), "stack_by_build": courses,

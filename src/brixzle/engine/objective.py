@@ -94,8 +94,11 @@ def build_record(build):
     if failed is not None:
         c, v = _placement(failed)
         kind = "reach" if c >= 1 and v == c else "back" if v == c - 2 else "first"
+    last = stages[-1] if failed is not None else {}
     return {"status": build["status"], "steps": steps, "failed_brick": failed, "failed_kind": kind,
-            "failed_outcome": stages[-1]["outcome"] if failed is not None else None,
+            "failed_outcome": last.get("outcome"),
+            # the failed brick's release (error sample) and settled error, for replaying it (#210)
+            "failed_sample": last.get("sample"), "failed_err_mm": last.get("err_mm"),
             "seconds": float(build["seconds"])}
 
 

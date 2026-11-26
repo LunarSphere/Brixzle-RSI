@@ -162,8 +162,8 @@ def _measure(run, spec, directory, **options):
 
 def _archive_terms(measured):
     if measured.get("stage") == "radius":
-        return {k: measured.get(k) for k in ("green_mm", "floor_passed", "weakest", "z_rings", "overhang_steps",
-                                             "stack_courses")}
+        return {k: measured.get(k) for k in ("green_mm", "second_mm", "green_by_placement", "floor_passed", "weakest",
+                                             "z_rings", "overhang_steps", "stack_courses", "build_radius_mm")}
     held = measured.get("held", {})
     counts = {f"held_{key}_z_counts": {k: value[k] for k in ("S", "J", "N")}
               for key, value in held.get("cases", {}).items()}

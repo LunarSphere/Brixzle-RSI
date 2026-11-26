@@ -195,8 +195,9 @@ def measure_radius(spec, out_dir, grid_settings=None, build_settings=None, worke
     3. ``grid``: the self-alignment grid (``engine/gridscore.grid_search``): ``green_mm``, the
        largest error radius inside which every cell of every placement seats, Z per ring, the jam
        analysis (``grid/jams.json``) and one map per placement (``grid/map-<placement>.png``);
-    4. ``builds``: the noisy tower and corbel at the green zone's radius, until they fail
-       (``engine/radius.noisy_builds``), only for a brick that passed the gate.
+    4. ``builds``: the noisy tower and corbel at a fixed 16 mm of error (#210), until they fail, each
+       corbel failure replayed on its layout with its contacts reduced (``engine/radius.noisy_builds``),
+       only for a brick that passed the gate.
 
     Each part is saved as it finishes (``check.json``, ``gate.json``, ``grid/grid.json``,
     ``builds.json``), so a step cut off at 10 minutes resumes. A brick that fails the check stops
@@ -264,15 +265,19 @@ def measure_radius(spec, out_dir, grid_settings=None, build_settings=None, worke
             violations.append("placements")
         if measured["gate"].get("passed"):
             measured["builds"] = _part(out_dir / "builds.json", timed("builds", lambda: RA.noisy_builds(
-                fam, p, measured["grid"]["green_mm"], bs, workers=workers)))
+                fam, p, None, bs, workers=workers)))
     g = measured.get("grid") or {}
     b = measured.get("builds") or {}
+    greens = {pl: v["green_mm"] for pl, v in (g.get("placements") or {}).items()}
+    order = sorted(greens.values())
     rings = {}
     for pl in (g.get("placements") or {}).values():
         for k, v in pl["rings"].items():
             rings[k] = min(rings.get(k, 1.0), v["Z"])
     measured.update(green_mm=g.get("green_mm", 0.0), floor_passed=bool(g.get("floor_passed")),
-                    weakest=g.get("weakest"), z_rings=rings, maps=g.get("maps", []), jams=g.get("jams_file"),
+                    weakest=g.get("weakest"), z_rings=rings, green_by_placement=greens,
+                    second_mm=order[1] if len(order) > 1 else (order[0] if order else 0.0),
+                    build_radius_mm=b.get("radius_mm"), maps=g.get("maps", []), jams=g.get("jams_file"),
                     overhang_steps=b.get("overhang_steps", 0.0), stack_courses=b.get("stack_courses", 0.0),
                     violations=violations, stage_seconds=seconds, seconds=round(time.time() - t0, 1))
     write_json(done, measured)
