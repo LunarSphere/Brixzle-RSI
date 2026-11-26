@@ -157,7 +157,7 @@ def test_each_decided_iteration_is_recorded_once_with_its_mechanism(repo):
     assert DE.record(run, _decision(action="fix", design="", may_change=["new_family"], brief="Another idea."))["ok"]
     lines = [json.loads(x) for x in (run / "designs.jsonl").read_text().splitlines()]
     assert len(lines) == 1 and lines[0]["mechanism"] == "the tooth props on the bare end face"
-    assert lines[0]["new_family"] and lines[0]["rules"] == "208"
+    assert lines[0]["new_family"] and lines[0]["rules"] == "218"
     assert lines[0]["green_mm"] == 9.5 and lines[0]["weakest"] == "plus_bare"
     shared = run.resolve().parents[1] / "designs.jsonl"
     assert len(shared.read_text().splitlines()) == 1

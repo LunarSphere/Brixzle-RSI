@@ -22,7 +22,7 @@ from pathlib import Path
 import shutil
 
 LABEL = "simulated, uncalibrated contact"
-RULES = "214"   # the score the entries were measured under: the #208 grid with #210's placements and builds
+RULES = "218"   # the score the entries were measured under: the #208 grid, #210 placements and builds, #218 free drop
 FLOOR_MM = 16.0
 
 

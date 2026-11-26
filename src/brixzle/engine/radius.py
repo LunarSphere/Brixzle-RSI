@@ -243,7 +243,7 @@ class BuildSettings:
     tower: int = 6            # courses asked of the stack
     corbel: int = 8           # reaching steps asked of the overhang
     seed: int = 0
-    held: bool = True         # held release, as in RadiusSettings
+    held: bool = False        # hover and drop (#218): a free drop
     radius_mm: float = 16.0   # the error the builds are placed with: the floor worth printing (#210), the
                               # same for every design, not its own green zone
     replay: bool = True       # replay each corbel build's failed brick on its layout and reduce its contacts

@@ -44,8 +44,8 @@ class GridSettings:
     floor_mm: float = 16.0      # the least error a brick must tolerate to be worth printing (#206)
     rings_mm: tuple = (16.0, 28.0, 40.0)   # Z rings: floor, p95 and worst (#206's error range)
     placements: tuple = tuple(RA.PLACEMENTS)
-    z_frac: float = 0.5         # release height, as a share of the mean box's height span
-    held: bool = True           # held release; False: the free drop
+    z_frac: float = 1.0         # release height, as a share of the mean box's height span: its top (#218), 11.2 mm
+    held: bool = False          # hover and drop (#218): a free drop; True: the held release (#206)
     early_stop: bool = True
 
     def __post_init__(self):

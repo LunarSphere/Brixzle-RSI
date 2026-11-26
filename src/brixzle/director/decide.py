@@ -76,7 +76,7 @@ def explore_due(run, goal, iteration):
     return ""
 
 
-RULES_VERSION = "208"  # which requirements and score a design was judged under (#206; grid score #208)
+RULES_VERSION = "218"  # which requirements and score a design was judged under (#206; grid #208; free drop #218)
 
 
 def design_line(run, n):

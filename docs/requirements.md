@@ -12,7 +12,7 @@ Each requirement is checked one of three ways:
 
 | ID | Requirement | Checked by |
 |---|---|---|
-| R1 | **Generality.** Bricks must build the structures the demo needs, a stack and a back-first overhang; walls, bridges and rings are reported for finalists. | Sim: the MVP gate builds a stack of 3 and a back-first overhang of at least 3 with held placement (#206); the running-bond wall, the bridge and the ring are reported, not required |
+| R1 | **Generality.** Bricks must build the structures the demo needs, a stack and a back-first overhang; walls, bridges and rings are reported for finalists. | Sim: the MVP gate builds a stack of 3 and a back-first overhang of at least 3 with ideal placement released by a free drop (#206, #218); the running-bond wall, the bridge and the ring are reported, not required |
 | R2 | **Voxelizable.** Bricks must sit on a voxel lattice so that structures can later be planned algorithmically; for now a brick spans two voxels. | Design: lattice placements, span_voxels = 2; the cell size is the designer's choice |
 | R3 | **Rigidity.** Assemblies must be rigid and physically stable. | Sim: collapse and sag in the MVP gate's builds and in the noisy builds (#206) |
 | R4 | **Overhang.** An overhang must accept at least 3 reaching bricks without falling over; more is better. | Sim: the MVP gate (at least 3) and the noisy corbel at 16 mm of error, whose length is scored (#206, #210) |
@@ -35,12 +35,12 @@ A design that breaks one of these is not kept (`python -m brixzle.director verif
 3. **Lattice:** a two-voxel brick on the lattice; the cell size is free (R2).
 4. **Gripper interface:** a magnet target on the top face, at least 8 mm wide, within 5 mm of the centre of mass along X (R10; guesses until the bench tests).
 5. **Release twist:** a seated brick must not turn under the yaw that releases it (design rule DR18; not yet simulated).
-6. **Builds the minimum:** a stack of 3 and an overhang of at least 3, with ideal, held placement (R1, R4).
+6. **Builds the minimum:** a stack of 3 and an overhang of at least 3, with ideal placement and a free drop (R1, R4).
 7. **Guides steeper than friction** (R6).
 
 ## Design target
 
-The score is the **green zone**, `green_mm`: the largest placement error, as the radius of a disc about the aim, inside which every release seats, with no jam, no wrong valley and no fall, on every placement type (`src/brixzle/engine/gridscore.py`, #208). A brick must self-align: every release inside the error it claims must seat, so one pocket of repeatable jams ends the zone. The placement types are a full seat (stacking), each bare edge (a brick reaching one voxel past an edge), and three bricks of a back-first corbel: the first reach, a later back brick (landing across the back brick below and the reach that cantilevers past it) and the second reach (#210). Each brick is placed by a held release: the gripper holds its attitude and lowers it until it stops, then lets go.
+The score is the **green zone**, `green_mm`: the largest placement error, as the radius of a disc about the aim, inside which every release seats, with no jam, no wrong valley and no fall, on every placement type (`src/brixzle/engine/gridscore.py`, #208). A brick must self-align: every release inside the error it claims must seat, so one pocket of repeatable jams ends the zone. The placement types are a full seat (stacking), each bare edge (a brick reaching one voxel past an edge), and three bricks of a back-first corbel: the first reach, a later back brick (landing across the back brick below and the reach that cantilevers past it) and the second reach (#210). Each brick is released the way the drone hovers over the target and drops the brick (#218): a free drop from 11.2 mm, the top of its hover wobble (5 mm clearance plus the mean box's 6.2 mm height span). Hold time, yaw and descent speed are flight-time choices, so the score assumes none of them: a brick that seats from a free drop does not depend on them. A printed `allround` dropped onto a full seat seats almost always on the bench (maintainer, 2026-11-26).
 
 It is measured on an X-Y grid of release offsets out to 40 mm: 7.5 mm cells, each split into 2.5 mm cells wherever it touches another outcome, so jams between cells are found down to 2.5 mm (a pocket smaller than a coarse cell, inside a coarse cell whose centre and neighbours all seat, can still be missed). A lone failing cell whose neighbours all seat, and that does not repeat at friction 0.2 to 0.5 with seeded shifts (fails less than 2/3 of 3 seeds at every friction), is solver noise and does not end the zone (maintainer, 2026-11-26). It is still drawn on the map and listed. Z = (S - J) / N is reported per ring at 16, 28 (p95) and 40 mm, counted by cell area.
 
