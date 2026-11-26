@@ -1,37 +1,52 @@
 # Brixzle-RSI
 
-**Brixzle recursive self-improvement.** A recursive, self-improving loop for designing families of bricks that a drone can pick up and place imprecisely.
+**Brixzle recursive self-improvement.** A self-steering loop for designing families of bricks that a drone can place imprecisely.
 
-Given a concept sketch and a set of requirements, two AI agents keep redesigning the brick. The goal is to make the region of drone error it tolerates when placing a brick as large as possible, with no jams inside it. Pickup is deferred until a gripper is designed for the chosen brick.
+The drone is a Crazyflie 2.1 Brushless with prop guards. It carries a brick with a passive magnet, lowers it onto a structure with 16 to 40 mm of placement error, and releases it by yawing once the brick is seated. The brick's own geometry has to catch that error and guide itself into its seat. The loop designs bricks only: the gripper and the landing pad are designed by hand (`src/brixzle/engine/gripper_spec.py`, `docs/requirements.md`).
 
-> **Status:** the director loop runs end to end (#165), on the error-radius goal (#206): see [`docs/architecture.md`](docs/architecture.md#the-error-radius-goal-206) and [`docs/requirements.md`](docs/requirements.md). The older Agent SDK loop described below is being removed (#204).
+> **Status:** the director loop (#165) runs the error-radius goal (#206), scored on the self-alignment grid (#208, #210). The older Agent SDK loop (`intake/`, `agents/`, `loop/`) is being removed (#204).
 
-To run it (it spends real API money; the cap is `--budget-usd`):
+## Run it
 
-    uv sync --extra agents
-    uv run python -m brixzle.intake --image path/to/sketch.png
-    uv run --extra agents python -m brixzle.loop --intake runs/intake-<stamp>/intake.json --target mean --budget-usd 5
+From a clean worktree of `main` that shares the `runs/` folder (full steps in [`docs/campaign-206.md`](docs/campaign-206.md)):
 
-Results land in `RSI_RESULTS/<run>/`. The run first scores the A/B baseline as iteration 0, with no Claude call, and every design must beat it (`--parent none` starts from scratch; `--baseline-only` scores A/B and stops).
+    uv sync
+    uv run python -m brixzle.director.drive --run runs/rsi/<name> \
+      --new "$(cat docs/campaign-206-goal.txt)" --baseline none --iterations 12 --minutes 480
+    uv run python -m brixzle.director status --run runs/rsi/<name>      # next step, budget, archive
+
+The roles run on Codex (`codex exec`; `codex` must be on PATH and signed in). In Claude Code, `/rsi-loop runs/rsi/<name> --new "<goal>"` runs the same steps with Claude subagents. A stopped run resumes with the same command without `--new`.
+
+Everything a run produces lands in `runs/rsi/<name>/` (git-ignored): `STATE.md`, `archive.json`, `designs.jsonl`, `timeline.jsonl`, and one `iter-NN/` folder per iteration with the design, its measurement and the maps.
 
 ## How it works
 
-Each iteration of the loop redesigns the brick's shape and tests it in simulation:
+Each iteration has four roles, each with its own instructions in `.claude/agents/rsi-<role>.md`, and deterministic steps in between (`python -m brixzle.director`):
 
-1. The design agent builds a brick family from the concept sketch, the requirements and the last redesign brief.
-2. A quick check drops the brick 40 times inside the target error box in MuJoCo. A weak design goes straight back to step 1.
-3. A structure gate builds a tower, a running-bond wall, a bridge and an overhang in simulation, each on seeded repeats. A design that cannot build them goes back to step 1. A design good enough to keep must also close a ring (issue #89).
-4. A full map of drops shows where the brick seats, jams, lands in the wrong valley or falls.
-5. A jam analysis explains each jam inside the zone where the brick seats, and what stops capture at the zone's edges.
-6. A critic agent reads the map and the analysis, explains the failures with design rules drawn from the literature, and writes a redesign brief. The brief can reshape the current family or invent a new one.
+1. **Director** reads the run's state and decides the next design: a new family, or one change (1 to 3 units: a parameter, a function or a constant) to a member of the archive. It must try a new family on the first iteration, every third, and after two iterations that added nothing.
+2. **Designer** writes the brick family as a Python package, checks it, measures it with the repo's tools and claims only numbers it measured.
+3. **Check:** the candidate changed only what the brief allowed.
+4. **Verify** measures the candidate itself (`director/verify.measure_radius`), cheapest first:
+   - the family contract, the rule margins and the magnet-target interface;
+   - the MVP gate: a stack of 3 and an overhang of at least 3 with ideal, held placement;
+   - the **grid score**: per placement type, held releases on an X–Y grid out to 40 mm, refined where the outcome changes; the **green zone** is the largest error radius inside which every release seats;
+   - a **jam analysis** of the failures that bound each green zone: reruns at other frictions, bands of repeatable failures, and the contacts at rest reduced and named;
+   - **noisy builds** of a tower and a back-first corbel at 16 mm of error, with each failed corbel brick replayed and its contacts named.
+5. **Verifier** audits the designer's note against the measurement; **critic** names the mechanisms behind the failures from the maps, the jam analysis and the contacts.
+6. The design is offered to the **band archive**, which keeps the best design per error band (below 16, 16–22, 22–28, 28–34, 34+ mm).
 
-The loop does not tune numbers inside an iteration. When Z reaches 1 on the last box or stops improving, one short gradient-free search (Py-BOBYQA) tunes the final family's parameters, such as ramp angles and clearances.
+The bounds are enforced by code, not by the prompts: while a run is active, a hook refuses writes outside the run directory, the tracked tree must not change, and every claimed number is rerun.
 
-The target climbs a ladder (issue #84): a run starts on `--target`, and once the best design reaches Z = 1 there it is judged on the next box (mean, then p95, then max). A design is kept only if, on Z on the current box and the overhang's length (issue #83), neither is lower than the best's and one is higher, without lowering Z on a box below. `--no-ladder` stays on `--target`.
+### The score
 
-A design's objective is **Z** (issue #61). For a target error box in X, release height and θ, take every drop of the full sim map inside the box: Z = (seated − jammed) / drops, so it runs from −1 to 1, and Z = 1 (every drop seated) passes. Each design is scored on three target boxes, sized to the drone's mean, 95th-percentile and worst measured error. Z is counted over the box, not the green zone, so a design cannot raise it by narrowing where it seats.
+- **`green_mm`**, the headline: the largest placement error, as a disc radius about the aim, inside which every held release seats with no jam, wrong valley or fall, on every placement type. The weakest placement sets it. The placement types are the full seat (stacking), both bare edges, and three bricks of a back-first corbel (the first reach, a later back brick and the second reach). A lone failure that does not repeat at other frictions is tolerated as solver noise.
+- Ties (within 1.25 mm) go to the second-weakest placement's green zone, then to the overhang and stack height that the noisy builds reach at 16 mm, then to **Z**.
+- **Z = (seated − jammed) / N**, per ring at 16, 28 and 40 mm, counted by cell area. It runs from −1 to 1, and shows how much of the error disc works beyond the green zone.
+- The minimum worth printing is a green zone of 16 mm, a stack of 3 and an overhang of 3.
 
-See [`docs/architecture.md`](docs/architecture.md) for the components and [`docs/requirements.md`](docs/requirements.md) for R1–R13.
+Each iteration's maps are `iter-NN/measured/grid/map-<placement>.png`: one cell per release offset, coloured by outcome, with rings at 16, 28 and 40 mm and the green zone dashed. All sim results are simulated, uncalibrated contact.
+
+See [`docs/requirements.md`](docs/requirements.md) for R1–R13 and the hard constraints, and [`docs/architecture.md`](docs/architecture.md#the-error-radius-goal-206) for the components.
 
 ## Relationship to aerial-assembly
 
@@ -39,11 +54,9 @@ This repo starts from the brick and simulation work in [LunarSphere/aerial-assem
 
 - the MuJoCo drop trials and outcome tolerances;
 - the measured drone error model (Exp 3);
-- the A/B brick, used as the first family and the baseline.
+- the A/B brick, the first family and the reference baseline.
 
-Code is copied in, not imported. Each borrowed file names the aerial-assembly path and commit it came from.
-
-Flight, calibration and hardware experiments stay in aerial-assembly.
+Code is copied in, not imported. Each borrowed file names the aerial-assembly path and commit it came from. Flight, calibration and hardware experiments stay in aerial-assembly; this repo has no flight code.
 
 ## Layout
 
@@ -51,10 +64,12 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 
 | Path | What it holds |
 |---|---|
-| `src/brixzle/intake/` | Local web page: concept sketch and extra requirements, with a conflict check against R1–R13 |
-| `src/brixzle/agents/` | Design agent and critic agent (Claude Agent SDK) |
-| `src/brixzle/engine/` | Quick check, sim map, jam analysis, objective Z, scorer, end tune and the analytic predictor |
-| `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, 2D section, CAD solid, rules |
-| `src/brixzle/rules/` | Distilled design rules (`design_rules.md`) and a citation list with links (`citations.md`) |
-| `src/brixzle/data/` | Measured drone error files |
-| `runs/` | Git-ignored. One folder per loop run, one subfolder per iteration |
+| `src/brixzle/director/` | The loop's deterministic steps and its Codex driver (`drive.py`): run files, the one-change check, verify, the band archive, decisions and the write guard |
+| `src/brixzle/engine/` | The measurement: grid score, jam analysis, structure gate, noisy builds, the drop cache and the analytic predictor |
+| `src/brixzle/engine/sim/` | The MuJoCo core: drop rigs (course and edge layouts), held release, structure builds |
+| `src/brixzle/tools/` | Deterministic tools the roles call: `python -m brixzle.tools` evaluate, contacts, redrop, gate and more |
+| `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, section, CAD solid, seats and rules |
+| `src/brixzle/rules/` | Design rules (`design_rules.md`) and citations (`citations.md`) |
+| `.claude/agents/`, `.claude/commands/` | The four roles' instructions and the `/rsi-loop` command |
+| `docs/` | Requirements, architecture, the campaign runbook and decision records |
+| `runs/` | Git-ignored. One folder per run |
