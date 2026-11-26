@@ -124,3 +124,19 @@ def test_a_registry_family_is_filed_from_its_grid_run_with_builds_code_and_rende
     assert "overhang 2" in card and "stack 3" in card and "full:" in card
     assert (out / "family.py").exists() and (out / "module.png").exists() and list(out.glob("*.stl"))
     assert "A/B" in card or "ab" in card
+
+
+def test_a_radius_run_starts_without_a_baseline_unless_one_is_named(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("runs/\n.rsi-loop-active\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"],
+                   check=True)
+    run = RN.init_run(tmp_path / "runs" / "rsi" / "a", goal="g", baseline=None, repo=tmp_path)
+    assert json.loads((run / "goal.json").read_text())["baseline"] == "none"
+    (tmp_path / ".rsi-loop-active").unlink()
+    held = RN.init_run(tmp_path / "runs" / "rsi" / "b", goal="g", baseline=None, repo=tmp_path,
+                       settings={"stage": "held"})
+    assert json.loads((held / "goal.json").read_text())["baseline"] == "ab"  # the held goal reads floors from it

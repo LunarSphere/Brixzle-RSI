@@ -213,7 +213,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m brixzle.director.drive")
     ap.add_argument("--run", required=True)
     ap.add_argument("--new", help="the goal: start a new run")
-    ap.add_argument("--baseline", default="ab")
+    ap.add_argument("--baseline", help="a registry family, or none; default: none for the radius goal, ab otherwise")
     ap.add_argument("--iterations", type=int, default=6)
     ap.add_argument("--minutes", type=float, default=240)
     ap.add_argument("--roles", help="JSON {role: {model, effort}} overriding the defaults")

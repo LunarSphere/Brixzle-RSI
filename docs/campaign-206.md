@@ -34,6 +34,9 @@ uv run python -m brixzle.director.library add fable_allround --grid runs/grid-<s
 
 ## Start
 
+The radius goal starts without a baseline by default (#215): the design library is how a run knows past designs, and nothing in it is a parent. `--baseline <spec>` still works, and the older goals default to `ab`.
+
+
 ```sh
 uv run python -m brixzle.director.drive --run runs/rsi/radius-scratch-1 \
   --new "$(cat docs/campaign-206-goal.txt)" --baseline none --iterations 12 --minutes 480
