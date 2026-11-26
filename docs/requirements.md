@@ -59,4 +59,26 @@ A deferred requirement stays in the list, but the loop does not score it, and th
 
 ## Target boxes
 
-The measured drone error behind the 16 to 40 mm range: Exp 3 in aerial-assembly (session exp3-r4, 24 approaches, `src/brixzle/data/error-exp3-r4.json`), a radial RMSE of about 16.8 mm and a 95th percentile of about 27.8 mm, with a mean offset of about 9 mm. The release heights come from the mean box's Z (`brixzle.engine.boxes.default_boxes()`), an estimate from hovers with no payload.
+The measured drone error behind the 16 to 40 mm range (Exp 3 in aerial-assembly: a radial RMSE of about 16.8 mm, a 95th percentile of about 27.8 mm and a mean offset of about 9 mm). The error-radius score (#206) uses the placement mean box's release heights; the pickup rows are kept for reference, since pickup is the landing pad's job.
+
+
+Half-widths around the aim point, from `brixzle.engine.boxes.default_boxes()`.
+
+| Task | Statistic | X (mm) | Y (mm) | Z (mm) | θ or ψ (deg) |
+|---|---|---|---|---|---|
+| Placement | mean | 14.8 | 14.8 | 3.1 | 0.2 |
+| Placement | p95 | 27.8 | 27.8 | 6.3 | 0.3 |
+| Placement | worst | 38.5 | 38.5 | 7.2 | 0.4 |
+| Pickup | mean | 14.8 | – | 3.1 | 0.9 |
+| Pickup | p95 | 27.8 | – | 6.3 | 1.4 |
+| Pickup | worst | 38.5 | – | 7.2 | 1.7 |
+
+The angle column is θ (pitch) for placement and ψ (yaw) for pickup.
+
+**Placement's X and Y form a disc** (issue #86). The measured error is a radius in a random X–Y direction, so a drop at (x, y) is inside a placement box when x² + y² ≤ r², with r the X half-width. A square box would ask for corners at 1.4 r, which the drone never reached.
+
+- **X is measured.** It is the Exp 3 positioning error (session exp3-r4, 24 approaches, `src/brixzle/data/error-exp3-r4.json`), taken as a radius that may lie wholly along X.
+- **Z, θ and ψ are estimates.** They are the RMS deviation from the command during the settled hovers of Exp 3 session exp3-r2 (25 approaches, `src/brixzle/data/hover-exp3-r2.json`, made by `scripts/make_hover_estimates.py`).
+  - They come from a hover with no payload, not from a release or a pickup, so they are probably too small.
+  - Z is the drone's own Lighthouse height against the commanded height, so it misses any error in the Lighthouse estimate itself.
+  - Real measurements are aerial-assembly#27.
