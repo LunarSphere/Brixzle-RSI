@@ -295,7 +295,7 @@ def replay_failures(family, p, failures, held=True):
                                    round(float(f["sample"].get("dy", 0.0)), 3)],
                     "layout": layout, "replay_outcome": row["outcome"],
                     "repeats_on_ideal_layout": row["outcome"] != "seated",
-                    **{k: reduced.get(k) for k in ("sites", "holding", "mechanism", "three_d")},
+                    **{k: reduced.get(k) for k in ("sites", "holding", "mechanism", "three_d", "contacts_3d")},
                     "seconds": round(time.time() - t0, 2)})
     return out
 

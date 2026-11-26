@@ -85,14 +85,23 @@ def band_key(rec):
             -1.0 if z16 is None else float(z16), g)
 
 
+def green_vector(rec):
+    """The placements' green zones, weakest first (#214). A record without them falls back to its
+    headline, and its second-weakest placement if it has one (#210)."""
+    by = rec.get("green_by_placement")
+    if by:
+        return sorted(float(v) for v in by.values())
+    out = [float(rec.get("green_mm") or 0.0)]
+    if rec.get("second_mm") is not None:
+        out.append(float(rec["second_mm"]))
+    return out
+
+
 def better(a, b, tie_mm=GREEN_TIE_MM):
-    """``a`` ranks above ``b`` in a band: a green zone larger by at least ``tie_mm``; on a tie, the
-    second-weakest placement's green zone (``second_mm``, #210) larger by at least ``tie_mm``; on a
-    tie there too, a larger ``band_key``."""
-    for key in ("green_mm", "second_mm"):
-        if a.get(key) is None or b.get(key) is None:
-            continue
-        x, y = float(a[key]), float(b[key])
+    """``a`` ranks above ``b`` in a band (leximin, #214): compare the placements' green zones weakest
+    first, and the first that differs by at least ``tie_mm`` decides; if every one ties, a larger
+    ``band_key`` (overhang, stack, Z16)."""
+    for x, y in zip(green_vector(a), green_vector(b)):
         if abs(x - y) >= tie_mm:
             return x > y
     return band_key(a) > band_key(b)
