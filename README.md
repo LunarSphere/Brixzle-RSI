@@ -23,7 +23,7 @@ Everything a run produces lands in `runs/rsi/<name>/` (git-ignored): `STATE.md`,
 
 Each iteration has four roles, each with its own instructions in `.claude/agents/rsi-<role>.md`, and deterministic steps in between (`python -m brixzle.director`):
 
-1. **Director** reads the run's state and decides the next design: a new family, or one change (1 to 3 units: a parameter, a function or a constant) to a member of the archive. It must try a new family on the first iteration, every third, and after two iterations that added nothing.
+1. **Director** reads the run's state and decides the next design: a new family, or one change (1 to 3 units: a parameter, a function or a constant) to a member of the archive. It must try a new family when there is nothing to refine, every fourth iteration, and after three iterations that added nothing.
 2. **Designer** writes the brick family as a Python package, checks it, measures it with the repo's tools and claims only numbers it measured.
 3. **Check:** the candidate changed only what the brief allowed.
 4. **Verify** measures the candidate itself (`director/verify.measure_radius`), cheapest first:
@@ -40,7 +40,7 @@ The bounds are enforced by code, not by the prompts: while a run is active, a ho
 ### The score
 
 - **`green_mm`**, the headline: the largest placement error, as a disc radius about the aim, inside which every held release seats with no jam, wrong valley or fall, on every placement type. The weakest placement sets it. The placement types are the full seat (stacking), both bare edges, and three bricks of a back-first corbel (the first reach, a later back brick and the second reach). A lone failure that does not repeat at other frictions is tolerated as solver noise.
-- Ties (within 1.25 mm) go to the second-weakest placement's green zone, then to the overhang and stack height that the noisy builds reach at 16 mm, then to **Z**.
+- Within a band, designs rank by every placement's green zone, weakest first (ties within 1.25 mm), then by the overhang and stack height that the noisy builds reach at 16 mm, then by **Z**.
 - **Z = (seated − jammed) / N**, per ring at 16, 28 and 40 mm, counted by cell area. It runs from −1 to 1, and shows how much of the error disc works beyond the green zone.
 - The minimum worth printing is a green zone of 16 mm, a stack of 3 and an overhang of 3.
 

@@ -104,7 +104,7 @@ def test_a_new_run_defaults_to_the_radius_goal_and_can_start_from_scratch(repo, 
 
     run = _run(repo)
     goal = json.loads((run / "goal.json").read_text())
-    assert goal["settings"]["stage"] == "radius" and goal["settings"]["explore_every"] == 3
+    assert goal["settings"]["stage"] == "radius" and goal["settings"]["explore_every"] == 4
     assert json.loads((run / "next.json").read_text())["parent"] == ""
     monkeypatch.chdir(repo)
     assert DM.main(["baseline", "--run", str(run)]) == 0
@@ -137,11 +137,11 @@ def test_every_nth_iteration_and_a_stall_need_a_new_family(repo):
     run = _run(repo)
     goal = json.loads((run / "goal.json").read_text())
     _archive(run, [_rec("iter-01:a", 18.0)], [{"name": "iter-01:a", "kept": True}])
-    assert DE.explore_due(run, goal, 2) == ""
-    assert "every 3th" in DE.explore_due(run, goal, 3)
+    assert DE.explore_due(run, goal, 3) == ""
+    assert "every 4th" in DE.explore_due(run, goal, 4)
     _archive(run, [_rec("iter-01:a", 18.0)], [{"name": "iter-01:a", "kept": True}, {"name": "iter-02:b", "kept": False},
-                                               {"name": "iter-03:c", "kept": False}])
-    assert "added nothing" in DE.explore_due(run, goal, 4)
+                                               {"name": "iter-03:c", "kept": False}, {"name": "iter-04:d", "kept": False}])
+    assert "added nothing" in DE.explore_due(run, goal, 5)
     # a legacy goal never forces one
     assert DE.explore_due(run, {"settings": {"stage": "legacy"}}, 3) == ""
 

@@ -454,6 +454,10 @@ def jams_summary(jams):
             lines.append(f"{pl}: {b['failure_type']} from {b['nearest_mm']:.1f} mm (x {ex['x'][0]:+g}..{ex['x'][1]:+g}, "
                          f"y {ex['y'][0]:+g}..{ex['y'][1]:+g}; {len(b['cells'])} cells, repeat {b['repeat_rate']:.0%}): "
                          f"{b.get('mechanism')}")
+            for c3 in (b.get("contacts_3d") or [])[:3]:  # a 3D brick: contacts in its own frame (#214)
+                at = ", ".join(f"{v:+.1f}" for v in c3["at_mm"])
+                lines.append(f"    touches {c3['other']} at ({at}) mm in its own frame, normal "
+                             f"({', '.join(f'{v:+.2f}' for v in c3['normal'])}), {c3['weight_share']:.2f} of the weight")
             sites = sorted(b.get("sites") or [], key=lambda x: -x.get("normal_N", 0.0))[:3]
             for site in sites:
                 share = site["normal_N"] / b["weight_N"] if b.get("weight_N") else 0.0

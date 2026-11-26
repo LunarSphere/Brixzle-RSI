@@ -39,7 +39,7 @@ same steps with Claude subagents (#205 will make it call Codex roles).
 
 ## What to expect
 
-- Iteration 1, every 3rd iteration and any iteration after two that added nothing must be a new family
+- Iteration 1 (when there is nothing to refine), every 4th iteration and any iteration after three that added nothing must be a new family (#214; 3rd and two before)
   (`decide` refuses anything else).
 - Each iteration: a designer call (8 to 15 min in earlier Codex runs), the check, the verifier's measurement
   (the grid score of A/B took 45 s on 14 workers, `runs/grid208-20261126-090821-ab-all`; the MVP gate and the noisy

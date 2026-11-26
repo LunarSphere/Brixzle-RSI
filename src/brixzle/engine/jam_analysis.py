@@ -498,6 +498,42 @@ def reduce_row(family, p, course, row, mu, cfg: JamConfig = JamConfig()):
             "sim_only": False, **out}
 
 
+def contact_sites_3d(rest, merge_mm=2.0, min_share=0.02):
+    """The touching contacts of a settled brick, for families the 2D reduction cannot describe (#214):
+    per body touched, points within ``merge_mm`` of each other merged into one site, with the site's
+    position in the falling brick's own frame (mm), its mean normal (world, into the brick), its
+    share of the brick's weight (normal force; MuJoCo's split is indicative only) and the number of
+    points. Sites carrying less than ``min_share`` of the weight are left out. Heaviest first."""
+    names = {b["brick"]: f"{b['part']} ({b['brick']})" for b in rest.get("placed") or ()}
+    pos, rot = np.asarray(rest["pos_mm"], float), _rot(rest["quat"])
+    weight = float(rest["weight_N"])
+    sites = []
+    for c in rest["contacts"]:
+        if float(c["normal_N"]) <= 0:
+            continue
+        p = np.asarray(c["pos_mm"], float)
+        site = next((s for s in sites if s["other"] == c["other"]
+                     and min(np.linalg.norm(p - q) for q in s["_pts"]) <= merge_mm), None)
+        if site is None:
+            site = {"other": c["other"], "_pts": [], "_n": [], "_f": 0.0}
+            sites.append(site)
+        site["_pts"].append(p)
+        site["_n"].append(np.asarray(c["normal"], float) * float(c["normal_N"]))
+        site["_f"] += float(c["normal_N"])
+    out = []
+    for s in sites:
+        n = np.sum(s["_n"], axis=0)
+        n = n / np.linalg.norm(n) if np.linalg.norm(n) > 0 else n
+        local = rot.inv().apply(np.mean(s["_pts"], axis=0) - pos)
+        share = s["_f"] / weight if weight > 0 else 0.0
+        if share < min_share:
+            continue
+        out.append({"other": names.get(s["other"], s["other"]), "at_mm": [round(float(v), 2) for v in local],
+                    "normal": [round(float(v), 3) for v in n], "weight_share": round(share, 3),
+                    "points": len(s["_pts"])})
+    return sorted(out, key=lambda s: -s["weight_share"])
+
+
 SIM_ONLY = ("not reduced: the family varies along Y (Solid3D), so the 2D contact reduction of one XZ slice does "
             "not describe it; the failure type and the rest pose are from the sim only (issue #105)")
 
@@ -517,7 +553,7 @@ def _sim_only(family, p, course, row, mu, pose):
             "weight_N": float(rest["weight_N"]), "com_mm": [float(com[0]), float(com[2])], "rest_pose": pose,
             "sim_only": True, "three_d": True, "y_share": float(y_raw), "y_share_raw": float(y_raw),
             "out_of_plane": {"dy_mm": float(row["err_mm"][1]), "tilt_deg": float(tilt)}, "mu": float(mu),
-            "contacts_touching": len(touching),
+            "contacts_touching": len(touching), "contacts_3d": contact_sites_3d(rest),
             "max_point_share": max((float(c["normal_N"]) for c in touching), default=0.0) / float(rest["weight_N"]),
             "sites": [], "holding": None, "all_sites": None, "mechanism": SIM_ONLY}
 
