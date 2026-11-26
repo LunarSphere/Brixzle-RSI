@@ -56,8 +56,12 @@ def _git(repo, *args):
 
 def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=None, human_checkpoints=()):
     """Create the run, write the lock and return the run directory. Refuses an existing run or a
-    second loop in the same checkout."""
+    second loop in the same checkout. ``baseline`` None: none for the radius goal (#215: the design
+    library replaces it), ``ab`` for the older goals, which read their floors from it."""
     from brixzle.engine import objective as OB
+
+    if baseline is None:
+        baseline = "none" if (settings or {}).get("stage", "radius") == "radius" else "ab"
 
     run, repo = Path(run).resolve(), Path(repo).resolve()
     if run.exists():

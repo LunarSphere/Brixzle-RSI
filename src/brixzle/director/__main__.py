@@ -1,6 +1,6 @@
 """python -m brixzle.director <step> ... : the deterministic steps of the self-steering loop (#165).
 
-    init      --run DIR --goal TEXT [--baseline ab] [--iterations N] [--minutes M] [--deny-read P,..]
+    init      --run DIR --goal TEXT [--baseline none|<spec>] [--iterations N] [--minutes M] [--deny-read P,..]
               [--checkpoints 3,6]
     status    --run DIR                       next step, budget used, archive
     baseline  --run DIR                       score the baseline (registry family) and seed the archive;
@@ -69,7 +69,7 @@ def main(argv=None):
     ap.add_argument("--run", required=True)
     ap.add_argument("--iter", type=int)
     ap.add_argument("--goal")
-    ap.add_argument("--baseline", default="ab")
+    ap.add_argument("--baseline", help="a registry family, or none; default: none for the radius goal, ab otherwise")
     ap.add_argument("--iterations", type=int, default=8)
     ap.add_argument("--minutes", type=float, default=240)
     ap.add_argument("--deny-read", default="")

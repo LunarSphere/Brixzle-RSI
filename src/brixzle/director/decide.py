@@ -122,7 +122,17 @@ def log_design(run, n):
     shared = run.resolve().parents[1] / "designs.jsonl"
     with open(shared, "a") as f:
         f.write(text)
+    _library(run, n)
     return line
+
+
+def _library(run, n):
+    """Add the iteration to the shared design library (#215); a failure there never stops the loop."""
+    from brixzle.director import library as LB
+    try:
+        LB.add_iteration(run, n, LB.default_library(run))
+    except Exception as e:  # noqa: BLE001 - the library is for reading; the run's own record is kept
+        (Path(run) / f"iter-{int(n):02d}" / "library-error.txt").write_text(f"{type(e).__name__}: {e}\n")
 
 
 def record(run, decision):

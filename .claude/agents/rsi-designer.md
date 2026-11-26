@@ -23,6 +23,7 @@ Read these first, and nothing you do not need:
 - `<run>/iter-NN/brief.json` and `<run>/STATE.md` (read only);
 - `docs/requirements.md`, `src/brixzle/rules/design_rules.md` and `src/brixzle/engine/gripper_spec.py`;
 - `docs/family-interface.md` and `src/brixzle/families/interface.py`;
+- the **design library**, `runs/library/` (from the run directory: `../../library/`): `INDEX.md`, and the cards your brief names or that share your problem (`<name>/card.md`: idea, scores per placement, strengths and weaknesses, the contacts that bound it). You may reuse a mechanism, and code from the maintainer's own designs (`family.py` in an entry), but a new family must still be your own capture idea, and don't retry what a card says failed without a reason it will work now;
 - the parent's `family.py`, if there is a parent. For a new family, `src/brixzle/families/ab/` shows how a family implements the interface. Use it for the interface only, not as a shape to copy.
 
 ## What you write

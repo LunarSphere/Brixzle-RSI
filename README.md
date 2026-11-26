@@ -17,6 +17,8 @@ From a clean worktree of `main` that shares the `runs/` folder (full steps in [`
 
 The roles run on Codex (`codex exec`; `codex` must be on PATH and signed in). In Claude Code, `/rsi-loop runs/rsi/<name> --new "<goal>"` runs the same steps with Claude subagents. A stopped run resumes with the same command without `--new`.
 
+Every design measured, in any run, also gets a card in the shared **design library**, `runs/library/` (`INDEX.md` lists them): its code, maps, scores per placement, strengths and weaknesses, and why it failed. The roles read it; nothing in it is ever a parent.
+
 Everything a run produces lands in `runs/rsi/<name>/` (git-ignored): `STATE.md`, `archive.json`, `designs.jsonl`, `timeline.jsonl`, and one `iter-NN/` folder per iteration with the design, its measurement and the maps.
 
 ## How it works
