@@ -147,11 +147,12 @@ def main(argv=None):
 def _measure(run, spec, directory, **options):
     settings = RN.read_json(run / "goal.json")["settings"]
     if settings.get("stage") == "radius":
+        from brixzle.engine import gridscore as GS
         from brixzle.engine import radius as RA
-        rs = RA.RadiusSettings(**{k: tuple(v) if isinstance(v, list) else v
-                                  for k, v in (settings.get("radius") or {}).items()})
+        gs = GS.GridSettings(**{k: tuple(v) if isinstance(v, list) else v
+                                for k, v in (settings.get("grid") or {}).items()})
         bs = RA.BuildSettings(**(settings.get("builds") or {}))
-        return VE.measure_radius(spec, directory / "measured", rs, bs)
+        return VE.measure_radius(spec, directory / "measured", gs, bs)
     if settings.get("stage") == "held":
         baseline = RN.read_json(run / "baseline" / "verified.json", {})
         floor = settings.get("min_drop_z", VE.lookup(baseline, "measured.z.mean.Z"))
@@ -161,7 +162,8 @@ def _measure(run, spec, directory, **options):
 
 def _archive_terms(measured):
     if measured.get("stage") == "radius":
-        return {k: measured.get(k) for k in ("r90_mm", "floor_passed", "overhang_steps", "stack_courses")}
+        return {k: measured.get(k) for k in ("green_mm", "floor_passed", "weakest", "z_rings", "overhang_steps",
+                                             "stack_courses")}
     held = measured.get("held", {})
     counts = {f"held_{key}_z_counts": {k: value[k] for k in ("S", "J", "N")}
               for key, value in held.get("cases", {}).items()}

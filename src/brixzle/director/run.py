@@ -42,7 +42,7 @@ def read_json(path, default=None):
 
 # The error-radius goal's settings (#206): the stage, how often an iteration must try a new family,
 # and after how many iterations that add nothing to the archive the next one must.
-RADIUS_DEFAULTS = {"stage": "radius", "explore_every": 3, "stall_explore": 2, "radius": {}, "builds": {}}
+RADIUS_DEFAULTS = {"stage": "radius", "explore_every": 3, "stall_explore": 2, "grid": {}, "builds": {}}
 NO_BASELINE = ("", "none", None)
 
 

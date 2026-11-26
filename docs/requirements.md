@@ -22,7 +22,7 @@ Each requirement is checked one of three ways:
 | R8 | **Stiffness.** I-beam-like sections may be used to stop the brick from flexing. The first course sits on a stable base. | Design: rib frame, anchored base |
 | R9 | **Mass.** A brick, with its steel insert, must weigh between 1 g and 25 g in PLA; lighter is preferred. | Rule: mass window, with the insert (engine/gripper_spec.py) |
 | R10 | **Grippable.** Each brick carries a magnet target on its top face, near its centre of mass, for a passive magnet gripper that the drone releases by yawing. The combined mass of the brick and the gripper must not be more than 35 g, the drone's payload limit. | Rule: the magnet target's size and position, and the payload (engine/gripper_spec.py; its values are guesses until the bench tests) |
-| R11 | **Coarse placement.** The drone places bricks with 16 to 40 mm of error, and a brick must seat by its own geometry; the score is the largest error at which every placement type seats at least 90 % of the time. | Sim: the error-radius search, r90 (#206) |
+| R11 | **Coarse placement.** The drone places bricks with 16 to 40 mm of error, and a brick must seat by its own geometry; the score is the largest error radius inside which every placement type always seats (the green zone). | Sim: the self-alignment grid, green_mm (#206, #208) |
 | R12 | **Coarse pickup.** The drone picks bricks up from a landing pad that absorbs its error; the brick only has to offer the magnet target (R10). | Design: the landing pad, outside the loop |
 | R13 | **Printable.** A brick must print as one PLA piece plus a steel insert, with walls of at least 1.2 mm and joint gaps of about 0.2 mm or more. | Rules: single piece, minimum wall; gaps: design rule DR19 |
 
@@ -40,9 +40,11 @@ A design that breaks one of these is not kept (`python -m brixzle.director verif
 
 ## Design target
 
-The score is **r90**: the largest placement error, as the radius of a disc about the aim, at which every placement type seats at least 90 % of its drops (`src/brixzle/engine/radius.py`). The placement types are a full seat (stacking), each bare edge (a brick reaching one voxel past an edge) and the first reach of a back-first corbel. A jam, a wrong valley and a fall all count against it. Each brick is placed by a held release: the gripper holds its attitude and lowers it until it stops, then lets go.
+The score is the **green zone**, `green_mm`: the largest placement error, as the radius of a disc about the aim, inside which every release seats, with no jam, no wrong valley and no fall, on every placement type (`src/brixzle/engine/gridscore.py`, #208). A brick must self-align: every release inside the error it claims must seat, so one pocket of repeatable jams ends the zone. The placement types are a full seat (stacking), each bare edge (a brick reaching one voxel past an edge) and the first reach of a back-first corbel. Each brick is placed by a held release: the gripper holds its attitude and lowers it until it stops, then lets go.
 
-Anything from 16 to 40 mm is acceptable, and more is better. Then the stack height and the overhang length that noisy builds reach at that error, brick by brick. The director's archive keeps the best design in each error band (below 16, 16-22, 22-28, 28-34, 34+ mm).
+It is measured on an X-Y grid of release offsets out to 40 mm: 7.5 mm cells, each split into 2.5 mm cells wherever it touches another outcome, so jams between cells are found down to 2.5 mm (a pocket smaller than a coarse cell, inside a coarse cell whose centre and neighbours all seat, can still be missed). A lone failing cell whose neighbours all seat, and that does not repeat at friction 0.2 to 0.5 with seeded shifts (fails less than 2/3 of 3 seeds at every friction), is solver noise and does not end the zone (maintainer, 2026-11-26). It is still drawn on the map and listed. Z = (S - J) / N is reported per ring at 16, 28 (p95) and 40 mm, counted by cell area.
+
+Anything from 16 to 40 mm is acceptable, and more is better. Then the stack height and the overhang length that noisy builds reach at that error, brick by brick. The director's archive keeps the best design in each error band (below 16, 16-22, 22-28, 28-34, 34+ mm); within 1.25 mm of green zone it ranks by overhang, then stack, then the weakest Z within 16 mm.
 
 Reported, not required: the friction margin, the running-bond wall, the bridge and the ring.
 

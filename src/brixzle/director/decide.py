@@ -76,7 +76,7 @@ def explore_due(run, goal, iteration):
     return ""
 
 
-RULES_VERSION = "206"  # which requirements and score a design was judged under (#206)
+RULES_VERSION = "208"  # which requirements and score a design was judged under (#206; grid score #208)
 
 
 def design_line(run, n):
@@ -95,10 +95,11 @@ def design_line(run, n):
             if line.strip().lower().startswith("mechanism:"):
                 mechanism = line.split(":", 1)[1].strip()[:300]
                 break
-    r = m.get("radius") or {}
+    g = m.get("grid") or {}
     return {"time": RN.now(), "run": run.name, "iteration": int(n), "spec": m.get("spec"),
             "parent": brief.get("parent") or "", "new_family": brief.get("may_change") == [NEW_FAMILY],
-            "brief": (brief.get("brief") or "")[:300], "r90_mm": m.get("r90_mm"), "weakest": r.get("weakest"),
+            "brief": (brief.get("brief") or "")[:300], "green_mm": m.get("green_mm"), "weakest": g.get("weakest"),
+            "z_rings": m.get("z_rings"),
             "overhang_steps": m.get("overhang_steps"), "stack_courses": m.get("stack_courses"),
             "violations": m.get("violations"), "kept": (v.get("offer") or {}).get("kept"),
             "reason": (v.get("offer") or {}).get("reason"), "mechanism": mechanism, "rules": RULES_VERSION}
