@@ -11,6 +11,7 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/director/run.py`, `guard.py`, `change.py` | Run files and goal settings (`RADIUS_DEFAULTS`); the write/read guard and its PreToolUse hook; the one-change check against the parent |
 | `src/brixzle/director/verify.py` | The verifier's own measurement. `measure_radius` (the error-radius goal): check and gripper interface, MVP gate, grid score, noisy builds, each part saved so a cut-off step resumes |
 | `src/brixzle/director/archive.py` | `BandArchive` (best design per error band, ranked by green zone, then the second-weakest placement, then overhang, stack and Z; #206, #208, #210) and the older Pareto `Archive` (#164) |
+| `src/brixzle/director/library.py` | The design library (#215): one card per measured design in `runs/library/` (code, maps, scores, strengths and weaknesses, contacts, diagnosis) and `INDEX.md`; `python -m brixzle.director.library add <spec> --grid <dir>` |
 | `src/brixzle/director/decide.py` | The director's decisions, the forced-new-family rule and the record of designs tried (`designs.jsonl`) |
 | `.claude/agents/rsi-*.md`, `.claude/commands/rsi-loop.md`, `.claude/settings.json` | The four roles' instructions (designer, verifier, critic, director; read by both drivers), the `/rsi-loop` command for Claude Code, and the hook that bounds a run |
 | `.codex/agents/` | Codex helper agents for working on this repo (`brick-cad`, `brick-coding`); not loop roles |

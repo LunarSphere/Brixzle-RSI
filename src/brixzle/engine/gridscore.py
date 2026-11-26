@@ -584,6 +584,8 @@ def main(argv=None):
         summary["jams"] = res.get("jams_summary") or jams_summary(res["jams"])
     if a.builds:
         b = RA.noisy_builds(fam, fam.defaults, None, workers=a.workers)
+        if a.out:  # beside grid.json, for the design library (#215)
+            (Path(a.out) / "builds.json").write_text(json.dumps(b, indent=1, default=str) + "\n")
         summary["builds"] = {k: b[k] for k in ("radius_mm", "overhang_steps", "stack_courses", "overhang_failed_at",
                                                "seconds")}
         summary["builds"]["corbel_failures"] = [

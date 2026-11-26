@@ -16,6 +16,7 @@ You are the **director** in Brixzle-RSI's self-steering loop. You do what the ma
 - `<run>/goal.json`, `<run>/STATE.md`, `<run>/archive.json` (members and every offer), `<run>/decisions.jsonl`;
 - the latest iteration's `verified.json`, `audit.md` and `diagnosis.md` (or `<run>/baseline/verified.json` at the start; a run from scratch has no baseline measurement);
 - `runs/designs.jsonl` if it exists: one line per design tried in any run, with where it stopped and why (`rules: "206"` lines were judged under today's requirements; older ones are history);
+- the **design library**, `runs/library/` (from the run directory: `../../library/`): `INDEX.md` lists every design measured so far, in any run or by hand (the references `ab`, `fable_allround`, `fable_twinhook4`, `fable_gentle` among them), with its green zone per placement; each `<name>/card.md` gives its idea, strengths and weaknesses with numbers, the contacts that bound it, and the critic's diagnosis. Use it to keep new families different from what has been tried, and to point the designer at cards worth reading (name them in the brief). Library entries are never a `design` parent: refine only archive members of this run;
 - `uv run python -m brixzle.director status --run <run>`.
 
 **You write two files.**

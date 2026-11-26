@@ -21,6 +21,17 @@ codex --version     # the roles run on Codex: it must be on PATH and signed in
 The loop refuses to start if another loop's lock (`.rsi-loop-active`) is in this checkout, and ends the run if a
 tracked file changes, so keep this worktree clean while it runs.
 
+## The design library
+
+Every measured design gets a card in `runs/library/` (#215). `decide` adds each iteration on its own. To add a registry family, score it with the grid and the builds, then file it:
+
+```sh
+uv run python -m brixzle.engine.gridscore fable_allround --out runs/grid-<stamp>-fable_allround --builds
+uv run python -m brixzle.director.library add fable_allround --grid runs/grid-<stamp>-fable_allround
+```
+
+`python -m brixzle.director.library add-run runs/rsi/<name>` files every measured iteration of an earlier run.
+
 ## Start
 
 ```sh
