@@ -74,11 +74,9 @@ def test_reference_is_sourced():
 def test_every_aerial_margin_has_a_key_and_nothing_else_is_reported(part):
     assert set(REFERENCE["parts"][part]["margins"]) == set(AERIAL_TO_KEY)
     # The loop's rule set: every aerial margin except the two fork checks, plus the shared
-    # R6.guide_slides (shallowest guide face), R13.bore_wall, the R10 grippable rules (#50) and the
-    # R10 carrying-opening rules (#87).
+    # R6.guide_slides (shallowest guide face), R13.bore_wall and the R10 grippable rules (#50).
     assert set(_margins(part)) == (set(AERIAL_TO_KEY.values()) - FORK_KEYS) | {
-        "R6.guide_slides", "R13.bore_wall", "R10.grippable", "R10.within_payload",
-        "R10.two_openings", "R10.hangs_below", "R10.straddles_com"}
+        "R6.guide_slides", "R13.bore_wall", "R10.grippable", "R10.within_payload"}  # carrying openings: not a loop rule since #206
     assert set(_fork_margins(part)) == FORK_KEYS
 
 
@@ -128,7 +126,7 @@ def test_ab_grip_features_are_its_two_bores_and_two_windows(part):
     holes = AB.geometry.section(V0, part).holes
     assert all(any(o.equals(h) for h in holes) for o in I.grip_openings(feats))  # the windows are section holes
     assert _margins(part)["R10.grippable"] == 3.0
-    assert _margins(part)["R10.within_payload"] == pytest.approx(35.0 - (B.sim_bodies(AB, V0, part).mass_g + 5.0))
+    assert _margins(part)["R10.within_payload"] == pytest.approx(35.0 - (B.sim_bodies(AB, V0, part).mass_g + 10.5))
 
 
 def test_barbs_are_rejected_until_soft_contact_is_supported():

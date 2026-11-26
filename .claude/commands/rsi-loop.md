@@ -1,6 +1,6 @@
 ---
 description: Run the self-steering brick-design loop (#165) - designer, verifier, critic and director subagents, all state in the run directory
-argument-hint: <run dir> [--new "<goal>"] [--baseline ab] [--iterations N] [--minutes M] [--replay] [--unattended]
+argument-hint: <run dir> [--new "<goal>"] [--baseline none|<spec>] [--iterations N] [--minutes M] [--replay] [--unattended]
 ---
 
 You orchestrate Brixzle-RSI's self-steering design loop (issue #165), with no Agent SDK or API calls.
@@ -24,7 +24,7 @@ resumes, and the drop and stage caches make the redone part fast. Keep each Bash
 **The loop.** After each step, check `<run>/next.json` and `uv run python -m brixzle.director status --run <run>`.
 
 0. **Baseline** (when `next.json` is at iteration 0).
-   - If `<run>/baseline/verified.json` is missing, run `uv run python -m brixzle.director baseline --run <run>` (about 8 min).
+   - If `<run>/baseline/verified.json` is missing, run `uv run python -m brixzle.director baseline --run <run>` (a few minutes; instant with `--baseline none`, a run from scratch).
    - If `<run>/iter-00/decision.json` is missing, spawn **rsi-director** for iteration 00 to write it.
    - Then run `uv run python -m brixzle.director decide --run <run> --iter 0`.
 1. **Design** iteration N, from `<run>/iter-NN/brief.json`.

@@ -15,8 +15,15 @@ KEYS = ("R10.two_openings", "R10.hangs_below", "R10.straddles_com")
 
 
 def _margins(family, part="A"):
+    """The loop's margins and the fork's carrying-opening margins (not a loop rule since #206)."""
     p = family.defaults
-    return R.margins(family, p, part, B.sim_bodies(family, p, part))
+    bodies = B.sim_bodies(family, p, part)
+    return {**R.margins(family, p, part, bodies), **R.carrying_margins(family.pickup(p, part), bodies)}
+
+
+def test_the_loop_no_longer_requires_carrying_openings():
+    p = WEDGE.defaults
+    assert not set(KEYS) & set(R.margins(WEDGE, p, "A", B.sim_bodies(WEDGE, p, "A")))
 
 
 def test_a_b_passes_all_three_and_its_values_are_pinned():

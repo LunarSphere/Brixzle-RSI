@@ -12,7 +12,10 @@ RULES_DIR = Path(RL.__file__).parent
 def test_every_rule_has_a_mechanism_a_design_action_citations_and_evidence():
     rules = RL.load_rules()
     assert len(rules) >= 8
-    assert [r.id for r in rules] == [f"DR{i}" for i in range(1, len(rules) + 1)]
+    ids = [int(r.id[2:]) for r in rules]
+    assert ids == sorted(set(ids)) and ids[0] == 1  # in order, unique; ids moved out are not reused (#206)
+    moved = {int(r.id[2:]) for r in RL.load_rules(RULES_DIR / "twinhook_notes.md")}
+    assert not moved & set(ids) and set(range(1, max(ids) + 1)) == set(ids) | moved
     for r in rules:
         assert r.title and r.mechanism and r.in_design, r.id
         assert r.cites, f"{r.id} cites nothing"
@@ -71,11 +74,11 @@ def test_a_simulation_rule_names_the_runs_behind_it(tmp_path):
 
 
 def test_dr12_relates_hook_lean_to_the_undercut():
-    (r,) = [r for r in RL.load_rules() if r.id == "DR12"]
+    (r,) = [r for r in RL.load_rules(RULES_DIR / "twinhook_notes.md") if r.id == "DR12"]
     assert "lean" in r.title.lower() and r.evidence == "simulation"
 
 
 @pytest.mark.parametrize("rid, word", [("DR13", "centre of mass"), ("DR14", "pitch"), ("DR15", "undercut"), ("DR16", "end face"), ("DR17", "wedge")])
 def test_the_campaign_rules_are_simulation_rules_with_runs(rid, word):
-    (r,) = [r for r in RL.load_rules() if r.id == rid]
+    (r,) = [r for r in (*RL.load_rules(), *RL.load_rules(RULES_DIR / "twinhook_notes.md")) if r.id == rid]
     assert r.evidence == "simulation" and r.runs and word in (r.title + r.mechanism).lower()

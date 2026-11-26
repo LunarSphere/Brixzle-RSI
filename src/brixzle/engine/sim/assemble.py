@@ -205,7 +205,8 @@ def _assemble(family: Family, p, structure, cfg: T.TrialConfig, seed=0, stop_on_
         seat = expected_seat(family, p, data, info, b, ref) if cfg.error.track_supporter and ref else None
         pos, quat = T.release_pose(family, p, b, sample, seat)
         activate(model, data, info, j, pos, quat, linvel=sample['vel'])
-        m = T.run_until_settled(model, data, info, j, cfg.tolerance, owner, watch=range(j), frames=record)
+        m = T.run_until_settled(model, data, info, j, cfg.tolerance, owner, watch=range(j), frames=record,
+                                before_step=T.held_hold(model, data, info, j, quat, cfg))
         err, angle = T.pose_error(family, p, data, info, j, b, ref)
         outcome = T.classify(lat, err, angle, cfg.tolerance, m['floor'])
         moved, sag, off = 0., 0., []

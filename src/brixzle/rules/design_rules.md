@@ -17,6 +17,8 @@ except a **simulation** rule, which the maintainer accepted from several results
 
 <!-- Each rule starts with "## DR<n>." and has "Cites:" and "Evidence:" lines; tests/test_rules_corpus.py checks them. -->
 
+Rules DR12, DR15, DR16 and DR17 were found on the twinhook line only and are in [`twinhook_notes.md`](twinhook_notes.md) (#206); their ids are not reused.
+
 ## DR1. A guide face must be steeper than its friction cone
 
 - **Mechanism.** A brick sliding on a face under gravity alone keeps sliding only if the face's angle from horizontal is larger than atan(μ). At a shallower angle the friction cone holds the brick still: it sticks on the face (a one-contact jam).
@@ -94,51 +96,39 @@ except a **simulation** rule, which the maintainer accepted from several results
 - **Cites:** petersen-nagpal-werfel-2011, lindsey-mellinger-kumar-2011, augugliaro-2014, jenett-2019
 - **Evidence:** principle
 
-## DR12. A lower hook lean shrinks the hook's undercut
-
-- **Mechanism.** A leaning hook blocks a straight lift by the undercut of its hook wall, about (hook length - tip chamfer - tip set-back) x sin(lean) on the twin-hook line (predicted, quasi-static 2D). Lowering the lean helps a half-supported brick seat (gentle's bare edges: +x -0.38 -> -0.08, -x +0.33 -> +0.59 edge-map Z at 23 -> 18 deg), but below about asin(1 mm / effective hook length), 18.8 deg for gentle's hook, the undercut falls under 1 mm and R4's hook depth breaks (-0.04 mm at 18 deg).
-- **In a design.** When the lean comes down to free a half-supported seat, lengthen the hook's effective length in the same change: less tip chamfer or set-back, or a longer hook. On gentle a 0.4 mm chamfer at 18 deg restored the margin (+0.08 mm) and kept most of the edge gain (`gentle_lean18_ch04`: +x -0.20, -x +0.56), at a cost in friction margin (Z at mu 0.8 +0.83 against +0.93).
-- **Cites:** whitney-1982
-- **Evidence:** simulation
-- **Runs:** runs/diag-gentle-edge-20261122/sweep1.json, runs/diag-gentle-edge-20261122/measured-lean18, runs/rsi/gentle-edge-20261122/iter-01/verified.json, runs/edgemap-20261122T031954257942Z-gentle_lean18_ch04
-
 ## DR13. Keep the centre of mass over the supported side of a half-supported seat
 
-- **Mechanism.** A reaching brick sits half over its supporter's edge and pivots about that edge. The more of its mass lies inboard, over the supporter, the larger the moment that holds it level while its hooks engage. On gentle, adding material on the inboard side (the inboard sill) took the noisy corbel's full six-step median from 1 mm to 2 mm of placement error (medians 6/6/6/3/1/1 at 0 to 5 mm), with full-seat Z unchanged (+0.978) (simulated, uncalibrated contact). #145's campaign found the same direction: each edge wanted the centre of mass moved inboard.
-- **In a design.** Bias mass toward the end of the brick that sits on the supporter in an overhang step, for example with thicker walls or ribs there and lightening at the reaching end, before adding guide features. Check both bare edges, since the reaching direction differs between them.
+- **Mechanism.** A brick that sits partly over its supporter's edge pivots about that edge. The more of its mass lies over the supporter, the larger the moment that holds it level while it engages. In the twinhook campaigns (#184), adding material on the supported side widened the error at which a noisy corbel still built, with the full seat unchanged (simulated, uncalibrated contact).
+- **In a design.** Bias mass toward the end of the brick that sits on its supporter in an overhang step (thicker walls or ribs there, lightening at the reaching end) before adding guide features. Check both bare edges, since the reaching direction differs between them.
 - **Cites:** balkcom-trinkle-2002
 - **Evidence:** simulation
 - **Runs:** runs/rsi/all-placement-codex-20261122/iter-01/verified.json, runs/rsi/all-placement-codex-20261122/archive.json, runs/rsi/all-placement-20261122/iter-03/verified.json
 
-## DR14. Stop the reaching brick's pitch before its first load-bearing contact
+## DR14. Stop a reaching brick's pitch before its first load-bearing contact
 
-- **Mechanism.** A half-supported brick that has started to pitch outward keeps pitching through whatever it meets next. On gentle, three different guides added near the seat (a guide tongue, a swept cheek and a corner rocker) each took load only after the outward pitch had begun, and the free-side tooth still struck the supporter's end wall, leaving the brick jammed short (simulated, uncalibrated contact). The rocker recovered +x edge seats (+0.15, from -0.13) but kept the end-wall strike in the noisy builds.
-- **In a design.** Give the reaching brick an anti-pitch reaction at or before its first contact with the supporter, not a guide downstream of it. Follow the load from first touch to seating (DR9) and check that the first load-bearing contact already resists outward pitch.
-- **Refinement (all-placement-codex2).** Moving the first contact is not enough. A band facet moved the first loaded contact 1.20 mm outward in matched +x drops, but the net first-contact moment still pitched the brick outward, and in the tipped jams neither the hook nor the pilot ever overlapped the socket's retaining section (simulated, uncalibrated contact). Check the net pitching moment and whether the hook actually enters the retaining section, together.
+- **Mechanism.** A half-supported brick that has started to pitch outward keeps pitching through whatever it meets next. In the twinhook campaigns (#184), guides added downstream of the first contact took load only after the pitch had begun, and the brick still jammed short (simulated, uncalibrated contact, free drop). A held release (#206) holds the attitude until the brick stops, so this matters most for the moment after release.
+- **In a design.** Give a reaching brick a reaction against outward pitch at or before its first contact with the supporter, not a guide downstream of it. Follow the load from first touch to seating (DR9) and check the net pitching moment at release.
 - **Cites:** xiao-ji-2001, balkcom-trinkle-2002
 - **Evidence:** simulation
-- **Runs:** runs/rsi/all-placement-codex-20261122/iter-02/verified.json, runs/rsi/all-placement-codex-20261122/iter-03/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/diagnosis.md, runs/rsi/all-placement-codex2-20261122/iter-03/diagnosis.md, runs/rsi/all-placement-codex2-20261122/iter-03/audit.md
+- **Runs:** runs/rsi/all-placement-codex-20261122/iter-02/verified.json, runs/rsi/all-placement-codex-20261122/iter-04/diagnosis.md, runs/rsi/all-placement-codex2-20261122/iter-03/diagnosis.md
 
-## DR15. On a half-supported seat, the free side's hold-down undercut is also a trap
+## DR18. A seat must hold the brick against the release twist
 
-- **Mechanism.** A hold-down undercut keeps a seated brick from lifting out. On a half-supported seat the brick can tip toward the free side before it seats, and the same undercut then catches it short: on gentle, a brick tipped about 16 deg toward the bare +x edge came to rest under the supporter's horn undercut, and a bevel that put an upward component on the end-face reaction just moved jams into that undercut (simulated, uncalibrated contact). R4.hook_depth and the free-side edge pull against each other.
-- **In a design.** Put the retention that must hold a reaching brick on the supported side, or make the free-side undercut unreachable by a brick tipped by the expected error. Check a tipped approach (about 16 deg on gentle) against every undercut on the free side.
-- **Cites:** balkcom-trinkle-2002, whitney-1982
-- **Evidence:** simulation
-- **Runs:** runs/diag-gentle-edge-20261122/gentle_plus_bare.json, runs/rsi/gentle-edge-20261122/iter-01/contacts-20261122T025342055042Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/iter-01/diagnosis.md
+- **Mechanism.** The drone releases a seated brick by yawing about 30 deg, so the passive magnet shears off its steel target (#206). The shear needs a torque about the vertical axis, and only the seat can supply it: contacts whose normals have a component around that axis, at some distance from it. A seat that holds against gravity and sideways pushes but not against twist lets the brick turn with the drone.
+- **In a design.** Give every seat, including a half-supported one, faces that resist rotation about Z (walls or keys across the brick, not only a round or symmetric nest). Check it on the seat a reaching brick has, where engagement is shortest.
+- **Cites:** balkcom-trinkle-2002
+- **Evidence:** principle
 
-## DR16. A sharp free-side tooth hooks a bare vertical end face
+## DR19. Joint clearances the printer can hold
 
-- **Mechanism.** A brick tipped 20 to 32 deg toward a bare edge brings its free-side tooth against the supporter's vertical end face. The tip bears with a horizontal normal about 5 mm above the face's bottom corner, low on the face, not at its top corner, and holds the brick short. On gentle it was the main +x jam in every edge layout: 36 of 50 plus_bare jams, 4 of 5 plus_anchored, 4 of 5 plus_cantilever (simulated, uncalibrated contact). A top-corner bevel does not reach this contact.
-- **In a design.** Keep the free-side tooth of a tipped brick from meeting a bare vertical end face: a tooth that cannot reach past the face, a face that slopes the tooth inboard along its whole height, or no tooth on the free side. Check the contact height, not just the corner.
-- **Cites:** whitney-1982, balkcom-trinkle-2002
-- **Evidence:** simulation
-- **Runs:** runs/contacts-20261122T031344558193Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/edge/contacts-20261122T035544558275Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/edge/contacts-20261122T035554515201Z-gentle_lean18_ch04
+- **Mechanism.** A joint that seats in simulation at a gap below what an FDM printer holds will not seat when printed: the printed faces meet early and the brick sits proud. The maintainer found gentle's seated gaps (0.08 and 0.15 mm) below what the lab's printer reliably holds (#190), and expects about 0.2 mm or more to work. A wider gap also widens the range of depths at which two-point contact cannot wedge (DR2).
+- **In a design.** Keep every gap a brick seats into at about 0.2 mm or more, and buy back any lost hold with geometry (deeper engagement, DR10) rather than tighter fits.
+- **Cites:** whitney-1982
+- **Evidence:** user observation
 
-## DR17. The face beside a socket pocket wedges against the opposite tooth
+## DR20. Bias the error onto one long guide (was requirement R5)
 
-- **Mechanism.** A brick offset about 1 mm toward a bare edge lands its body on the flat face beside the pocket that should take its horn, while its opposite tooth bears on the slot wall. The two contacts form a wedge (DR2) and the brick jams above its seat. On gentle, a pocket lead-in opened to the underside rescued 3 of 8 diagnosed wedge cells but lost seats elsewhere on the edge and in the 4 mm corbel (simulated, uncalibrated contact).
-- **In a design.** Do not leave a flat landing face beside a pocket within the expected placement error; slope it into the pocket at least as wide as the error, and check that the opposite tooth's contact cannot see the landing face's friction cone (DR2).
-- **Cites:** whitney-1982, balkcom-trinkle-2002
-- **Evidence:** simulation
-- **Runs:** runs/contacts-20261122T031008301714Z-gentle_lean18_ch04, runs/contacts-20261122T031101278271Z-gentle_lean18_ch04, runs/rsi/all-placement-20261122/iter-06/design_note.md, runs/rsi/all-placement-20261122/iter-06/screen.json
+- **Mechanism.** A capture region need not be symmetric. Aiming off-centre, so that most of the error lands on one long, steep guide, uses a single sliding motion to correct it, and that guide can be made longer than two short ones could.
+- **In a design.** A suggestion, not a requirement: consider one long guide on the side the aim is biased toward, steeper than friction (DR1), and check the opposite side for wrong valleys (DR5).
+- **Cites:** lozano-perez-mason-taylor-1984
+- **Evidence:** principle

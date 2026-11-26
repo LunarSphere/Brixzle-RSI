@@ -39,7 +39,10 @@ def r10_margins(family, p):
     """The smallest of each R10 margin over the family's parts."""
     out = {}
     for part in family.parts:
-        for k, v in R.margins(family, p, part, B.sim_bodies(family, p, part)).items():
+        bodies = B.sim_bodies(family, p, part)
+        # The fork's carrying openings are not a loop rule since #206, but this check is for the fork.
+        margins = {**R.margins(family, p, part, bodies), **R.carrying_margins(family.pickup(p, part), bodies)}
+        for k, v in margins.items():
             if k.startswith("R10."):
                 out[k] = min(out.get(k, math.inf), float(v))
     return {k: (v if math.isfinite(v) else None) for k, v in out.items()}

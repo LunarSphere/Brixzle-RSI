@@ -103,13 +103,12 @@ def test_check_kinds_are_the_four_agreed_kinds():
 # --- R10 grippable (issue #50), carried by two large openings (issue #87) ---
 
 
-def test_r10_is_grippable_and_names_no_gripper():
+def test_r10_is_grippable_by_a_magnet_target():
     r10 = {r.id: r for r in load_requirements()}["R10"]
     assert r10.name == "Grippable" and r10.checks == ("rule",)
-    assert "at least two large through-Y openings, above and either side of the centre of mass" in r10.text
+    assert "magnet target" in r10.text
     # The maintainer's wording (2026-11-11): the limit is on the brick and the gripper together.
     assert "The combined mass of the brick and the gripper must not be more than 35 g" in r10.text
-    assert "fork" not in r10.text.lower()
 
 
 # --- Deferred requirements (issue #46) ---
@@ -122,10 +121,10 @@ def md_deferred_ids():
     return re.findall(r"^\| (R\d+) \|", section, flags=re.MULTILINE)
 
 
-def test_r12_is_deferred_and_every_other_requirement_is_active():
+def test_the_strategies_and_pickup_are_deferred_and_every_other_requirement_is_active():
     status = {r.id: r.status for r in load_requirements()}
-    assert status.pop("R12") == "deferred"
-    assert set(status.values()) == {"active"}
+    assert {k for k, v in status.items() if v == "deferred"} == {"R5", "R7", "R8", "R12"}  # #206
+    assert {v for k, v in status.items() if k not in {"R5", "R7", "R8", "R12"}} == {"active"}
 
 
 def test_markdown_lists_the_same_deferred_requirements():
