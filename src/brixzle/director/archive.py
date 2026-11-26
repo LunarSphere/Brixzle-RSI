@@ -86,11 +86,15 @@ def band_key(rec):
 
 
 def better(a, b, tie_mm=GREEN_TIE_MM):
-    """``a`` ranks above ``b`` in a band: a green zone larger by at least ``tie_mm``, or a tie on it
-    and a larger ``band_key``."""
-    ga, gb = float(a.get("green_mm") or 0.0), float(b.get("green_mm") or 0.0)
-    if abs(ga - gb) >= tie_mm:
-        return ga > gb
+    """``a`` ranks above ``b`` in a band: a green zone larger by at least ``tie_mm``; on a tie, the
+    second-weakest placement's green zone (``second_mm``, #210) larger by at least ``tie_mm``; on a
+    tie there too, a larger ``band_key``."""
+    for key in ("green_mm", "second_mm"):
+        if a.get(key) is None or b.get(key) is None:
+            continue
+        x, y = float(a[key]), float(b[key])
+        if abs(x - y) >= tie_mm:
+            return x > y
     return band_key(a) > band_key(b)
 
 

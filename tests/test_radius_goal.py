@@ -181,9 +181,10 @@ def test_the_radius_measurement_scores_the_grid_and_builds_at_the_green_zone(tmp
     monkeypatch.setattr(GS, "grid_search", lambda fam, p, s, workers=None: {**fake, "drops_rows": [], "jams": None})
     seen = {}
     monkeypatch.setattr(RA, "noisy_builds", lambda fam, p, r, bs, workers=None: seen.setdefault(
-        "r", {"radius_mm": r, "overhang_steps": 3.0, "stack_courses": 3.0}))
+        "r", {"radius_mm": bs.radius_mm if r is None else r, "overhang_steps": 3.0, "stack_courses": 3.0}))
     m = VE.measure_radius("x:y", tmp_path / "measured", GS.GridSettings(placements=("full", "corbel_reach")))
-    assert m["green_mm"] == fake["green_mm"] and seen["r"]["radius_mm"] == fake["green_mm"]
+    assert m["green_mm"] == fake["green_mm"] and seen["r"]["radius_mm"] == 16.0 == m["build_radius_mm"]
+    assert m["second_mm"] == max(m["green_by_placement"].values())  # two placements: the other one
     assert m["weakest"] == fake["weakest"] and m["z_rings"]["16"] == 1.0
     assert (tmp_path / "measured" / "grid" / "map-full.png").exists()
     assert m["grid"]["maps"] and "r90_mm" not in m
