@@ -67,5 +67,5 @@ same steps with Claude subagents (#205 will make it call Codex roles).
 
 - The gripper values (`src/brixzle/engine/gripper_spec.py`) are guesses until the bench tests.
 - The yaw that releases the magnet is not simulated; design rule DR18 asks for seats that resist it.
-- Held release holds the brick's attitude rigidly; a real magnet mount gives some compliance.
+- The release is a free drop from 11.2 mm (#218). A real release (a yaw shear) may give the brick a little spin, which is not simulated.
 - Joint gaps of at least 0.2 mm are a design rule (DR19), not a check.

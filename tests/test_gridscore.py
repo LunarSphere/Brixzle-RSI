@@ -137,7 +137,9 @@ def test_a_repeatable_lone_jam_still_bounds_the_green_zone():
     assert res["placements"]["full"]["tolerated"] == []
 
 
-def test_two_touching_failures_are_never_tolerated():
+def test_touching_failures_that_do_not_repeat_are_tolerated_too():
+    # maintainer, 2026-11-26 (#218): only a repeatable failure ends the green zone, even when its
+    # neighbours failed as well
     pair = lambda p, x, y: "jammed" if (x, y) in {(7.5, 0.0), (10.0, 0.0)} else "seated"
     checked = []
 
@@ -146,8 +148,17 @@ def test_two_touching_failures_are_never_tolerated():
         return {c: [{"mu": 0.2, "seed": 0, "outcome": "seated"}] for c in cells}
 
     res = GS.search(lambda pts: [pair(*q) for q in pts], GS.GridSettings(placements=("full",)), noise_check=noise)
-    assert checked == []
-    assert res["placements"]["full"]["green_mm"] < 10.0
+    assert checked == [(3, 0, 1), (4, 0, 1)]
+    assert res["placements"]["full"]["green_mm"] == 40.0
+    assert res["placements"]["full"]["tolerated"] == [[3, 0, 1], [4, 0, 1]]
+
+
+def test_touching_failures_that_repeat_still_end_the_green_zone():
+    pair = lambda p, x, y: "jammed" if (x, y) in {(7.5, 0.0), (10.0, 0.0)} else "seated"
+    noise = lambda pl, cells: {c: [{"mu": 0.2, "seed": k, "outcome": "jammed"} for k in range(3)] for c in cells}
+    res = GS.search(lambda pts: [pair(*q) for q in pts], GS.GridSettings(placements=("full",)), noise_check=noise)
+    assert res["placements"]["full"]["green_mm"] == pytest.approx(6.25)
+    assert res["placements"]["full"]["tolerated"] == []
 
 
 @pytest.mark.slow

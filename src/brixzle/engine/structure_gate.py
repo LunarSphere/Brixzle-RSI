@@ -269,4 +269,4 @@ if __name__ == "__main__":
 
 # The MVP gate (#206): a stack of 3 and a back-first overhang of at least 3, with ideal placement. The
 # running-bond wall, the bridge and the ring are reported for finalists only.
-MVP = GateSettings(structures=("tower", "overhang"), tower=3, overhang_floor=3, overhang_ask=6, held=True)
+MVP = GateSettings(structures=("tower", "overhang"), tower=3, overhang_floor=3, overhang_ask=6, held=False)  # #218: drop

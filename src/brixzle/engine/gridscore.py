@@ -44,8 +44,8 @@ class GridSettings:
     floor_mm: float = 16.0      # the least error a brick must tolerate to be worth printing (#206)
     rings_mm: tuple = (16.0, 28.0, 40.0)   # Z rings: floor, p95 and worst (#206's error range)
     placements: tuple = tuple(RA.PLACEMENTS)
-    z_frac: float = 0.5         # release height, as a share of the mean box's height span
-    held: bool = True           # held release; False: the free drop
+    z_frac: float = 1.0         # release height, as a share of the mean box's height span: its top (#218), 11.2 mm
+    held: bool = False          # hover and drop (#218): a free drop; True: the held release (#206)
     early_stop: bool = True
 
     def __post_init__(self):
@@ -178,17 +178,15 @@ def _seen(cells, tolerated):
     return {c: (SEATED if c in tolerated else o) for c, o in cells.items()}
 
 
-def nearest_lone_failure(cells, s: GridSettings, tolerated=(), checked=()):
-    """The failure nearest the aim, if it is a fine cell whose every touching cell seats (or is
-    tolerated) and it has not been checked: the one candidate for solver noise. None otherwise."""
+def nearest_unchecked_failure(cells, s: GridSettings, tolerated=(), checked=()):
+    """The failure nearest the aim, if it is a fine cell not yet rerun: the next candidate for solver
+    noise. None if the nearest failure was already rerun (and repeated) or is a coarse cell."""
     view = _seen(cells, tolerated)
     bad = sorted((distance_mm(c, s), c) for c, o in view.items() if o != SEATED)
     if not bad:
         return None
     c = bad[0][1]
     if c[2] != 1 or c in checked:
-        return None
-    if any(view[n] != SEATED for n in _touching(c, _owners(cells))):
         return None
     return c
 
@@ -200,9 +198,10 @@ def search(outcome_of, s: GridSettings = GridSettings(), noise_check=None):
 
     ``noise_check(placement, [cell]) -> {cell: [{mu, seed, outcome}]}`` reruns cells (at other
     frictions and seeded shifts). Once nothing is left to refine, the failure nearest the aim is
-    checked if it is an isolated fine cell; if it is not repeatable (jam_analysis.repeatability) it
-    is solver noise and no longer bounds the green zone (maintainer, 2026-11-26), and the search
-    goes on to the next nearest. It stays in the cells, listed under ``tolerated``."""
+    rerun; if it is not repeatable (jam_analysis.repeatability: it fails less than 2/3 of the seeds at
+    every friction) it is solver noise and no longer bounds the green zone, whether or not its
+    neighbours failed too (maintainer, 2026-11-26, #218; isolated cells only before), and the search
+    goes on to the next nearest, until the nearest failure repeats. It stays in the cells, listed under ``tolerated``."""
     from brixzle.engine import jam_analysis as JA
 
     t0 = time.time()
@@ -242,7 +241,7 @@ def search(outcome_of, s: GridSettings = GridSettings(), noise_check=None):
         t, n, changed = time.time(), 0, False
         for pl in s.placements:
             while True:
-                c = nearest_lone_failure(cells[pl], s, tolerated[pl], noise[pl])
+                c = nearest_unchecked_failure(cells[pl], s, tolerated[pl], noise[pl])
                 if c is None:
                     break
                 reruns = noise_check(pl, [c])[c]
@@ -280,7 +279,7 @@ def grid_search(family, p, s: GridSettings = GridSettings(), workers=None, noise
     """``search`` in the sim: held drops in one DropPool (all cores unless ``workers``), the drop
     cache on if the caller turned it on (tools.core.cache_on). Every drop is kept in ``drops_rows``
     in the form ``tools contacts`` reads, and the rounds carry their wall-clock. With ``noise``,
-    lone failures are rerun (``search``'s noise_check); with ``jams``, the failures that bound each
+    the failures nearest the aim are rerun until one repeats (``search``'s noise_check); with ``jams``, the failures that bound each
     placement's green zone are analysed (``analyse_jams``)."""
     import os
 

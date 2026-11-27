@@ -22,7 +22,7 @@ from pathlib import Path
 import shutil
 
 LABEL = "simulated, uncalibrated contact"
-RULES = "214"   # the score the entries were measured under: the #208 grid with #210's placements and builds
+RULES = "218"   # the score the entries were measured under: the #208 grid, #210 placements and builds, #218 free drop
 FLOOR_MM = 16.0
 
 
@@ -205,7 +205,7 @@ def add_iteration(run, n, lib, renders=True):
     return out
 
 
-def add_design(spec, grid_dir, lib, builds=None, name=None, renders=True):
+def add_design(spec, grid_dir, lib, builds=None, name=None, renders=True, diagnosis=None, origin=None):
     """Add a registry family (or ``<root>:<module>``) from a grid run's folder (``gridscore --out``)."""
     from brixzle.tools import core as TC
 
@@ -216,8 +216,13 @@ def add_design(spec, grid_dir, lib, builds=None, name=None, renders=True):
     fam = TC.load(spec)
     root, module = TC._root_module(spec)
     module_file = Path(root) / module / "family.py"
-    entry = entry_from(name=name or fam.name, spec=spec, origin=f"grid run {grid_dir.name}", grid=grid, builds=builds,
-                       idea=_idea(_docstring(module_file)), sources={"grid": str(grid_dir), "code": str(module_file)})
+    run_dir = grid_dir.parent.parent if grid_dir.name == "grid" and grid_dir.parent.name == "measured" else grid_dir
+    measured = grid_dir.parent / "measured.json"  # a verify's measurement beside its grid: the constraints broken
+    violations = json.loads(measured.read_text()).get("violations") if measured.exists() else ()
+    entry = entry_from(name=name or fam.name, spec=spec, origin=origin or f"run {run_dir.name}", grid=grid,
+                       builds=builds, idea=_idea(_docstring(module_file)), violations=violations,
+                       diagnosis=Path(diagnosis).read_text() if diagnosis else None,
+                       sources={"grid": str(grid_dir), "code": str(module_file)})
     out = write_entry(lib, entry, {"family.py": module_file, **_bases(module_file), **_grid_files(grid_dir)})
     if renders:
         _renders(spec, out)
@@ -240,6 +245,8 @@ def main(argv=None):
     a1.add_argument("--grid", required=True)
     a1.add_argument("--builds", help="a builds.json (radius.noisy_builds) to include")
     a1.add_argument("--name")
+    a1.add_argument("--diagnosis", help="a critic's diagnosis.md to include (e.g. from the run that made it)")
+    a1.add_argument("--origin", help="where the design came from, for the card (default: the grid run)")
     a2 = sub.add_parser("add-run")
     a2.add_argument("run")
     sub.add_parser("index")
@@ -249,7 +256,7 @@ def main(argv=None):
     lib = Path(a.lib)
     if a.cmd == "add":
         builds = json.loads(Path(a.builds).read_text()) if a.builds else None
-        print(add_design(a.spec, a.grid, lib, builds=builds, name=a.name))
+        print(add_design(a.spec, a.grid, lib, builds=builds, name=a.name, diagnosis=a.diagnosis, origin=a.origin))
     elif a.cmd == "add-run":
         for d in sorted(Path(a.run).glob("iter-*")):
             out = add_iteration(a.run, int(d.name.split("-")[1]), lib)
