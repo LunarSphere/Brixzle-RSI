@@ -1,7 +1,6 @@
 """python -m brixzle.tools <tool> ... (#163). Each tool writes runs/<tool>-<UTC>-<family>/result.json
-(``evaluate`` writes eval.json to --out) and prints a short JSON summary. Simulated, uncalibrated contact.
+and prints a short JSON summary. Simulated, uncalibrated contact.
 
-    evaluate   <family> --out DIR [--stages map,gate,...]   the loop's stages, with the caches
     heldmap    <family> [--gripper FILE] [--full]                     five-phase held placements and corbel builds
     edgemap    <family>                                     half-supported seat map
     redrop     <family> --map DIR [selection] [--friction MU]  re-drop chosen map poses
@@ -50,12 +49,6 @@ def parser():
     ap = argparse.ArgumentParser(prog="python -m brixzle.tools", description=__doc__.splitlines()[0])
     ap.add_argument("--runs", default="runs")
     sub = ap.add_subparsers(dest="tool", required=True)
-    e = sub.add_parser("evaluate")
-    e.add_argument("family")
-    e.add_argument("--out", required=True)
-    e.add_argument("--stages", default=",".join(TC.STAGES))
-    e.add_argument("--seed", type=int, default=0)
-    e.add_argument("--no-cache", action="store_true")
     h = sub.add_parser("heldmap")
     h.add_argument("family")
     h.add_argument("--gripper")
@@ -105,10 +98,6 @@ def _short(res):
 def main(argv=None):
     a = parser().parse_args(argv)
     TC.cache_on() if not getattr(a, "no_cache", False) else None
-    if a.tool == "evaluate":
-        res = TC.evaluate(a.family, a.out, stages=tuple(_csv(a.stages)), seed=a.seed, cache=not a.no_cache)
-        print(json.dumps(_short(res), indent=1, default=str))
-        return 0
     if a.tool in ("slices", "mapdiff"):
         res = TC.slices(a.map) if a.tool == "slices" else TC.mapdiff(a.a, a.b)
         name = "map"

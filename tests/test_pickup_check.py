@@ -3,7 +3,7 @@ contact; the gripper is today's fixed fork, a stand-in until #24."""
 
 from pathlib import Path
 
-from brixzle.agents import check_family as CF
+from brixzle.tools import check_family as CF
 from brixzle.engine import pickup_check as PC
 from brixzle.families.ab.family import FAMILY as AB
 

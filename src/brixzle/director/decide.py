@@ -22,10 +22,10 @@ from brixzle.director import run as RN
 ACTIONS = ("fix", "push", "stop")
 NEW_FAMILY = "new_family"
 MAX_UNITS = 3
-TIGHTER = {  # setting -> +1 if a larger value is tighter, -1 if a smaller one is
-    "max_length_mm": -1, "max_release_mm": -1, "min_arm_overhang": +1, "max_bridge_riser_mm": -1,
-    "grip_mm": -1, "grip_deg": -1, "tolerance_steps": +1,
-}
+# setting -> +1 if a larger value is tighter, -1 if a smaller one is. The #164 goal's settings (length,
+# release, arm overhang, grip) went with that goal (#204); the radius goal has none the director may
+# tighten yet, so a goal change may change only its text.
+TIGHTER = {}
 
 
 def problems(decision, goal):

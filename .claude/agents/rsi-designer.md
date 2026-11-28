@@ -42,7 +42,7 @@ Everything goes inside `<run>/iter-NN/`. The loop's guard refuses writes anywher
 
 Run them with Bash from the repository root. `F` is `<run>/iter-NN:<module>`. Results are "simulated, uncalibrated contact".
 
-- `uv run python -m brixzle.agents.check_family <run>/iter-NN <module>`: the contract and rule margins. Run it first and after every edit.
+- `uv run python -m brixzle.tools.check_family <run>/iter-NN <module>`: the contract and rule margins. Run it first and after every edit.
 - `uv run python -m brixzle.engine.quick_check --quarters --family F --runs <run>/iter-NN`: the screen verify runs first (40 random drops within 16 mm, 10 per quarter; 15 to 52 s on the lab machine, `runs/quarterz-20261127-233337-screen`). Run it before the grid: a design that fails it is not scored.
 - `uv run python -m brixzle.engine.gridscore F --placements <one or two> --no-jams --out <run>/iter-NN/probe-<tag>`: a quick probe of the grid score on the placements you are fixing. Look at the maps it writes (`map-<placement>.png`, Z16 in the title).
 - `uv run python -m brixzle.engine.gridscore F --out <run>/iter-NN/full`: the full default score (the four quarters, with the jam analysis in `jams.json`), the numbers to claim. The drop cache makes the verifier's rerun fast.

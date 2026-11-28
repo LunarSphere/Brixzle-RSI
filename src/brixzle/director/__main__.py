@@ -69,7 +69,7 @@ def main(argv=None):
     ap.add_argument("--run", required=True)
     ap.add_argument("--iter", type=int)
     ap.add_argument("--goal")
-    ap.add_argument("--baseline", help="a registry family, or none; default: none for the radius goal, ab otherwise")
+    ap.add_argument("--baseline", help="a registry family, or none (the default)")
     ap.add_argument("--iterations", type=int, default=8)
     ap.add_argument("--minutes", type=float, default=240)
     ap.add_argument("--deny-read", default="")
@@ -122,8 +122,7 @@ def main(argv=None):
                              indent=1, default=str))
             return 0 if v["claim"]["ok"] else 1
         claim = RN.read_json(d / "claim.json", {"numbers": []})
-        brief = RN.read_json(d / "brief.json", {})
-        m = _measure(run, spec, d, measure_edge=brief.get("term") == "edge_z")
+        m = _measure(run, spec, d)
         cmp = VE.compare(claim, m)
         rec = {**_archive_terms(m), "violations": m["violations"],
                "name": f"iter-{a.iter:02d}:{pkg.name}", "spec": spec}
@@ -144,31 +143,21 @@ def main(argv=None):
     return 0 if ok else 1
 
 
-def _measure(run, spec, directory, **options):
+def _measure(run, spec, directory):
+    """The error-radius goal's measurement (#206, Z on four quarters since #222): the only goal."""
+    from brixzle.engine import gridscore as GS
+    from brixzle.engine import radius as RA
+
     settings = RN.read_json(run / "goal.json")["settings"]
-    if settings.get("stage") == "radius":
-        from brixzle.engine import gridscore as GS
-        from brixzle.engine import radius as RA
-        gs = GS.GridSettings(**{k: tuple(v) if isinstance(v, list) else v
-                                for k, v in (settings.get("grid") or {}).items()})
-        # the noisy builds are for finalists (#222): only when the campaign turns them on
-        bs = RA.BuildSettings(**(settings.get("builds") or {})) if settings.get("run_builds") else None
-        return VE.measure_radius(spec, directory / "measured", gs, bs)
-    if settings.get("stage") == "held":
-        baseline = RN.read_json(run / "baseline" / "verified.json", {})
-        floor = settings.get("min_drop_z", VE.lookup(baseline, "measured.z.mean.Z"))
-        options.update(measure_held=True, min_drop_z=floor, held_targets=tuple(settings.get("held_targets", ())))
-    return VE.measure(spec, directory / "measured", **options)
+    gs = GS.GridSettings(**{k: tuple(v) if isinstance(v, list) else v for k, v in (settings.get("grid") or {}).items()})
+    # the noisy builds are for finalists (#222): only when the campaign turns them on
+    bs = RA.BuildSettings(**(settings.get("builds") or {})) if settings.get("run_builds") else None
+    return VE.measure_radius(spec, directory / "measured", gs, bs)
 
 
 def _archive_terms(measured):
-    if measured.get("stage") == "radius":
-        return {k: measured.get(k) for k in ("z", "z_quarters", "green_mm", "second_mm", "green_by_placement", "floor_passed", "weakest",
-                                             "z_rings", "overhang_steps", "stack_courses", "build_radius_mm")}
-    held = measured.get("held", {})
-    counts = {f"held_{key}_z_counts": {k: value[k] for k in ("S", "J", "N")}
-              for key, value in held.get("cases", {}).items()}
-    return {**measured["objective"], **held.get("scores", {}), **counts}
+    return {k: measured.get(k) for k in ("z", "z_quarters", "green_mm", "second_mm", "green_by_placement", "floor_passed",
+                                         "weakest", "z_rings", "overhang_steps", "stack_courses", "build_radius_mm")}
 
 
 def _offer(run, rec):
@@ -178,12 +167,7 @@ def _offer(run, rec):
     for previous in offers:
         if previous["name"] == rec["name"]:
             return {key: saved for key, saved in previous.items() if key not in {"name", "time"}}
-    settings = RN.read_json(Path(run) / "goal.json", {}).get("settings", {})
-    if settings.get("stage") == "radius":
-        arc = AR.BandArchive(data["members"])
-    else:
-        defaults = AR.HELD_TERMS if settings.get("stage") == "held" else AR.LEGACY_TERMS
-        arc = AR.Archive(data["members"], terms=settings.get("scored", defaults))
+    arc = AR.BandArchive(data["members"])
     res = arc.offer(rec)
     data["members"] = arc.members
     offers.append({"name": rec["name"], **res, "time": RN.now()})

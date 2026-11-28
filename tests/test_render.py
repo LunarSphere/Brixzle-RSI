@@ -7,7 +7,7 @@ view). Each test checks that a PNG was written and what text the figure carries.
 import pytest
 
 from brixzle.engine import boxes as BX
-from brixzle.loop import render as RD
+from brixzle.tools import render as RD
 
 BOXES = BX.default_boxes()["placement"]
 GRID = {"slice": "xz", "course": 0, "axes": ["x", "z"], "step": {"x": 1.0, "z": 5.0},

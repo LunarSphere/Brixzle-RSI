@@ -1,11 +1,11 @@
 """A loop run's directory (#165).
 
     runs/rsi/<name>/
-      goal.json         the goal: text, objective settings (engine/objective.Settings), its history
+      goal.json         the goal: text, settings (RADIUS_DEFAULTS and the campaign's own), its history
       STATE.md          written by the director after every evaluation
       decisions.jsonl   every decision, with its evidence (decide.record)
       next.json         the next step: design | verify | critique | direct | finish
-      archive.json      the Pareto archive of verified, feasible designs (archive.Archive)
+      archive.json      the best verified, feasible design per Z band (archive.BandArchive)
       iter-NN/          one per iteration: brief.json, <module>/family.py, claim.json, verified.json,
                         diagnosis.md, decision.json
       run.json          where the lock and the loop's checkout are, and the checkout's status at the start (#179)
@@ -13,7 +13,6 @@
 
 ``init_run`` also writes the loop's lock (guard.LOCK) at the repo root, which turns the bounds on.
 """
-from dataclasses import asdict
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -58,12 +57,9 @@ def _git(repo, *args):
 
 def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=None, human_checkpoints=()):
     """Create the run, write the lock and return the run directory. Refuses an existing run or a
-    second loop in the same checkout. ``baseline`` None: none for the radius goal (#215: the design
-    library replaces it), ``ab`` for the older goals, which read their floors from it."""
-    from brixzle.engine import objective as OB
-
+    second loop in the same checkout. ``baseline`` None: none (#215: the design library replaces it)."""
     if baseline is None:
-        baseline = "none" if (settings or {}).get("stage", "radius") == "radius" else "ab"
+        baseline = "none"
 
     run, repo = Path(run).resolve(), Path(repo).resolve()
     if run.exists():
@@ -72,12 +68,9 @@ def init_run(run, goal, baseline, repo=".", budget=None, deny_read=(), settings=
         raise FileExistsError(f"another loop holds {repo / GU.LOCK}")
     if settings is not None and not isinstance(settings, dict):
         raise ValueError("campaign settings must be a JSON object")
-    s = asdict(OB.Settings())
-    if not (settings and settings.get("stage")):
-        s.update(RADIUS_DEFAULTS)  # the error-radius goal (#206) unless the campaign names another stage
-    if settings and settings.get("stage") == "held":
-        from brixzle.director.archive import HELD_TERMS
-        s["scored"] = HELD_TERMS
+    if (settings or {}).get("stage", "radius") != "radius":
+        raise ValueError("the error-radius goal is the only stage (the #164 and held goals were removed, #204)")
+    s = dict(RADIUS_DEFAULTS)
     s.update(settings or {})
     run.mkdir(parents=True)
     budget = {"iterations": 8, "wall_clock_min": 240, "stall": 3, **(budget or {})}

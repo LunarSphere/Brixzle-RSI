@@ -33,7 +33,7 @@ _FP = {}
 def _fingerprint(where, name):
     if (where, name) not in _FP:
         if where == "runs":
-            from brixzle.agents.check_family import load_family
+            from brixzle.tools.check_family import load_family
             fam = load_family(FABLE, name)
         else:
             fam = registry.get(name)

@@ -148,7 +148,7 @@ def test_each_decided_iteration_is_recorded_once_with_its_mechanism(repo):
 
 
 def test_the_radius_measurement_scores_the_grid_and_builds_at_the_green_zone(tmp_path, monkeypatch):
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
     from brixzle.director import verify as VE
     from brixzle.engine import gridscore as GS
     from brixzle.engine import gripper_spec as GSP

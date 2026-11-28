@@ -10,7 +10,7 @@ workers can import it too. Module names are unique per attempt, so two designs n
 separate process with a time limit (``check_in_subprocess``), so a design that hangs or crashes
 cannot take the loop down with it:
 
-    uv run python -m brixzle.agents.check_family --root <root> --module <module>
+    uv run python -m brixzle.tools.check_family --root <root> --module <module>
 """
 
 import argparse
@@ -56,7 +56,7 @@ def _num(v):
 def check(root, module, samples=2, reference=None, share=None):
     """The contract violations, rule margins, mass and size of a written family, JSON-safe.
     ``reference`` (an explore call, #106): a registry family the design must not be a near copy of
-    (loop/novelty.py); a near copy is not ok."""
+    (director/novelty.py); a near copy is not ok."""
     from brixzle.families import builders as B
     from brixzle.families import contract as C
     from brixzle.families import rules as R
@@ -110,7 +110,7 @@ def check(root, module, samples=2, reference=None, share=None):
         out["ring"] = ring_report(fam)  # reported, not part of ok: the loop's ring build judges it (#89)
     if reference and not out["violations"] and not out["error"]:
         from brixzle.families import registry
-        from brixzle.loop import novelty as NV
+        from brixzle.director import novelty as NV
 
         ref = registry.get(reference)
         nv = NV.near_copy(fam, fam.defaults, ref, ref.defaults, share=NV.NEAR_COPY_SHARE if share is None else share)
@@ -162,7 +162,7 @@ def aim_drops(fam, p):
 
 def check_in_subprocess(root, module, timeout=CHECK_TIMEOUT_S, reference=None, share=None):
     """``check`` in a fresh process with a time limit; a crash or a hang is reported, not raised."""
-    cmd = [sys.executable, "-m", "brixzle.agents.check_family", "--root", str(root), "--module", module]
+    cmd = [sys.executable, "-m", "brixzle.tools.check_family", "--root", str(root), "--module", module]
     if reference:
         cmd += ["--reference", reference] + (["--share", str(share)] if share is not None else [])
     try:

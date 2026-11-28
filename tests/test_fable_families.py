@@ -21,7 +21,7 @@ def test_registered(name):
 def test_matches_the_runs_module_it_was_copied_from(name):
     if not (FABLE / name / "family.py").exists():
         pytest.skip("the source module is only available locally under runs/fable")
-    from brixzle.agents.check_family import load_family
+    from brixzle.tools.check_family import load_family
     src, reg = load_family(FABLE, name), registry.get(name)
     from dataclasses import asdict
     assert src.version == reg.version and asdict(src.defaults) == asdict(reg.defaults)

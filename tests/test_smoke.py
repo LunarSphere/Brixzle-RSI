@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-SUBPACKAGES = ("intake", "agents", "engine", "families", "rules", "data")
+SUBPACKAGES = ("director", "engine", "families", "rules", "data", "tools")
 
 
 def test_package_imports():

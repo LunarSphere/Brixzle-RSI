@@ -136,10 +136,6 @@ def test_a_radius_run_starts_without_a_baseline_unless_one_is_named(tmp_path):
                    check=True)
     run = RN.init_run(tmp_path / "runs" / "rsi" / "a", goal="g", baseline=None, repo=tmp_path)
     assert json.loads((run / "goal.json").read_text())["baseline"] == "none"
-    (tmp_path / ".rsi-loop-active").unlink()
-    held = RN.init_run(tmp_path / "runs" / "rsi" / "b", goal="g", baseline=None, repo=tmp_path,
-                       settings={"stage": "held"})
-    assert json.loads((held / "goal.json").read_text())["baseline"] == "ab"  # the held goal reads floors from it
 
 
 def test_a_design_filed_from_a_verify_folder_names_the_run_and_its_broken_constraints(tmp_path):

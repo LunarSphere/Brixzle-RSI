@@ -3,9 +3,9 @@
 from dataclasses import replace
 from pathlib import Path
 
-from brixzle.agents import check_family as CF
+from brixzle.tools import check_family as CF
 from brixzle.families import registry
-from brixzle.loop import novelty as NV
+from brixzle.director import novelty as NV
 
 AB = registry.get("ab")
 
