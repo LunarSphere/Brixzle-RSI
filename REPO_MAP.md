@@ -70,6 +70,6 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `clean_results/` | Curated results of earlier designs (A/B to allround), with STL and STEP files and the scripts that made them |
 | `lessons/lessons.jsonl` | Lessons carried between runs |
 | `scripts/` | One-off generators and baselines: hover estimates, objective and bounce baselines, eval comparison, SO-101 reach, grasp and video (#152, #153) |
-| `tests/`, `tests/fixtures/` | pytest suite (`uv run pytest`; `-m "not slow"` skips the long sim runs) and reference results from aerial-assembly |
+| `tests/`, `tests/fixtures/` | pytest suite (`uv run pytest -n auto`, in parallel with pytest-xdist; `-m "not slow"` skips the long sim runs, as CI does on pull requests, #224) and reference results from aerial-assembly |
 | `.github/workflows/ci.yml` | CI: the tests on every PR and on pushes to `main` |
 | `runs/` | Git-ignored. One folder per run: `runs/rsi/<name>/` for director runs, one `iter-NN/` per iteration |
