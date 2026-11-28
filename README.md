@@ -38,7 +38,7 @@ Each iteration has four roles, each with its own instructions in `.claude/agents
 5. **Verifier** audits the designer's note against the measurement; **critic** names the mechanisms behind the failures from the maps, the jam analysis and the contacts.
 6. The design is offered to the **band archive**, which keeps the best design per Z band (below 0, 0–0.5, 0.5–0.8, 0.8–0.95, 0.95+).
 
-The bounds are enforced by code, not by the prompts: while a run is active, a hook refuses writes outside the run directory, the tracked tree must not change, and every claimed number is rerun.
+The bounds are enforced by code, not by the prompts: while a run is active, a hook refuses writes outside the run directory (in Claude Code and in Codex), the tracked tree must not change, and every claimed number is rerun.
 
 ### The score
 
