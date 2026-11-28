@@ -5,8 +5,8 @@
 Each tool is a function that returns a JSON-able dict and writes it to a new run directory
 ``runs/<tool>-<UTC>-<family>/result.json`` with its inputs, seed and wall-clock. ``python -m
 brixzle.tools <tool> ...`` runs one from the command line and prints a short summary. The tools turn
-the drop cache on (engine/drop_cache; ``BRIXZLE_DROP_CACHE``), and ``evaluate`` also keeps whole gate
-and ring results by geometry, so work already done for the same sim geometry is read back.
+the drop cache on (engine/drop_cache; ``BRIXZLE_DROP_CACHE``), and ``gate`` and ``ring`` also keep whole
+results by geometry, so work already done for the same sim geometry is read back.
 
 Families are named as in the registry (``fable_gentle``) or as ``<root>:<module>`` for a package
 outside ``src/`` (``runs/fable:fable_gentle``), as the design agent writes them.
@@ -49,7 +49,7 @@ def cache_on():
 def load(spec):
     """A family from a registry name or ``<root>:<module>``."""
     if ":" in spec:
-        from brixzle.agents.check_family import load_family
+        from brixzle.tools.check_family import load_family
         root, module = spec.rsplit(":", 1)
         return load_family(root, module)
     from brixzle.families import registry
@@ -138,11 +138,17 @@ def select_drops(drops, box=None, outcomes=None, slices=None, courses=None, limi
     return out
 
 
+def _map_sample(d, cfg):
+    """The trial sample of a drop recorded without one (an older map's row), from its pose."""
+    aim = cfg.error.aim_bias
+    return {"dx": aim + float(d["dx_mm"]), "dy": float(d.get("dy_mm", 0.0)), "aim": aim, "yaw": 0.0, "roll": 0.0,
+            "pitch": float(d["pitch_deg"]), "clear": float(d["clear_mm"]), "vel": [0.0, 0.0, 0.0]}
+
+
 def _jobs(drops, opts):
-    from brixzle.engine import probe as PB
     cfg = _ideal()
     return [(d["edge_case"], d["sample"], dict(opts)) if "edge_case" in d
-            else (d["course"], PB._map_sample(d, cfg), dict(opts)) for d in drops]
+            else (d["course"], _map_sample(d, cfg), dict(opts)) for d in drops]
 
 
 def _pose(d):
@@ -458,9 +464,7 @@ def friction(family, p, mus=(0.5, 0.6, 0.7, 0.8), seed=1, box="mean", workers=No
     return {"label": LABEL, "family": family.name, "box": box, "seed": seed, "z": out, "seconds": round(time.time() - t0, 1)}
 
 
-# --- evaluate ---
-
-STAGES = ("check", "quick", "map", "jam", "held_out", "gate", "ring", "renders")
+# --- spec helpers ---
 
 
 def _root_module(spec):
@@ -471,80 +475,3 @@ def _root_module(spec):
     return str(path.parents[1]), module.rsplit(".", 1)[1]
 
 
-def evaluate(spec, out, stages=STAGES, seed=0, cache=True):
-    """The loop's evaluation stages for one design (runs/fable/eval_family.py, as a module): the
-    family check, quick check, full map and Z, jam analysis, held-out Z, structure gate, ring and
-    renders, or any subset of them in that order. Writes ``out/eval.json`` (the same fields as
-    eval_family.py, so scripts/compare_eval.py compares them) after every stage. With ``cache`` the
-    drops and the gate and ring come from the caches when the sim geometry was seen before."""
-    from brixzle.agents import check_family as CF
-    from brixzle.loop import orchestrator as O
-    from brixzle.loop import render as RD
-    from brixzle.loop import videos as VD
-    from brixzle.loop.config import LoopConfig
-
-    unknown = set(stages) - set(STAGES)
-    if unknown:
-        raise ValueError(f"unknown stages {sorted(unknown)}; known: {STAGES}")
-    if "jam" in stages or "renders" in stages:
-        stages = tuple(s for s in STAGES if s in stages or (s == "map" and ("jam" in stages or "renders" in stages)))
-    if cache:
-        cache_on()
-    out = Path(out)
-    out.mkdir(parents=True, exist_ok=False)
-    cfg = replace(LoopConfig(), seed=seed)
-    eng = O.SimEngine(cfg)
-    fam = load(spec)
-    p = fam.defaults
-    rec = {"family": spec, "label": LABEL, "seed": seed, "stages": list(stages), "cache": cache}
-    secs = {}
-
-    def save():
-        rec["seconds"] = secs
-        (out / "eval.json").write_text(json.dumps(_finite(rec), indent=1, default=str, allow_nan=False) + "\n")
-
-    def stage(name, fn):
-        t = time.time()
-        try:
-            return fn()
-        finally:
-            secs[name] = round(time.time() - t, 1)
-            save()
-
-    root, module = _root_module(spec)
-    if "check" in stages:
-        chk = stage("check_family", lambda: CF.check_in_subprocess(root, module))
-        rec["check_family"] = {k: chk.get(k) for k in ("ok", "violations", "mass_g", "margins", "size_mm") if k in chk}
-    rec["mass_g"] = eng.masses(fam, p)
-    check = None
-    if "quick" in stages or "map" in stages:
-        check, check_dir = stage("quick_check", lambda: eng.quick_check(fam, p))
-        rec["quick_check"] = {"passed": check["passed"], "run": str(check_dir)}
-    map_dir = None
-    if "map" in stages:
-        report, map_dir = stage("map", lambda: eng.score(fam, p, check, allow_failed_check=True))
-        rec["z"], rec["map"] = O.objective_z(report, cfg), str(map_dir)
-    jam = None
-    if "jam" in stages:
-        jam = stage("jam", lambda: eng.jam(fam, p, map_dir))
-    if "held_out" in stages:
-        rec["held_out"] = stage("held_out", lambda: eng.held_out(fam, p))
-    if "gate" in stages:
-        g = stage("gate", lambda: gate(fam, p, seed=seed, workers=cfg.workers, runs=cfg.runs, cache=cache))
-        rec["gate"] = {**O.gate_record(g, g["run"]), **({"cached_from": g["cached_from"]} if "cached_from" in g else {})}
-    if "ring" in stages:
-        try:
-            rec["ring"] = stage("ring", lambda: ring(fam, p, seed=seed, runs=cfg.runs, cache=cache))
-        except Exception as e:  # noqa: BLE001 - a kit that cannot be built is a result
-            rec["ring"] = {"error": f"{type(e).__name__}: {e}"[:300]}
-    if "renders" in stages:
-        def renders():
-            sim_map = eng.read_map(map_dir)
-            picks = eng.drop_videos(fam, p, sim_map, map_dir, out, 5, seed=1)
-            RD.jam_map(sim_map, rec["z"], out / "jam_map.png", target="mean", jam=jam, title=fam.name, picks=picks)
-            RD.module_png(fam, p, out / "module.png")
-            rec["stl"] = [x.name for x in VD.export_stl(fam, p, out)]
-        stage("renders", renders)
-    rec["complete"] = True  # every asked stage finished (a cut-off run lacks it; director.verify redoes it)
-    save()
-    return {**rec, "run": str(out)}

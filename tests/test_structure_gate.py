@@ -83,7 +83,7 @@ def test_the_step_check_passes_a_b_both_ways():
 def test_the_step_check_names_the_brick_that_tips_off():
     from pathlib import Path
 
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
 
     yf = CF.load_family(Path(__file__).parent / "fixtures", "yfunnel")  # no hook: a half-supported brick falls
     out = G.step_check(yf, yf.defaults)

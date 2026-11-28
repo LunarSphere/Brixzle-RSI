@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from brixzle.engine import probe as PB
 from brixzle.engine import zscore as ZS
 from brixzle.families import registry
 from brixzle.tools import core as TC
@@ -37,13 +36,15 @@ def cache(tmp_path, monkeypatch):
 DROPS = [_drop(0, 0.0, cell=(0, 0)), _drop(0, 6.0, "jammed", cell=(6, 0)), _drop(1, -4.0, cell=(-4, 0))]
 
 
-def test_redrop_matches_the_probe_and_reads_back_from_the_cache(ab, cache):
+def test_redrop_matches_a_direct_drop_and_reads_back_from_the_cache(ab, cache):
+    from brixzle.engine.sim import trials as T
+
     fam, p = ab
     first = TC.redrop(fam, p, DROPS, workers=1)
     cfg = TC._ideal()
-    poses = [PB._pose_entry(d["outcome"], d["course"], PB._map_sample(d, cfg)) for d in DROPS]
-    probe = PB.run_probe(fam, p, poses, workers=1)
-    assert [r["outcome"] for r in first["rows"]] == [r["outcome"] for r in probe["rows"]]
+    rigs = {c: T.DropRig(fam, p, cfg, course=c) for c in {d["course"] for d in DROPS}}
+    direct = [rigs[d["course"]].drop(TC._map_sample(d, cfg), trace=False)["outcome"] for d in DROPS]
+    assert [r["outcome"] for r in first["rows"]] == direct
     assert first["cache"] == {"hits": 0, "misses": 3}
     again = TC.redrop(fam, p, DROPS, workers=2)
     assert again["cache"] == {"hits": 3, "misses": 0} and again["rows"] == first["rows"]
@@ -110,25 +111,6 @@ def test_a_stage_is_run_once_per_geometry(ab, cache):
     other = TC.cached_stage(fam, p, "ring", {"seed": 1}, run)
     assert len(calls) == 2 and "cached_from" not in first and second["cached_from"] == "runs/x"
     assert other["status"] == "complete"
-
-
-def test_evaluate_runs_only_the_stages_asked_and_reads_the_gate_back(tmp_path, cache, monkeypatch):
-    calls = []
-
-    def fake_gate(fam, p, seed=0, workers=None, runs="runs", cache=True):
-        def run():
-            calls.append(1)
-            return {"passed": True, "overhang_n": 9, "overhang_floor": 3, "builds": {}, "seconds": 1.0,
-                    "repeats": 5, "run": "runs/gate-x"}
-        return TC.cached_stage(fam, p, "gate", {"seed": seed}, run) if cache else run()
-
-    monkeypatch.setattr(TC, "gate", fake_gate)
-    a = TC.evaluate("ab", tmp_path / "a", stages=("gate",))
-    b = TC.evaluate("ab", tmp_path / "b", stages=("gate",))
-    assert len(calls) == 1 and set(a["seconds"]) == {"gate"} and b["gate"]["cached_from"] == "runs/gate-x"
-    assert json.loads((tmp_path / "b" / "eval.json").read_text())["gate"]["overhang_n"] == 9
-    with pytest.raises(ValueError):
-        TC.evaluate("ab", tmp_path / "c", stages=("nope",))
 
 
 def test_the_command_line_runs_a_tool_and_writes_its_result(tmp_path, cache, capsys):

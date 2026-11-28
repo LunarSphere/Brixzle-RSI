@@ -138,8 +138,8 @@ def write_entry(lib, entry, files):
 def _renders(spec, out):
     """The three orthographic views and the STL of each part; skipped (not fatal) if they cannot be made."""
     try:
-        from brixzle.loop import render as RD
-        from brixzle.loop import videos as VD
+        from brixzle.tools import render as RD
+        from brixzle.tools import videos as VD
         from brixzle.tools import core as TC
 
         fam = TC.load(spec)

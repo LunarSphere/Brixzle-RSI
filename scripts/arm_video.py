@@ -11,7 +11,7 @@ from pathlib import Path
 
 from brixzle.engine.sim import pickplace as PP
 from brixzle.families import registry
-from brixzle.loop.videos import write_video
+from brixzle.tools.videos import write_video
 
 
 def main():

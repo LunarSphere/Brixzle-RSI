@@ -521,3 +521,12 @@ The maintainer chose this on 2026-11-27, after campaigns 1 and 2 under `green_mm
 | fable_gentle | fail (3 of 12) | −0.28 | +0.83 | −0.62 | −0.64 | −0.71 | −0.16 | 352 |
 
 All three Fable designs stack (full Z 0.83–0.92) and none holds an overhang, matching the bench drops of a printed `allround` (stacking works, overhang fails). None passes the screen, so in verify none would reach the grid. The grid is slower than #208's: every outcome change inside 16 mm is refined now, including jammed against fell (they differ in Z), and the overhang 3 scene has eight bricks. A design that passes the screen seats most of the disc and has fewer changes to refine.
+
+## The Agent SDK loop, the #164 goal and the held goal removed (issue #204)
+
+The maintainer approved on 2026-11-28, after #223 showed CI at 25 minutes and more than half the test time spent on scrapped features. Tag `pre-debloat-2026-11-28` (`1f731c6`) keeps everything removed here.
+
+- **Removed:** `loop/` (orchestrator, design log, lessons, rest pictures, config), `agents/` (runner, design, critic, wiring), `intake/`, the SDK loop's scoring steps (`engine/tune.py`, `report.py`, `screen.py`, `probe.py`), `search/` (it ran through `tools evaluate`), `tools evaluate`, `lessons/`, two scripts (`compare_eval`, `objective_baselines`), the `claude-agent-sdk` extra, and their tests.
+- **Moved, unchanged:** `check_family` to `tools/`, `render` and `videos` to `tools/`, `novelty` to `director/`.
+- **The director has one goal.** `verify.measure` (the #164 and held measurements), the Pareto archive and the #164 settings went with `tools evaluate`; `init` refuses any other `stage`, and a goal change may change only the goal's text (no radius setting is tightenable yet).
+- The engine code of held placement, the pickup sim, the SO-101 arm, the fitted sim map and the extra families goes in the next strip issue.

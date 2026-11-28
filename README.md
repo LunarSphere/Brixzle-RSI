@@ -4,7 +4,7 @@
 
 The drone is a Crazyflie 2.1 Brushless with prop guards. It carries a brick with a passive magnet, hovers over the target with 16 to 40 mm of placement error, and drops it. The brick's own geometry has to catch that error as it falls and guide itself into its seat. The loop designs bricks only: the gripper and the landing pad are designed by hand (`src/brixzle/engine/gripper_spec.py`, `docs/requirements.md`).
 
-> **Status:** the director loop (#165) runs the error-radius goal (#206), scored as Z on the grid over four placements: a stack and the first three reaching bricks of an overhang (#208, #222). The older Agent SDK loop (`intake/`, `agents/`, `loop/`) is being removed (#204).
+> **Status:** the director loop (#165) runs the error-radius goal (#206), scored as Z on the grid over four placements: a stack and the first three reaching bricks of an overhang (#208, #222).
 
 ## Run it
 
@@ -70,7 +70,7 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 | `src/brixzle/director/` | The loop's deterministic steps and its Codex driver (`drive.py`): run files, the one-change check, verify, the band archive, decisions and the write guard |
 | `src/brixzle/engine/` | The measurement: the screen, grid score and Z, jam analysis, structure gate, noisy builds, the drop cache and the analytic predictor |
 | `src/brixzle/engine/sim/` | The MuJoCo core: drop rigs (course and edge layouts), the held release of older goals, structure builds |
-| `src/brixzle/tools/` | Deterministic tools the roles call: `python -m brixzle.tools` evaluate, contacts, redrop, gate and more |
+| `src/brixzle/tools/` | Deterministic tools the roles call: `python -m brixzle.tools` contacts, redrop, gate and more, and `tools/check_family.py` |
 | `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, section, CAD solid, seats and rules |
 | `src/brixzle/rules/` | Design rules (`design_rules.md`) and citations (`citations.md`) |
 | `.claude/agents/`, `.claude/commands/` | The four roles' instructions and the `/rsi-loop` command |

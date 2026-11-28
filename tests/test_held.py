@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from brixzle.agents.check_family import load_family
+from brixzle.tools.check_family import load_family
 from brixzle.engine.sim import held
 from brixzle.engine.sim.guards import guarded_drone
 from brixzle.engine.sim.trials import DropRig, ErrorModel, TrialConfig

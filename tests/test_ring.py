@@ -81,7 +81,7 @@ def test_a_family_with_no_kit_gives_no_ring_kit(tmp_path):
 
 
 def test_check_family_reports_the_ring_kit():
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
 
     assert CF.ring_report(AB) == {"kit": True, "parts": sorted(AB.ring.parts), "built": True, "error": None}
     from brixzle.families.wedge.family import FAMILY as WEDGE

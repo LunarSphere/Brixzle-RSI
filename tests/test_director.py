@@ -1,12 +1,11 @@
 """The self-steering loop's deterministic parts (#165): the run's files, the bounds, the one-change
-check, the verifier and the director's decisions."""
+check, the verifier and the director's decisions, on the error-radius goal (the only goal since #204)."""
 import json
 import subprocess
 import sys
 
 import pytest
 
-from brixzle.director import archive as AR
 from brixzle.director import change as CH
 from brixzle.director import decide as DE
 from brixzle.director import guard as GU
@@ -27,9 +26,11 @@ def repo(tmp_path):
 
 
 def _init(repo, **kw):
-    # These tests cover the #164/#165 objective; the error-radius goal (#206) has its own tests.
-    kw.setdefault("settings", {"stage": "legacy"})
-    return RN.init_run(repo / "runs" / "rsi" / "r1", goal="Beat A/B on the #164 objective.", baseline="ab", repo=repo, **kw)
+    """A radius run with forced exploration off and one archive member, so a refinement is allowed."""
+    kw.setdefault("settings", {"explore_every": 0, "stall_explore": 0})
+    run = RN.init_run(repo / "runs" / "rsi" / "r1", goal="Beat the references on Z.", baseline="none", repo=repo, **kw)
+    RN.write_json(run / "archive.json", {"members": [{"name": "iter-01", "z": 0.5, "violations": []}], "offers": []})
+    return run
 
 
 # --- the run ---
@@ -163,7 +164,7 @@ def test_a_valid_decision_is_logged(repo):
     (dict(may_change=["def:a", "def:b", "def:c", "def:d"]), "may_change"),
     (dict(goal_change={"text": "aim for mass"}, evidence=[]), "evidence"),
     (dict(goal_change={"text": "aim for mass"}, evidence=["runs/does-not-exist"]), "evidence"),
-    (dict(goal_change={"settings": {"max_length_mm": 200.0}}, evidence=["EXISTS"]), "loosen"),
+    (dict(goal_change={"settings": {"max_length_mm": 200.0}}, evidence=["EXISTS"]), "cannot be changed"),
 ])
 def test_bad_decisions_are_refused(repo, bad, why):
     run = _init(repo)
@@ -174,114 +175,24 @@ def test_bad_decisions_are_refused(repo, bad, why):
     assert (run / "decisions.jsonl").read_text() == ""
 
 
-def test_a_goal_change_with_evidence_may_tighten(repo):
+def test_a_goal_change_with_evidence_may_change_the_text(repo):
     run = _init(repo)
     (repo / "runs" / "map-x").mkdir(parents=True)
-    out = DE.record(run, _decision(goal_change={"text": "Push error tolerance first.", "settings": {"max_length_mm": 60.0}},
-                                   evidence=[str(repo / "runs" / "map-x")]))
+    out = DE.record(run, _decision(goal_change={"text": "Push overhang 3 first."}, evidence=[str(repo / "runs" / "map-x")]))
     assert out["ok"]
     goal = json.loads((run / "goal.json").read_text())
-    assert goal["settings"]["max_length_mm"] == 60.0 and goal["history"][-1]["text"] == "Push error tolerance first."
+    assert goal["history"][-1]["text"] == "Push overhang 3 first." and goal["text"] == "Push overhang 3 first."
+
+
+def test_init_refuses_a_removed_goal(repo):
+    with pytest.raises(ValueError, match="only stage"):
+        RN.init_run(repo / "runs" / "rsi" / "old", goal="g", baseline="none", repo=repo, settings={"stage": "held"})
 
 
 def test_stop_ends_the_loop(repo):
     run = _init(repo)
     assert DE.record(run, _decision(action="stop", may_change=[], brief="No gain in 3 iterations."))["ok"]
     assert json.loads((run / "next.json").read_text())["step"] == "finish"
-
-
-# --- the archive ---
-
-
-def _rec(name, z=0.9, tol=2.0, mu=0.5, ovh=10, feasible=True, n=180):
-    return {"name": name, "z": {"mean": z}, "tolerance_mm": tol, "z_mu08": mu, "overhang_n": ovh,
-            "violations": [] if feasible else ["grip"], "z_counts": {"N": n, "S": int(n * z), "J": 0}}
-
-
-def test_the_archive_keeps_the_pareto_set_within_noise():
-    a = AR.Archive()
-    assert a.offer(_rec("ab", z=0.5, tol=4.0))["kept"]
-    assert a.offer(_rec("th4", z=0.97, tol=2.0))["kept"]
-    assert not a.offer(_rec("worse", z=0.49, tol=4.0, mu=0.4, ovh=8))["kept"]
-    assert not a.offer(_rec("bad", z=1.0, tol=9.0, feasible=False))["kept"]
-    out = a.offer(_rec("better", z=0.98, tol=4.0, mu=0.6, ovh=11))
-    assert out["kept"] and set(out["replaced"]) == {"ab", "th4"}
-    assert [r["name"] for r in a.members] == ["better"]
-
-
-def test_archive_uses_the_overhang_term_from_the_run_goal(repo):
-    from brixzle.director import __main__ as CLI
-
-    # the #164 Pareto archive: name the legacy stage, or the run defaults to the radius goal's band archive
-    run = _init(repo, settings={"stage": "legacy", "scored": ["z_target", "overhang_mean_steps", "z_mu08", "overhang_n"]})
-    ab = {**_rec("ab", tol=4.0), "overhang_mean_steps": 29 / 6}
-    short = {**_rec("short", tol=5.0), "overhang_mean_steps": 23 / 6}
-
-    assert CLI._offer(run, ab)["kept"]
-    assert not CLI._offer(run, short)["kept"]
-    assert CLI._offer(run, ab)["kept"]
-    archive = RN.read_json(run / "archive.json")
-    assert [row["name"] for row in archive["members"]] == ["ab"]
-    assert [row["name"] for row in archive["offers"]] == ["ab", "short"]
-
-
-@pytest.mark.parametrize(
-    ("stage", "failure", "violation"),
-    [
-        ("gate", {"passed": False}, "structure_gate"),
-        ("ring", {"status": "placement_jammed"}, "ring"),
-        ("ring", {"error": "invalid kit"}, "ring"),
-        ("check_family", {"ok": False, "violations": []}, "check_family"),
-    ],
-)
-def test_verify_rejects_infeasible_checkpoint(repo, stage, failure, violation):
-    from brixzle.director import __main__ as CLI
-
-    run = _init(repo)
-    d = run / "iter-01"
-    (d / "candidate").mkdir(parents=True)
-    (d / "candidate" / "family.py").touch()
-    measured_dir = d / "measured"
-    measured_dir.mkdir()
-    measured = {
-        "gate": {"passed": True},
-        "ring": {"status": "complete"},
-        "check_family": {"ok": True, "violations": []},
-        "objective": _rec("candidate"),
-        "violations": [],
-        "seconds": 0,
-    }
-    measured[stage] = failure
-    RN.write_json(measured_dir / "measured.json", measured)
-
-    assert CLI.main(["verify", "--run", str(run), "--iter", "1"]) == 0
-    verified = RN.read_json(d / "verified.json")
-    assert verified["measured"]["violations"] == [violation]
-    assert verified["measured"]["objective"]["violations"] == []
-    assert not verified["offer"]["kept"]
-    assert RN.read_json(run / "archive.json")["members"] == []
-
-
-def test_baseline_uses_the_same_feasibility_checks(repo):
-    from brixzle.director import __main__ as CLI
-
-    run = _init(repo)
-    measured_dir = run / "baseline" / "measured"
-    measured_dir.mkdir(parents=True)
-    RN.write_json(
-        measured_dir / "measured.json",
-        {"gate": {"passed": True}, "ring": None, "check_family": {"ok": True},
-         "objective": _rec("ab", feasible=False), "violations": ["grip"]},
-    )
-
-    argv = ["baseline", "--run", str(run)]
-    assert CLI.main(argv) == 0
-    assert CLI.main(argv) == 0
-    verified = RN.read_json(run / "baseline" / "verified.json")
-    assert verified["measured"]["violations"] == ["grip", "ring"]
-    archive = RN.read_json(run / "archive.json")
-    assert archive["members"] == []
-    assert len(archive["offers"]) == 1
 
 
 def test_the_command_line_steps(repo, monkeypatch):
@@ -327,71 +238,9 @@ def test_each_role_has_its_own_instructions(role, model):
     assert "rsi-designer" in (ROOT / ".claude" / "commands" / "rsi-loop.md").read_text()
 
 
-def test_measure_resumes_after_it_was_cut_off(tmp_path, monkeypatch):
-    """A foreground step is cut off at 10 minutes; run again, it reuses what it saved (#165)."""
-    from brixzle.engine import objective as OB
-    from brixzle.tools import core as TC
-    calls = {"eval": 0, "obj": 0}
-
-    def fake_eval(spec, out, stages=(), seed=0, cache=True):
-        calls["eval"] += 1
-        __import__("pathlib").Path(out).mkdir(parents=True)
-        rec = {"z": {"mean": {"Z": 0.5, "S": 9, "J": 0, "N": 18}}, "gate": {"overhang_n": 9}, "stages": list(stages),
-               "complete": True}
-        (__import__("pathlib").Path(out) / "eval.json").write_text(json.dumps(rec))
-        return rec
-
-    def fake_obj(fam, **kw):
-        calls["obj"] += 1
-        if calls["obj"] == 1:
-            raise KeyboardInterrupt  # cut off mid-objective
-        return {"tolerance_mm": 4.0, "violations": []}
-
-    monkeypatch.setattr(TC, "evaluate", fake_eval)
-    monkeypatch.setattr(TC, "load", lambda spec: type("F", (), {"defaults": None})())
-    monkeypatch.setattr(TC, "friction", lambda fam, p, mus: {"z": {"mu 0.8": {"Z": 0.3, "S": 5, "J": 1, "N": 10}}})
-    monkeypatch.setattr(OB, "evaluate_design", fake_obj)
-    with pytest.raises(KeyboardInterrupt):
-        VE.measure("ab", tmp_path)
-    m = VE.measure("ab", tmp_path)
-    assert calls == {"eval": 1, "obj": 2} and m["tolerance_mm"] == 4.0
-    again = VE.measure("ab", tmp_path)
-    assert calls == {"eval": 1, "obj": 2} and again == m
-
-
 def test_the_loop_never_waits_in_the_background():
     text = (ROOT / ".claude" / "commands" / "rsi-loop.md").read_text()
     assert "run_in_background" in text and "600000" in text
-
-
-def test_verify_measures_the_edge_target_on_request_and_checkpoints_it(repo, monkeypatch):
-    from brixzle.director import __main__ as CLI
-    from brixzle.tools import core as TC
-
-    run = _init(repo)
-    d = run / "iter-01"
-    (d / "candidate").mkdir(parents=True)
-    (d / "candidate" / "family.py").touch()
-    measured_dir = d / "measured"
-    measured_dir.mkdir()
-    RN.write_json(measured_dir / "measured.json",
-                  {"gate": {"passed": True}, "ring": {"status": "complete"}, "check_family": {"ok": True},
-                   "objective": _rec("candidate"), "seconds": 1.0})
-    RN.write_json(d / "brief.json", {"term": "edge_z"})
-    RN.write_json(d / "claim.json", {"numbers": [{"what": "weaker edge Z", "path": "edge_z", "value": 0.3}]})
-    calls = []
-    family = type("FakeFamily", (), {"defaults": None})()
-    monkeypatch.setattr(TC, "load", lambda _: family)
-    monkeypatch.setattr(TC, "cache_on", lambda: None)
-    monkeypatch.setattr(TC, "edgemap", lambda family, params: calls.append(family) or
-                        {"edge_z": 0.3, "weaker_bare_edge": "minus_bare", "cases": {}})
-
-    assert CLI.main(["verify", "--run", str(run), "--iter", "1"]) == 0
-    assert VE.measure("candidate", measured_dir, measure_edge=True)["edge_z"] == 0.3
-    assert calls == [family]
-    measured = RN.read_json(d / "verified.json")["measured"]
-    assert measured["edge_z"] == 0.3
-    assert RN.read_json(measured["edge"]["report"])["edge_z"] == 0.3
 
 
 def _git_repo(path, files):
@@ -425,67 +274,6 @@ def test_guard_and_finish_find_the_run_lock_through_a_runs_link(tmp_path, monkey
     assert not (work / GU.LOCK).exists()
 
 
-def test_held_goal_measures_baseline_and_candidate_and_ranks_verified_reach(repo, monkeypatch):
-    from brixzle.director import __main__ as cli
-    from brixzle.engine import heldmap as hm
-    from brixzle.tools import core as tc
-
-    run = _init(repo, settings={"stage": "held", "scored": ["held_reliable_reach_mm"], "min_drop_z": .85})
-    calls = []
-    def fake(family, p, cfg, settings):
-        reach = 100 if cfg.tine_d_m == .003 else 75
-        calls.append(reach)
-        return dict(scores={"held_reliable_reach_mm": reach}, cases={}, mission_passed=True,
-                    violations=[], seconds=.1, wrist_defaults="guess")
-
-    monkeypatch.setattr(hm, "heldmap", fake)
-    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
-    for name, z in (("baseline", .9), ("iter-01", .91), ("iter-02", .8)):
-        d = run / name
-        m = d / "measured"
-        m.mkdir(parents=True)
-        RN.write_json(m / "measured.json", dict(check_family={"ok": True}, gate={"passed": True},
-                      ring={"status": "complete"}, z={"mean": {"Z": z}}, objective=_rec(name, z=z), seconds=1.))
-        if name == "baseline":
-            args = ["baseline"]
-        else:
-            pkg = d / "new"
-            pkg.mkdir()
-            (pkg / "family.py").touch()
-            RN.write_json(pkg / "gripper.json", {"tine_d_m": .003})
-            RN.write_json(d / "claim.json", {"numbers": [{"what": "measured reach", "path": "held.scores.held_reliable_reach_mm",
-                                                         "value": 100}]})
-            args = ["verify", "--iter", name[-2:]]
-        assert cli.main(args + ["--run", str(run)]) == 0
-        record = RN.read_json(d / "verified.json")
-        report = RN.read_json(record["measured"]["held"]["report"])
-        assert report["scores"]["held_reliable_reach_mm"] == calls[-1]
-        assert record["offer"]["kept"] == (name != "iter-02")
-        if name == "iter-02":
-            assert "drop_full_z" in record["measured"]["violations"]
-    assert calls == [75, 100, 100]
-    members = RN.read_json(run / "archive.json")["members"]
-    assert [rec["name"] for rec in members] == ["iter-01:new"]
-    assert members[0]["held_reliable_reach_mm"] == 100
-
-
-def test_held_feasibility_survives_resume(tmp_path, monkeypatch):
-    from brixzle.engine import heldmap as hm
-    from brixzle.tools import core as tc
-
-    run = tmp_path / "measured"
-    run.mkdir()
-    RN.write_json(run / "measured.json", dict(check_family={"ok": False}, gate={"passed": False},
-                  ring={"status": "complete"}, z={"mean": {"Z": 1}}, objective=_rec("test", feasible=False)))
-    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
-    monkeypatch.setattr(hm, "heldmap", lambda *args: dict(scores={}, cases={}, mission_passed=False,
-                        violations=["held_r4", "held_payload"], seconds=0))
-    m = VE.measure("ab", run, measure_held=True)
-    again = VE.measure("ab", run, measure_held=True)
-    assert m == again
-    assert set(m["violations"]) == {"grip", "check_family", "structure_gate", "held_r4", "held_payload"}
-
-
 def test_gripper_only_iteration_obeys_the_brief(tmp_path):
     parent = _module(tmp_path, "parent", PARENT)
     child = _module(tmp_path, "child", PARENT)
@@ -498,58 +286,3 @@ def test_gripper_only_iteration_obeys_the_brief(tmp_path):
     assert CH.changed(parent, child) == []
 
 
-def test_init_accepts_campaign_settings_before_the_first_baseline(repo, monkeypatch):
-    from brixzle.director import __main__ as cli
-    monkeypatch.chdir(repo)
-    settings = {"stage": "held", "scored": ["held_reliable_reach_mm", "held_full_z"]}
-    cfg = repo / "settings.json"
-    RN.write_json(cfg, settings)
-    run = repo / "runs" / "stageb"
-    assert cli.main(["init", "--run", str(run), "--goal", "Reliable reach", "--settings", str(cfg)]) == 0
-    saved = RN.read_json(run / "goal.json")["settings"]
-    assert saved["scored"] == settings["scored"]
-    assert saved["grip_mm"] > 0  # omitted stage-A settings can still be tightened by the director
-
-
-def test_fresh_held_verification_keeps_drop_floor_on_resume(tmp_path, monkeypatch):
-    from brixzle.engine import heldmap as hm
-    from brixzle.tools import core as tc
-
-    def evaluate(spec, directory, **kwargs):
-        directory.mkdir()
-        return {"check_family": {"ok": True}, "gate": {"passed": True}, "ring": {"status": "complete"},
-                "z": {"mean": {"Z": .5}}}
-
-    calls = []
-    def measure(family, params, gripper, settings):
-        calls.append(settings.seed)
-        return {"scores": {}, "cases": {}, "mission_passed": True, "violations": [], "seconds": 0}
-
-    monkeypatch.setattr(tc, "evaluate", evaluate)
-    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
-    monkeypatch.setattr(hm, "heldmap", measure)
-    out = VE.measure("ab", tmp_path, objective=False, measure_held=True, min_drop_z=.75)
-    assert out["violations"] == ["drop_full_z"]
-    assert VE.measure("ab", tmp_path, objective=False, measure_held=True) == out
-    assert calls == [hm.HeldMapSettings.seed]
-
-
-def test_a_held_target_is_recorded_as_unmet_not_as_a_violation(tmp_path, monkeypatch):
-    """#202: a stage B goal can treat held_r4 as a target while the archive needs feasible members."""
-    from brixzle.engine import heldmap as hm
-    from brixzle.tools import core as tc
-
-    def measured_dir(name):
-        d = tmp_path / name
-        d.mkdir()
-        RN.write_json(d / "measured.json", dict(check_family={"ok": True}, gate={"passed": True},
-                      ring={"status": "complete"}, z={"mean": {"Z": 1}}, objective={"violations": []}))
-        return d
-
-    monkeypatch.setattr(tc, "load", lambda spec: type("Family", (), {"defaults": None})())
-    monkeypatch.setattr(hm, "heldmap", lambda *args: dict(scores={}, cases={}, mission_passed=False,
-                        violations=["held_r4", "held_payload"], seconds=0))
-    soft = VE.measure("ab", measured_dir("soft"), measure_held=True, held_targets=("held_r4",))
-    assert soft["violations"] == ["held_payload"] and soft["held_targets_unmet"] == ["held_r4"]
-    hard = VE.measure("ab", measured_dir("hard"), measure_held=True)
-    assert set(hard["violations"]) == {"held_r4", "held_payload"} and hard["held_targets_unmet"] == []

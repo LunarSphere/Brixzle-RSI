@@ -169,7 +169,7 @@ def test_a_sagging_overhang_whose_bricks_stay_seated_is_not_a_collapse():
 def test_a_brick_that_falls_is_still_a_collapse():
     from pathlib import Path
 
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
     from brixzle.engine import structures as S
     from brixzle.engine.sim import assemble as A, trials as T
 

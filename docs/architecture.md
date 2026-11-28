@@ -1,122 +1,6 @@
 # Architecture
 
-The evaluation engine, the agents, the command-line intake and the orchestrator are built. The intake page (#65) is planned.
-
-> **Current loop:** the director loop (#165) on the error-radius goal, scored as Z on the stack and overhangs 1–3 (#222): see [The error-radius goal](#the-error-radius-goal-206). The sections from Loop order to Cheap screen describe the older Agent SDK loop (epic #1), which is being removed (#204); its Z over target boxes is described under [Objective Z](#objective-z).
-
-## Loop order
-
-Agreed on 2026-11-11 (epic #1). Each iteration runs these steps:
-
-1. **Design.** The design agent makes a new CAD model as a brick family (issue #18).
-2. **Quick random check.** 40 evenly spread sim drops inside the target box. Fewer than 32 seated sends the design straight back to step 1 (issue #47, built).
-3. **Structure gate.** A tower, a running-bond wall, a bridge and an overhang, each built on seeded repeats; a design that cannot build them goes back to step 1 (issue #83).
-4. **Full sim map** on a grid fitted to the brick (issue #48, built).
-5. **Jam analysis** inside the green zone (issue #49, built).
-6. **Critic.** The critic agent writes a redesign brief, and the loop returns to step 1 (issue #19).
-
-The loop's objectives are **Z** (issue #61; see [Objective Z](#objective-z)) and, since issue #83, the overhang's length `overhang_n`. A redesign replaces the best only if neither Z on the current target nor `overhang_n` is lower than the best's and one is higher, Z on no lower rung of the target ladder falls, and a held-out check is not worse. When Z reaches 1 on the last rung (the worst box), or stops improving, a short tune finishes the design (issue #14). The [orchestrator](#orchestrator) runs it all.
-
-## Orchestrator
-
-`loop/orchestrator.py` (issue #21) runs the loop without a person prompting it, and enforces the budget and stop rules:
-
-    uv run --extra agents python -m brixzle.loop --intake runs/intake-<stamp>/intake.json --target mean
-
-**Iteration 0** (issue #85). Before the first design call the loop scores the parent family (`--parent`, A/B by default) from the registry, with the same stages as a design and no Claude call. It is recorded even if it fails the quick check, it becomes the best, and the critic's first brief comes from its results. So every design must beat it. `--parent none` starts from scratch, and `--baseline-only` scores the parent and stops.
-
-**The target ladder** (issue #84). The target climbs: mean, then p95, then max. `--target` is the rung a run starts on. The current target is the first rung, from there up, on which the best design's Z is below 1. `--no-ladder` keeps the run on `--target`.
-
-Each iteration:
-
-1. **Design.** The design agent writes a package. The loop checks it (contract and rules); a package that fails goes back to the agent with the check's output.
-2. **Quick check.** Below 32 of 40 seated, the design goes back to the agent with its failing drops. An iteration gets up to `design_attempts` tries (3). The check stays on the starting box, since on the worst box it would turn back nearly every design. It samples along X only (issue #97): with Y offsets inside the disc it turned back A/B itself, and Y error is scored in the full map instead.
-3. **Structure gate** (issue #83). The design must build a tower (3 courses), a running-bond wall (3 × 4) and a bridge (3 courses a side), and an overhang asked for 12 bricks must hold at least 3. Each structure is built on 5 seeded repeats with ideal placement and a release jitter of up to 0.05 mm, and passes when most complete (see Structure builds); `overhang_n` is the count most repeats reach. A design that fails goes back to the agent with where each build stopped, uses up one of the iteration's attempts, and is logged `failed_structure_gate`; it is never scored. The parent's gate is recorded, and sets the overhang to beat. `runs/gate-<UTC>-<family>/` holds `gate.json` and every build.
-4. **Full sim map** covering the mean, p95 and worst boxes, and **Z** per target.
-5. **Jam analysis.**
-6. **Acceptance.** The design replaces the current best only if all three hold:
-   1. on the pair (Z on the current target, `overhang_n`), neither is lower than the best's and at least one is higher (a best from before #83 has no overhang, and then Z alone must improve);
-   2. Z on every lower rung of the ladder is not below the best's;
-   3. held-out Z on the current target is not worse at either friction. Since issue #110, "worse" means lower by more than the noise band: one standard error of the best's held-out Z for its counts, √(((S + J)/N − Z²)/N) (`zscore.z_band`). A drop inside the band is reported in the reason (for example "held-out −0.006, inside the band of 0.033") and does not reject the design. The same band defines a stall: a change in Z inside it is no change.
-
-   A design the rule would keep then builds a **ring** (issue #89): 6 × 6 cells, 2 courses, ideal placement, from the family's ring kit. If it does not come out complete, the design is rejected (`failed_ring`), the best does not change, and the next design call gets the stage where the ring stopped. The ring is slow, so it runs last and only when it can change the decision; with less than two minutes of the run's wall-clock left it is not started and nothing is rejected on that ground. The parent's ring is built and shown too.
-
-   Held-out Z uses the current target box's poses shifted by seed + 1, at μ 0.2 and 0.5. When the rung moves up, the best design's held-out Z on the new box is computed once and stored. Without a parent, the first scored design becomes the best. The critic never sees the held-out results.
-7. **Critic.** It writes a redesign brief for the current target, with the gate's results and `overhang_n` in its prompt, and the loop returns to step 1. It is not called when Z is 1 on the last rung, or on the last iteration.
-
-Every attempt goes in the design log. Every iteration writes `RSI_RESULTS/<run>/iter-NN/` and updates `progress.png`.
-
-**Stop** when the first of these holds, checked before each iteration:
-
-- Z reaches 1 on the last rung (max), or on `--target` with `--no-ladder`. Z = 1 on the worst box may be out of reach, so a run usually ends on one of the other rules;
-- the critic says stop;
-- `max_iterations` have run;
-- `patience` iterations in a row have kept no design;
-- the API budget could not cover one more design and critic call;
-- the wall-clock budget (30 min) is spent.
-
-Then the end tune runs on the best design, on the current target (the first box still below 1), with U fixed if intake fixed it.
-
-**Files:**
-
-- `runs/loop/<run>/`: `state.json` (written after every iteration), `design_log.jsonl`, `api-spend.jsonl` (unless `--ledger` names a shared one), and `iter-NN/attempt-K/pkg/<module>/`, each attempt's package;
-- `RSI_RESULTS/<run>/`: the renders and summaries;
-- `runs/check-…`, `runs/map-…`, `runs/tune-…`: the engine's usual run directories.
-
-**Config** (`loop/config.py`, `LoopConfig`) holds the runtime model (Claude Sonnet 5.5), the target, the iteration, patience, API and wall-clock budgets, the per-call caps, the seed and the worker count. The model is set there and nowhere else.
-
-**Resume.** `--resume <run>` reads `state.json` and carries on from the next iteration. An iteration interrupted part-way is run again in a new folder (`iter-NN-2`), so nothing is overwritten. A run started before the ladder and the baseline existed resumes without them.
-
-**Errors.** An SDK or API error in a design call is logged (`error`) and that attempt is retried. One in the critic leaves the next design without a brief. The spend cap (`BudgetExceeded`) ends the run cleanly, and the end tune still runs.
-
-The loop scores placement (R11) only for now. Pickup (R12) is deferred until the gripper is designed for the chosen brick (issues #46 and #24).
-
-### Explore rounds
-
-Issue #106. In the last real run every design was a 14–18 line subclass of A/B's parameters (`runs/loop/ab4iter2-20261114-mean`): A/B was the parent, the only example, importable, and a new concept had to beat a tuned brick on its first try. So the first design iteration, and the one after a brief that asks for a new family or after `--stall-iterations` (default 2) iterations whose Z moved by no more than the noise band (#110; an iteration that scored nothing counts as a stall too), is an **explore round**:
-
-1. `--concepts` design calls (default 3, maintainer) run side by side, as many as the API budget left can hold (the ledger holds each call's budget while it is in flight). Each gets its own capture principle from `rules/capture_principles.md` (principles only, each citing the design rules), the ones not tried yet in the run first, and A/B (the run's parent) as the score to beat, not the starting file. Each may probe its draft (#107) on a spread over the error disc.
-2. A design whose section differs from A/B's by less than `near_copy_share` (20 %) of its area is refused as `near_copy` (`loop/novelty.py`; a family that varies along Y is judged new by construction). The last run's four designs differed by 0–3 %. In an explore call `check_family` reports this (`novelty`) and is not ok for a near copy, so the agent learns it inside its call.
-3. The cheap screen (#108) picks which concepts to score; each of those gets the structure gate, the full map and the jam analysis. The best by Z on the target goes through the usual decision (held-out, acceptance, ring, renders, critic) as the iteration's design; the others are `rejected` ("another concept of this round scored higher").
-4. Each concept's principle, decision, screen score and Z go in the design log, the iteration's `summary.md` and the run's summary table.
-
-`--concepts 1` turns explore rounds off.
-
-**The concept step** (issue #111). Explore calls, and repairs of a design that came from one, run on `concept_model` (`claude-opus-5-5`, maintainer, 2026-11-13); reshapes and the critic stay on `model` (`claude-sonnet-5-5`). Before writing code, an explore call lists three mechanisms in `design_note.json` (`concepts`: name, the failure it targets, why it should work with rule ids, its cost), says which it built (`picked`) and why, and probes its draft (#107). A note without three concepts is refused as `no_concepts` and a call that never probed as `no_probe`; the design log keeps the three concepts, so a later round can try the others. The run summary has a table of calls, spend, turns and wall-clock per model and call, from the spend ledger (which now records each call's seconds).
-
-### Capture first, provisional designs and repairs
-
-Issue #109. A design that failed the structure gate or the ring used to be discarded, which pushed every design back towards A/B, the one brick known to build (in `ab4iter2-20261114-mean` iteration 1 raised Z mean to +0.539 and was dropped for its ring). The requirement is unchanged: a kept design builds the tower, the wall, the bridge, the overhang and the ring.
-
-- **Order.** A new concept (an explore round's) gets its full map and Z before its structure gate, so the loop learns whether its capture idea works even when its interlock is not right yet. A reshape of a design that builds keeps the gate first: it is cheaper than the map.
-- **Provisional.** A design the acceptance rule would keep on Z (a concept whose gate failed is judged on Z alone, since it has no overhang to compare) but that fails the gate or the ring becomes `provisional`: the best is unchanged, the critic is not called, and the next iteration is a **repair**. The repair call starts from the provisional design's file with its failing builds and is told to keep the capture geometry and fix the interlock or the ring kit. It is scored as a reshape (gate first); kept if it builds and passes the acceptance rule.
-- **Limit.** Up to `repair_attempts` (2, maintainer) repairs; a repair that again does not build, or is not kept for another reason, uses one. After the last the design is `rejected` and the log says why. Patience does not stop the run while repairs are left.
-- **One focused attempt per repair** (#129). A repair iteration makes `repair_tries` (1) design calls, not `design_attempts` (3): in `sessions-20261115-mean` three Opus attempts in a row, each told only the failing builds as text, cost $1.04–1.26 and 329–377 s each and all failed. The repair is shown pictures to read: the provisional design's `module.png`, `jam_map.png` and rest pictures (#112, rendered for a provisional design too), and, if its ring failed, the ring at its failing brick (`iter-NN/ring/ring-side.png`, `ring-above.png`, from a recorded rebuild; 1.4 s for the yfunnel fixture). A second repair is told what the first tried.
-- **The end tune checks the structures too.** A tuned design that scores higher is built again: the structure gate and the ring at the tuned parameters. If either fails it is refused and the untuned design stands (`tune.refused`; their wall-clock in `tune.seconds_checks`).
-
-### The concept track
-
-Issue #126 (maintainer's choices, 2026-11-15). In `overhaul2-20261114-mean` the explore round produced two new bricks; neither beat A/B on the mean box, so both were dropped undeveloped, although the chevron key beat A/B on p95 and max (+0.156 / +0.078 against +0.139 / +0.045; simulated, uncalibrated contact).
-
-- **Promising.** After an explore round that keeps nothing, a mapped concept is promising if it beats the best on any box (mean, p95 or max) by more than the noise band of the best's Z there (#110). The most promising one (largest margin in bands) is the **concept**: one at a time. Its ring is built then (a concept that passed its gate), so the track knows whether it builds.
-- **Developed.** The next `concept_runs` (2) iterations reshape the concept, not the best: the design call (on the concept model) gets the concept's `family.py`, and, if it does not build yet, its failing builds as a repair (#109). A brief is passed only if the critic's last brief was about the concept. Each iteration is judged by the usual acceptance rule against the best: kept ends the track; a result that is still promising becomes the concept to develop next. After `concept_runs` the loop returns to the best.
-- Concept iterations do not count against patience or towards a stall (#106), and patience does not stop the run while the track has iterations left.
-
-**Stop in time for the end.** Before each iteration the run stops if the next iteration (estimated as the mean of this run's non-explore iterations, 300 s before any) and the end tune would pass `max_minutes`. Since #129 the clock is also checked before every design attempt (an attempt: the run's mean design call plus its checks, 420 s before any) and before an explore round (an attempt and a full score); one that would not fit is not started, and the run goes to its end tune. In `sessions-20261115-mean`, checked only per iteration, a repair iteration of three attempts took the run to 41.9 min.
-
-**Y capture near the aim.** Reports and the critic give `y_capture_near_mm` beside `y_capture_mm`: the widest unbroken seated run in Y over the X-Y slice's columns within one X cell of the aim. A/B has a jam stripe in the X = 0 column, so `y_capture_mm` reads ±4 mm where the columns beside it seat to about ±8 mm.
-
-### The half-supported step
-
-Issue #133. Every new concept that beat A/B on capture failed the structure gate at the first brick that sits half over an edge: the wall's end brick on course 2 (`b2_0`) and the first step of the bridge and the overhang (`b1_1`). Deep, smooth V nests centre well but do not hook (R4), and every scored drop lands a brick fully supported, so only the gate found it. Examples (simulated, uncalibrated contact): `long-20261116-mean` CP3, Z mean +0.939, tower 5/5, wall, bridge and overhang 0/5; `sessions-20261115-mean` CP1, +0.848, the same.
-
-`structure_gate.step_check` builds a one-step overhang each way (`structures.overhang(2, ±1)`), once, ideal placement: about 1.5 to 4 s. It is reported inside the design call (`check_family`: `half_supported`, not part of `ok`), recorded by the screen for each candidate, and passed to a repair with the gate's failures. A/B holds both ways; the `long-20261116-mean` CP3 brick jams 5.9 mm and 3.6 mm off its seat. Capture principle CP7, "capture and hold", asks for a hook or key with the capture surface.
-
-### Cheap screen of a round's candidates
-
-Issue #108. A full score costs about 3 to 5 minutes, so when a round has several candidates (#106) they are screened first, side by side, each in its own process (`engine/screen.py`, `Loop.screen_round`): the quick check (40 drops along X, the candidate's pass/fail filter) and 20 seeded drops on the target box's X-Y disc. The screen score is (S − J) / N over both, the form of Z.
-
-The screen does not pick a winner among close candidates. On A/B and the four designs of `ab4iter2-20261114-mean` its ranking disagreed with the maps' at the top (`runs/screen-compare-20261113.json`): those five lie within 0.1 of each other in Z, and the screen's standard error at 60 drops is about 0.08. So a candidate is screened out only if its score is more than two standard errors of the difference below the best (a clear loser, such as the yfunnel fixture), and the rest are scored in full by rank, up to `--screen-max-maps` (default 3). If the wall-clock left after holding the end tune's time cannot fit that many full scores (each estimated from the run's scored iterations so far, 240 s before any), fewer are mapped and the iteration records a warning. The others are logged as `screened_out` with their screen score; the iteration records `seconds.screen`.
+The director loop (#165) and the evaluation engine it measures with. The Agent SDK loop, its agents, the intake and the orchestrator were removed in #204 (tag `pre-debloat-2026-11-28` has them).
 
 ## The error-radius goal (#206)
 
@@ -176,7 +60,7 @@ Every step's output is a file in the run directory, and `next.json` names the ne
 - **Budgets.** Iterations and wall-clock are set at `init`. The director stops after three iterations that add nothing to the archive.
 - **Human checkpoints are optional.** At the iterations given by `--checkpoints`, the loop stops and summarises, unless it was started `--unattended`.
 
-**Acceptance** is #164's Pareto archive (`director/archive.py`). A feasible design is kept if no member beats it beyond noise on Z, error-tolerant overhang, Z at μ 0.8 and overhang steps (Z bands: one standard error for its counts), and members it beats are dropped. The director picks which member to push and on which term.
+**Acceptance** is the band archive (`director/archive.BandArchive`; see [The error-radius goal](#the-error-radius-goal-206)): the best verified, feasible design per Z band. The #164 goal and its Pareto archive were removed in #204.
 
 ## What a build needs: the build-aware objective
 
@@ -193,7 +77,6 @@ Issue #163. The hand-run twinhook line spent LLM turns on steps that are mechani
 
 | Tool | Does | Sim |
 |---|---|---|
-| `evaluate` | The loop's stages (`runs/fable/eval_family.py` as a module), or any subset (`--stages map,gate`); `eval.json` as before, so `scripts/compare_eval.py` reads it | yes, cached |
 | `redrop` | Chosen poses of a map (by box, outcome, slice, course, a seeded sample), at a friction | yes, cached |
 | `edgemap` | Fixed drop grids for both half-supported edges and the first two reaching corbel seats (#172) | yes, cached |
 | `contacts` | The same, with each drop's rest pose and its contacts grouped by the pair touching | yes, cached |
@@ -223,92 +106,6 @@ Gate and ring results are kept whole, by the family's fingerprint without parame
 
 Unset, as in the loop and the tests, every drop is simulated. A cached result is an earlier sim result (simulated, uncalibrated contact), not a new one.
 
-**Primitive search (#166).** When the brief calls for a new family or a parameter search, the director can run
-`uv run python -m brixzle.search --n <candidates> --seed <seed> --runs <run>/search`. The progressive checks report
-throughput and save the parameter values and full evaluations for the finalists. A generated package is useful
-as a starting point only if it fits the director's brief and the normal verification checks. Use
-`--calibrate <size> --reference <objective-report>` for an independent seeded measurement of false rejection.
-
-## Per-iteration results
-
-Every outer iteration writes `RSI_RESULTS/<run>/iter-NN/` (issue #15; `loop/render.py`):
-
-- **`jam_map.png`:** the full sim map, one panel per slice and course. Colours follow aerial-assembly's `figures/biasbrick-drop-grid`: seated green, jammed orange, fell red, plus wrong valley in purple, since it is A/B's main failure and would otherwise be hidden. Each legend gives counts. The target box and the jam bands are drawn, Z per target is in the title, and it is labelled "simulated, uncalibrated contact".
-- **`module.png`:** the latest design as three orthographic views of its printed solid: front (X–Z), side (Y–Z) and top (X–Y), one row per part, to scale in mm (issue #74).
-- **`drop-1.mp4` … `drop-5.mp4`:** five drops of the iteration's full map, picked at random. The seed is the run's seed and the iteration, so a run can be repeated. Each is dropped again with recording on, at 240 frames per second of sim time, and played 8 times slower, with its pose and outcome as a caption. Each pick is marked with its number on `jam_map.png` and listed in `summary.md` (issue #77).
-- **`<family>-<part>.stl`:** the printed solid of each part, in mm (issue #77).
-- **`summary.md`:** Z per target with its counts (and the held-out Z, which the critic never sees); what changed and why (the brief followed, the design agent's note, every attempt); the decision and its reason; the critic's next brief; and the run directories, spend and wall-clock behind every number.
-
-`RSI_RESULTS/<run>/progress.png` shows Z per iteration, with kept designs filled, rejected ones hollow and iterations with no scored design crossed. `RSI_RESULTS/<run>/summary.md` sums up the run. `RSI_RESULTS/` is git-ignored; figures for the repo still go through #25.
-
-## Intake
-
-A person gives one or more concept images and adds extra requirements. Today this is a command (`python -m brixzle.intake`, issue #17); a local web page that writes the same `intake.json` is still planned. One Claude call sorts each extra requirement into one of four kinds:
-
-- compatible;
-- refines a base requirement;
-- conflicts with a base requirement;
-- unclear.
-
-For each conflict or unclear item, the person chooses: keep the base requirement, use the extra instead, drop the extra, or clarify it in their own words. At a terminal the command asks; otherwise each answer is given with `--resolve ID=CHOICE`. Nothing reaches the loop until every conflict is resolved. With no extras there is nothing to sort and no call is made. A concept image over 1600 px on its longer edge is kept as a downscaled copy (the original's SHA-256 stays in `intake.json`), so a phone photo does not bloat the agent's reads. The output is `runs/intake-<UTC>/intake.json`, with copies of the images beside it. It is the only input to the first iteration, and it may fix the voxel pitch U (R2).
-
-## Talking to Claude
-
-Every Claude call goes through `agents/runner.py`:
-
-- **Model:** set once, by the caller (the loop's config); Claude Opus 5.5 by default since #125.
-- **Credentials:** `ANTHROPIC_API_KEY` if it is set, otherwise the active `ant` CLI profile's access token, handed to the Agent SDK's Claude Code process. The token is never printed. A call fails if Claude Code reports using any other credential, such as a claude.ai login.
-- **Spend:** each call reserves its own cap against a spend ledger (a JSON-lines file with a cap in dollars) before it starts. It gets the Agent SDK's per-call cap and is recorded with the cost the SDK reports.
-- **Tools:** each call lists the built-in tools it may use, and a guard refuses writes outside the call's own folder and reads outside its read roots. No settings files or CLAUDE.md are loaded.
-- **Message buffer:** the SDK's 1 MB limit on a Claude Code message is raised to 16 MB, because an image the agent reads comes back as one message (issue #79).
-- **Tests** use a scripted runner. The Agent SDK is an optional extra (`uv sync --extra agents`), so CI never installs or imports it.
-
-### Persistent sessions
-
-Issue #125 (maintainer's choices, 2026-11-15: stay on the Agent SDK with the API key; Opus for the designer, repairs and the critic). Each call used to be a fresh Claude Code session that re-read the requirements, the interface, the rules and A/B, and forgot the last call; an Opus explore call cost $1.21–1.33 over 21–26 turns (`runs/loop/overhaul2-20261114-mean/api-spend.jsonl`).
-
-- **Sessions by role** (`orchestrator.Sessions`, `runner.ClaudeSession`): `designer` (reshapes and repairs of the best), `critic`, one `concept:<module>` per explore concept, and `concept` (the concept track, #126). A session connects on its first message and keeps that message's options (model, system prompt, tools, per-message turn and budget limits); each later message brings its own write root, read roots and loop tools, which the tool guard and the tool handlers look up at call time. The SDK reports a session's cost as a running total, so the session records each message's increment, one ledger row per message marked with the session; its SDK budget covers all its messages (one message's budget × `session_messages`, #131).
-- **After an explore round** the session of the concept that goes on (kept, provisional, or chosen for the concept track) carries on as `designer` or `concept`; the others close. So the agent that wrote a brick keeps developing it.
-- **Replacement.** A session is closed after `session_messages` (4) messages or once its context reaches `session_max_tokens` (100,000); the next message opens a fresh one with a handover note pointing at the design log, files and pictures. Each iteration records its sessions' ids, message counts, context sizes and replacements.
-- **Turns and the wrap-up** (#141). A message's turns are counted as the SDK counts them: distinct message ids (one turn can come as several events, text and each tool call). At the limit, a call that gives a wrap-up prompt (the design call does) gets it as one short follow-up (4 turns), so the agent leaves its passing package and its note. In `limits-20261116-mean`, counted by event, three explore calls were cut off at 15 to 17 real turns before writing their notes.
-- **Per-message limits** (#139). The SDK applies its turn and budget limits to a whole session, so each message's own limits are enforced by the session: past the call's `max_turns` (`design_max_turns`, 25) or `message_seconds` (600 s) it is interrupted, marked `interrupted`, and recorded as usual; the design prompt states the turn budget. In `gate2-20261116-mean`, before this, explore calls ran 50 to 55 turns, about 20 min and $2.39 to $4.24 each.
-- **Resume.** Session ids go in `state.json`; `--resume` reopens them. `--no-sessions` goes back to a fresh call each time.
-- **Cost trims.** A/B's `family.py` and `params.py` are in the designer's system prompt, so it spends no turns reading them; `probe_drops` returns the counts and only the drops that did not seat; the critic's map grids are cut to its target box and one cell round it. In a session the critic always has Read, limited each message to that message's rest pictures.
-
-A first test of the SDK's client (`ClaudeSDKClient`, Haiku, three messages in one session; spend in `runs/api-spend-overhaul2-20261115.jsonl`) was first read as cost reported per message ($0.0021, $0.0028, $0.0030); it is a running total (#131). The cache carried between messages (13,779 tokens read from cache on the second); a fresh session first writes about 17,000 tokens of Claude Code's own prompt to the cache.
-
-## Design log
-
-`loop/design_log.py` (issue #20) keeps one JSON line per design attempt in `runs/loop/<run>/design_log.jsonl`. That covers a package that broke the contract, a design the quick check turned back (with its counts by outcome), and a design that was scored and kept or rejected (with Z per target and the reason). Map overrides are logged with their reasons. Each entry names the run directories behind its numbers. Both agents read it as short text, so neither repeats an idea that failed. That text never holds the held-out results.
-
-## Lessons
-
-Issue #88. What one iteration learns reaches the next run through `lessons/lessons.jsonl` at the repo root (`loop/lessons.py`), one JSON object per line. It is tracked in git, so lessons are shared by committing them.
-
-- **Proposed by the critic:** a brief may carry up to two lessons, each a general statement (not a parameter value, at most 300 characters), the rule ids it rests on and the index of its cluster. `validate_brief` refuses one that cites an unknown rule or runs too long.
-- **Tested by the next design:** a lesson is written only once the next iteration has a scored design, with that outcome as evidence: Z on the target before and after, kept or rejected, and both map directories. With no scored design, nothing is written.
-- **Repeated lessons:** the same lesson again (lower case, whitespace collapsed) adds evidence to its line. Its status is `supported` if more of its evidence was kept than rejected, `not_supported` if fewer, and `mixed` if equal. The file is rewritten through a temporary file and a rename.
-- **Read by both agents:** the lessons with the most evidence first, then the newest, up to 30, go into the design agent's and the critic's system prompts as unreviewed observations, simulated with uncalibrated contact, to weigh against the design rules. The design agent's prompt also holds the design rules themselves.
-- **Promotion:** a lesson becomes a design rule only by hand, in a reviewed PR (`docs/` and `rules/` change only that way). Benchmark runs (#22) use `--no-lessons`, which neither reads nor writes the file, so they can be repeated.
-
-Every lesson is labelled "simulated, uncalibrated contact; unreviewed".
-
-## Agents (Claude Agent SDK)
-
-**Design agent** (`agents/design.py`, issue #18).
-
-- **Prompt:** the base requirements (R1–R13, deferred ones marked), any extras from intake, the brick family interface (`docs/family-interface.md`), the concept images, the critic's last brief, the current best design as a parent, the quick check's failing drops when the last attempt failed, and the design log.
-- **Tools:** Read, Glob and Grep over the repo's docs, the engine, the rules, the family interface and the A/B family (not the dummy families, #73); Write and Edit inside its own package only; and `check_family`, which runs the family contract and the rule margins in a separate process with a time limit. Since issue #107 it also has `probe_drops` (`engine/probe.py`): the draft dropped at up to 30 poses (`--probe-calls`, default at most 5 calls per design call, each logged with its wall-clock in the design log and the iteration's `seconds.probe`). The poses are seeded with the run's seed and the iteration and written to `iter-NN/probe_poses.json`: the best design's jammed and wrong-valley drops inside the current target box, four of its seats as a control, and the aim on each course; with no best yet, a spread over the box's X-Y disc. They are map grid cells, never the held-out poses (each cell shifted off the grid by another seed), so the held-out check stays independent. The agent says in `design_note.json` (`probe`) what the probe showed. A 30-drop probe is about the cost of the 40-drop quick check (6–8 s).
-- **Output:** a family package `runs/loop/<run>/iter-NN/attempt-K/pkg/<module>/` with `family.py` and `design_note.json` (the idea, the change from the parent, the geometry type and, for `Solid3D`, the reason). The loop checks the package itself afterwards; it does not take the agent's word.
-
-**Critic agent** (`agents/critic.py`, issue #19).
-
-- **Prompt:** the design rules (`rules/design_rules.md`) and the sources they cite (`rules/citations.md`), with Z per target, the fitted map as text grids, the jam analysis (bands with failure types and mechanisms, and the capture limits), the design log and the family's code. It never sees held-out results.
-- **Rest pictures** (issue #112, `loop/rest.py`): before the critic runs, up to four failures inside the target box (seeded: a jam, a wrong valley and an X-Y drop first when there are any) are dropped again and written to `iter-NN/rest/`: a picture of the brick at rest from the side (`rest-K-xz.png`) and end-on (`rest-K-yz.png`), and the contacts at rest (the face of the falling brick on the face below, named by the jam analysis on a Prismatic family; the sim's raw contacts for one that varies along Y) in `rest.json`. The critic gets the table in its prompt and the Read tool on that directory only. The next design call is told to read the parent's `jam_map.png`, `module.png` and rest pictures. About 5.5 s for four rests of A/B.
-- **Stricter brief** (#112): each cluster adds `faces` (the faces in contact at rest), `shape_change` (a change to the profile or the Y geometry, in words a designer can draw) and `change_kind` (`shape` or `parameters`). When the last design changed parameter values only (its section within 5 % of its parent's) and Z moved by no more than the noise band (#110), a cluster whose change is again only parameter values is refused, and the critic is asked once more with the reason. A cluster with `scope: new_family` makes the next iteration an explore round (#106).
-- **Tools:** none. Everything it needs is in the prompt, and it answers with a structured brief.
-- **Output:** a redesign brief. For each failure cluster it gives the diagnosis, the rules it rests on (by id), the proposed change, whether it reshapes the family or needs a new one, and the expected effect on Z. Or it gives a decision to stop, with its reason. A brief that cites a rule that does not exist, or a redesign with no cluster, is refused.
-
 ## Evaluation engine (no LLM)
 
 It scores each target box: the drone's mean, 95th-percentile and worst error. For now it scores placement (R11) only. The pickup trial and the pickup predictor (R12) stay in the code with their tests, but the loop does not run them (issue #46).
@@ -320,9 +117,7 @@ It scores each target box: the drone's mean, 95th-percentile and worst error. Fo
    - at two or more contacts, run a jam test, which asks whether friction can hold the part still.
 
    It repeats this across μ ≈ 0.2–0.5, and returns a predicted box and contact traces in seconds.
-2. **Tuner.** One short, gradient-free Py-BOBYQA run on Z, at the end of the loop and not inside an iteration. See [End tune](#end-tune).
-3. **Sim verifier.** MuJoCo drops through the full sim map (below). The older box search (`engine/box_search.py`: bisection on the scale of a box until every drop at its corners, faces and a few interior points succeeds) is kept for the pickup trial and the predictor validation; it is no longer the score.
-4. **Scorer (`engine/report.py`).** It runs the quick check, then the full sim map with its grid covering all three target boxes (aimed at the run's target), and counts Z on each box. It writes `map.json`, `drops.json.gz` and `report.json` (schema 4) to one new `runs/map-<UTC>-<family>-<target>/` directory; the jam analysis is written beside them. The report holds Z per target with S, J, N and the fell, wrong-valley and other counts behind it. It holds no box scale and no predictor term.
+2. **Sim verifier.** MuJoCo drops through the full sim map (below). The older box search (`engine/box_search.py`: bisection on the scale of a box until every drop at its corners, faces and a few interior points succeeds) is kept for the pickup trial and the predictor validation; it is no longer the score.
 
 ### Objective Z
 
@@ -345,7 +140,7 @@ Z is counted over the target box, not over the green zone. The box is fixed by t
 - **Poses:** 40 poses inside the target box, from one seeded Latin hypercube over X, Z, θ and the course. Each axis has one pose in each of its 40 equal slices, and each course gets 20 poses.
 - **Physics:** the MuJoCo drop trial, not the predictor.
 - **Pass rule:** at least 32 of 40 seated. The check stops at the 9th failure, because 32 is then out of reach. Poses are judged in order, so the result does not depend on how many processes ran it.
-- **On a fail:** the failing poses go back to the design agent with their outcomes and contact traces.
+- **On a fail:** the failing poses are listed with their outcomes and contact traces.
 - **Output:** `runs/check-<UTC>-<family>-<target>/check.json`, labelled "simulated, uncalibrated contact".
 
 The check is not the score. A design that seats every drop in the box always passes it, so it never turns back a design with Z = 1.
@@ -429,31 +224,15 @@ Only ideal placement is reported so far.
 
 Issue #113: a report, not a gate (maintainer, 2026-11-13). After the end tune, the run's final design (at its tuned parameters if the tune was accepted) gets `engine/pickup_check.py`: the R10 margins (two large through-Y openings straddling and above the centre of mass; brick plus gripper within 35 g, the 5 g gripper allowance a guess until #24), and, for a Prismatic family with two usable openings, today's fixed fork as a stand-in for the gripper: one pick at ideal alignment and six seeded picks inside the mean pickup box, then the clean release check. Otherwise the report says plainly why the fork was not run. It is written to `runs/pickup-<UTC>-<family>/pickup.json` and the run summary's Pickup section; nothing is rejected on it. `--no-pickup` skips it. A/B: R10 passes; the fork picks it at ideal alignment only (1 of 7: four offset picks jam, two miss) and releases it cleanly; 11.3 s (`runs/pickup-20261114T040502193725Z-ab`, simulated, uncalibrated contact).
 
-### End tune
-
-`engine/tune.py` runs once, on the family the loop settled on (issue #14). The loop itself changes shapes, not numbers; this last step moves the numbers.
-
-- **Variables:** the parameters in the family's `bounds`, each scaled to 0–1 over its range. A caller can fix any of them, for example the cell size U when it was set at intake (R2).
-- **Objective:** Z on the run's target box, placement only, from the map's cells inside the boxes (`zscore.ZScore`). The untuned design is scored first, and no point is scored twice.
-- **Other targets:** a candidate that lowers Z on any other target box below the untuned design's is refused (`lowers_other`) and can never be the result.
-- **Search:** Py-BOBYQA, which fits a model through n + 1 points for n parameters. It starts with a step of 10 % of each range and stops at 1 %.
-- **Budget:** 24 scored candidates and 7 minutes of search by default. A candidate is not started if it would run past the time cap. The search also stops once 4 scored candidates in a row, after the first probes, bring no gain.
-- **First probes together:** the search begins by stepping each parameter once. Those candidates are scored side by side in 6 processes, and the search then reuses the results.
-- **Infeasible candidates:** one that cannot be built, or that breaks a rule margin (R6, R9, R10, R13 or the family's own), is not simulated and can never be the result.
-- **Held-out check:** a tuned design that scores higher is scored again, with the untuned one, on held-out Z: the target box's poses shifted by the next seed, at friction 0.2 and 0.5. The search itself runs on the map's own cells at the trial's default friction. The tuned design is accepted only if neither held-out Z got worse; otherwise the untuned design is kept.
-- **Not used:** the analytic predictor. A first stage on the predictor (CMA-ES or random search) was planned and then dropped on 2026-11-11, so `Prismatic` and `Solid3D` families are tuned the same way.
-- **Output:** `runs/tune-<UTC>-<family>-<target>/tune.json`: every candidate with its score or the reason it was skipped, the untuned and tuned parameters, the held-out scores, why the search stopped, and the wall-clock of the search and the held-out check. Labelled "simulated, uncalibrated contact".
-
 ## Files
 
 | Path | Written by | Read by |
 |---|---|---|
-| `docs/requirements.md` (later a data file) | people | design agent |
-| `src/brixzle/rules/design_rules.md`, `src/brixzle/rules/citations.md` | people, with Claude's help | critic agent |
+| `docs/requirements.md`, `requirements.yaml` | people | the roles |
+| `src/brixzle/rules/design_rules.md`, `src/brixzle/rules/citations.md` | people, with Claude's help | designer and critic |
 | `src/brixzle/data/error-*.json` | copied from aerial-assembly | evaluation engine |
-| `src/brixzle/families/<name>/` | design agent | evaluation engine |
-| `runs/loop/<run>/iter-N/` | orchestrator and engine | critic agent (with the design log) |
-| `lessons/lessons.jsonl` (tracked) | the loop, from the critic's briefs and the next design's outcome (#88) | design agent and critic agent |
+| `src/brixzle/families/<name>/` | people (the reference designs) | evaluation engine; a run's designs live in `runs/rsi/<run>/iter-NN/` |
+| `runs/rsi/<run>/iter-NN/` | the director loop's roles and steps | the next roles, and the design library |
 
 ## Open questions
 

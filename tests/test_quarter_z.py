@@ -174,7 +174,7 @@ def test_a_record_scored_before_222_is_refused_for_a_rescore():
 
 
 def _fakes(monkeypatch, screen_passes=True):
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
     from brixzle.engine import gripper_spec as GSP
     from brixzle.engine import structure_gate as SG
     from brixzle.tools import core as TC

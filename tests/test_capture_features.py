@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from scipy.spatial import ConvexHull
 
-from brixzle.agents import check_family as CF
+from brixzle.tools import check_family as CF
 from brixzle.engine import jam_analysis as JA
 from brixzle.engine.sim import trials as T
 from brixzle.families import builders as B

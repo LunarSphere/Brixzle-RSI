@@ -19,7 +19,7 @@ def stack_v():
     on top of one brick but cannot lay a running bond."""
     from pathlib import Path
 
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
 
     return CF.load_family(Path(__file__).parent / "fixtures", "stackv")
 
@@ -43,7 +43,7 @@ def cached_check(root, module, **kw):
     keyword arguments: the A/B-copy check (#106) takes about 12 s and two test modules use it."""
     from pathlib import Path
 
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
 
     if not _REAL_CHECK:
         _REAL_CHECK.append(CF.check_in_subprocess)
@@ -58,7 +58,7 @@ def cached_check(root, module, **kw):
 
 
 def pytest_configure(config):
-    from brixzle.agents import check_family as CF
+    from brixzle.tools import check_family as CF
 
     _REAL_CHECK[:] = [CF.check_in_subprocess]
 

@@ -12,7 +12,7 @@ import pytest
 import trimesh
 
 from brixzle.engine.sim import trials as T
-from brixzle.loop import videos as V
+from brixzle.tools import videos as V
 
 C0 = 5.0
 CFG = T.TrialConfig(error=T.ErrorModel(ideal=True))

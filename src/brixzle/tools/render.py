@@ -76,7 +76,7 @@ def _fmt_fixed(fixed):
 
 
 def pick_marks(sim_map, picks):
-    """Where each picked drop (loop/videos.py) sits on the map: (slice, course, x, y, k), the
+    """Where each picked drop (tools/videos.py) sits on the map: (slice, course, x, y, k), the
     coordinates in the slice's own two axes."""
     axes = {(g["slice"], g["course"]): g["axes"] for g in sim_map["grids"]}
     out = []
