@@ -62,23 +62,7 @@ def _rec(name, green, steps=3.0, stack=3.0, violations=()):
     return {"name": name, "green_mm": green, "overhang_steps": steps, "stack_courses": stack, "violations": list(violations)}
 
 
-def test_bands_name_the_error_ranges():
-    assert AR.band_of(3.0) == "below 16"
-    assert AR.band_of(16.0) == "16-22"
-    assert AR.band_of(27.9) == "22-28"
-    assert AR.band_of(40.0) == "34+"
-
-
-def test_the_band_archive_keeps_the_best_per_band():
-    arc = AR.BandArchive()
-    assert arc.offer(_rec("a", 18.0))["kept"]
-    assert arc.offer(_rec("b", 30.0))["kept"]                      # another band: both stay
-    assert not arc.offer(_rec("c", 18.5, steps=2.0))["kept"]       # a tie on the green zone, fewer steps
-    res = arc.offer(_rec("d", 18.4, steps=5.0))                     # a tie on the green zone, more steps
-    assert res["kept"] and res["replaced"] == ["a"]
-    assert arc.offer(_rec("e", 21.0))["kept"]                       # clearly more error in the same band
-    assert not arc.offer(_rec("f", 39.0, violations=["mvp_gate"]))["kept"]
-    assert sorted(m["name"] for m in arc.members) == ["b", "e"]
+# The Z bands and the archive's ranking (#222) are in tests/test_quarter_z.py.
 
 
 # --- the run ---
@@ -157,7 +141,7 @@ def test_each_decided_iteration_is_recorded_once_with_its_mechanism(repo):
     assert DE.record(run, _decision(action="fix", design="", may_change=["new_family"], brief="Another idea."))["ok"]
     lines = [json.loads(x) for x in (run / "designs.jsonl").read_text().splitlines()]
     assert len(lines) == 1 and lines[0]["mechanism"] == "the tooth props on the bare end face"
-    assert lines[0]["new_family"] and lines[0]["rules"] == "218"
+    assert lines[0]["new_family"] and lines[0]["rules"] == "222"
     assert lines[0]["green_mm"] == 9.5 and lines[0]["weakest"] == "plus_bare"
     shared = run.resolve().parents[1] / "designs.jsonl"
     assert len(shared.read_text().splitlines()) == 1
@@ -176,13 +160,16 @@ def test_the_radius_measurement_scores_the_grid_and_builds_at_the_green_zone(tmp
     monkeypatch.setattr(GSP, "target_check", lambda fam, p: {"violations": []})
     monkeypatch.setattr(SG, "run_gate", lambda *a, **k: {"passed": True, "overhang_n": 3, "builds": [], "seconds": 1,
                                                          "run": "r"})
+    from brixzle.engine import quick_check as QC
+    monkeypatch.setattr(QC, "quarter_screen", lambda fam, p, **k: {"passed": True, "z": 1.0, "dropped": 40})
     fake = GS.search(lambda pts: ["seated" if abs(x) < 18 else "jammed" for _, x, _ in pts],
                      GS.GridSettings(placements=("full", "corbel_reach")))
     monkeypatch.setattr(GS, "grid_search", lambda fam, p, s, workers=None: {**fake, "drops_rows": [], "jams": None})
     seen = {}
     monkeypatch.setattr(RA, "noisy_builds", lambda fam, p, r, bs, workers=None: seen.setdefault(
         "r", {"radius_mm": bs.radius_mm if r is None else r, "overhang_steps": 3.0, "stack_courses": 3.0}))
-    m = VE.measure_radius("x:y", tmp_path / "measured", GS.GridSettings(placements=("full", "corbel_reach")))
+    m = VE.measure_radius("x:y", tmp_path / "measured", GS.GridSettings(placements=("full", "corbel_reach")),
+                          RA.BuildSettings())  # the builds run only when asked for (finalists, #222)
     assert m["green_mm"] == fake["green_mm"] and seen["r"]["radius_mm"] == 16.0 == m["build_radius_mm"]
     assert m["second_mm"] == max(m["green_by_placement"].values())  # two placements: the other one
     assert m["weakest"] == fake["weakest"] and m["z_rings"]["16"] == 1.0

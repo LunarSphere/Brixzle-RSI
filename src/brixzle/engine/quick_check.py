@@ -19,7 +19,16 @@ in the box always passes, so the gate never turns back a design with Z = 1.
 The check is not the score. The loop's objective is Z (engine/zscore.py, issue #61).
 Placement only for now (issue #46). Results are simulated, uncalibrated contact.
 
+**The quarter screen (#222).** ``quarter_screen`` is the director's cheap filter before the grid
+score: the same 40 drops and the same rule (at least 32 seated, stopping at the 9th failure), but on
+the score's four placements (``radius.QUARTERS``: the stack and overhangs 1, 2 and 3), 10 each,
+interleaved, at seeded random positions spread evenly over the 16 mm disc (one Latin hypercube over
+radius squared and angle), released in the grid's free drop. A design that cannot seat one of the
+four placements fails it: 10 failures are more than the 8 allowed. Its Z, (S - J) / N per quarter
+and over all its drops, has the form of the score but is not the score.
+
     uv run python -m brixzle.engine.quick_check --family ab --seed 0
+    uv run python -m brixzle.engine.quick_check --quarters --family <name or root:module> --seed 0
 """
 
 import argparse
@@ -176,6 +185,77 @@ def quick_check(family, p, box, cfg=None, n=N_DROPS, need=NEED_SEATED, seed=0, w
     }
 
 
+SCREEN_RADIUS_MM = 16.0  # the disc of the screen's positions: the floor, the disc the score Z is counted over
+
+
+def quarter_poses(n=N_DROPS, radius_mm=SCREEN_RADIUS_MM, seed=0, placements=None):
+    """``n`` seeded (placement, x_mm, y_mm) inside the ``radius_mm`` disc, the placements taken in
+    turn (so each gets n / 4 and a check stopped early has judged every one) and (x, y) from one
+    Latin hypercube over radius squared and angle, so the positions are even over the disc's area."""
+    from brixzle.engine import radius as RA
+
+    placements = tuple(placements or RA.QUARTERS)
+    max_failures(n, 0)
+    if not (math.isfinite(radius_mm) and radius_mm > 0):
+        raise ValueError(f"radius_mm must be finite and > 0, got {radius_mm!r}")
+    u = qmc.LatinHypercube(d=2, seed=seed).random(n)
+    out = []
+    for k, (a, b) in enumerate(u):
+        r, phi = radius_mm * math.sqrt(a), 2.0 * math.pi * b
+        out.append((placements[k % len(placements)], round(r * math.cos(phi), 4), round(r * math.sin(phi), 4)))
+    return out
+
+
+def _quarter_counts(outcomes):
+    s, j, n = outcomes.count(SUCCESS), outcomes.count("jammed"), len(outcomes)
+    return {"S": s, "J": j, "N": n, "Z": round((s - j) / n, 4) if n else None}
+
+
+def quarter_screen(family, p, seed=0, n=N_DROPS, need=NEED_SEATED, radius_mm=SCREEN_RADIUS_MM, drop=None):
+    """The quarter screen (#222): ``quarter_poses`` dropped in order in this process, one drop rig
+    per placement, judged by ``tally`` (at least ``need`` of ``n`` seated, stopping when that is out
+    of reach). ``drop(index, placement, x_mm, y_mm) -> outcome`` replaces the sim (for tests).
+    Returns the verdict, the counts and Z per quarter and in all, and every judged drop."""
+    from brixzle.engine import gridscore as GS
+    from brixzle.engine import radius as RA
+    from brixzle.engine import zscore as ZS
+
+    t0 = time.time()
+    poses = quarter_poses(n, radius_mm, seed)
+    if drop is None:
+        span = family.lattice(p).span_voxels
+        if span != 2:  # the corbel layouts are laid out for a two-voxel brick, as in gridscore
+            return {"label": LABEL, "kind": "quarter_screen", "family": getattr(family, "name", None), "seed": seed,
+                    "n": n, "need": need, "radius_mm": radius_mm, "passed": False, "seated": 0, "failed": 0,
+                    "dropped": 0, "stopped_early": False, "outcomes": {}, "z": None, "quarters": {}, "drops": [],
+                    "error": f"the placements are laid out for a two-voxel brick; span_voxels = {span}",
+                    "seconds": round(time.time() - t0, 2)}
+        cfg = RA._ideal_cfg(False)  # the free drop (#218)
+        z = GS.release_z_mm(GS.GridSettings())
+        rigs = {}
+
+        def drop(k, pl, x, y):
+            if pl not in rigs:
+                rigs[pl] = T.DropRig(family, p, cfg, course=RA.PLACEMENTS[pl])
+            row = rigs[pl].drop(ZS._sample(cfg, {"x": x, "y": y, "z": z, "t": 0.0}), trace=False)
+            stable = all(math.isfinite(float(v)) for v in [*row.get("err_mm", []), row.get("angle_deg", 0.0)])
+            return row["outcome"] if stable else UNSTABLE
+
+    rows = ({"index": k, "placement": pl, "x_mm": x, "y_mm": y, "outcome": drop(k, pl, x, y)}
+            for k, (pl, x, y) in enumerate(poses))
+    res = tally(rows, n, need)
+    judged = res.pop("rows")
+    outcomes = {}
+    for d in judged:
+        outcomes[d["outcome"]] = outcomes.get(d["outcome"], 0) + 1
+    quarters = {pl: _quarter_counts([d["outcome"] for d in judged if d["placement"] == pl])
+                for pl in dict.fromkeys(pl for pl, _, _ in poses)}
+    every = _quarter_counts([d["outcome"] for d in judged])
+    return {"label": LABEL, "kind": "quarter_screen", "family": getattr(family, "name", None), "seed": seed,
+            "n": n, "need": need, "radius_mm": radius_mm, **res, "outcomes": dict(sorted(outcomes.items())),
+            "z": every["Z"], "quarters": quarters, "drops": judged, "seconds": round(time.time() - t0, 2)}
+
+
 def new_run_dir(root, family_name, statistic):
     """A new runs/check-<UTC stamp>-<family>-<target> directory; never reuses one."""
     root = Path(root)
@@ -218,6 +298,8 @@ def parser():
     ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
                     help=f"drop processes (default {DEFAULT_WORKERS}: the fastest for this few drops)")
     ap.add_argument("--runs", default="runs")
+    ap.add_argument("--quarters", action="store_true",
+                    help="the quarter screen (#222) on the stack and overhangs 1-3; --family may be root:module")
     return ap
 
 
@@ -225,6 +307,18 @@ def main(argv=None):
     from brixzle.families import registry
 
     args = parser().parse_args(argv)
+    if args.quarters:
+        from brixzle.tools import core as TC
+
+        family = TC.load(args.family)
+        result = quarter_screen(family, family.defaults, seed=args.seed, n=args.n, need=args.need)
+        out = new_run_dir(args.runs, family.name, "quarters")
+        (out / "screen.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        per = ", ".join(f"{pl} Z {v['Z']}" for pl, v in result["quarters"].items())
+        print(f"{family.name} quarter screen: {'PASS' if result['passed'] else 'FAIL'}, {result['seated']} seated of "
+              f"{result['dropped']} (needs {result['need']} of {result['n']}); Z {result['z']} ({per}); "
+              f"{result['seconds']:.1f} s ({LABEL}) -> {out}")
+        return
     family = registry.get(args.family)
     boxes = BX.default_boxes()["placement"]
     for stat in args.statistics:

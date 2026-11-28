@@ -1,7 +1,7 @@
 # Base requirements R1–R13 as data. Loaded by brixzle.requirements.
 # Keep in step with the table in docs/requirements.md: the tests check that
 # ids, names, text and check kinds agree. Change only in a reviewed PR.
-# Rewritten for the error-radius goal (#206).
+# Rewritten for the error-radius goal (#206); R11 scored as Z on four placements since #222.
 #
 # checks: one or more of
 #   rule       an analytic check that runs before any simulation
@@ -70,7 +70,7 @@ requirements:
 
   - id: R11
     name: Coarse placement
-    text: "The drone places bricks with 16 to 40 mm of error, and a brick must seat by its own geometry; the score is the largest error radius inside which every placement type always seats (the green zone)."
+    text: "The drone places bricks with 16 to 40 mm of error, and a brick must seat by its own geometry; the score is Z = (S − J) / N within 16 mm, averaged over the stack and overhangs 1, 2 and 3."
     checks: [sim]
 
   - id: R12

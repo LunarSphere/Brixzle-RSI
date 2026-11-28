@@ -34,7 +34,7 @@ def test_the_grid_scores_the_back_brick_and_the_second_reach():
     ("b1_-1", 1),                              # the course-1 back brick: a running-bond seat
     ("b1_1", "plus_anchored"),                 # the first reach
     ("b2_0", "back_cantilever"), ("b4_2", "back_cantilever"),
-    ("b2_2", "plus_cantilever"), ("b5_5", "plus_cantilever"),
+    ("b2_2", "plus_cantilever"), ("b5_5", "plus_cantilever3"),  # #222: reaches 3+ replay on overhang 3
 ])
 def test_each_corbel_brick_maps_to_the_single_brick_layout_that_replays_it(brick, layout):
     assert RA.corbel_layout(brick) == layout
@@ -58,18 +58,18 @@ def test_builds_run_at_a_fixed_16_mm_by_default():
 
 
 def _rec(name, green, second, steps=3.0):
-    return {"name": name, "green_mm": green, "second_mm": second, "overhang_steps": steps, "stack_courses": 3.0,
-            "violations": []}
+    return {"name": name, "z": 0.5, "z_rings": {"16": 0.5, "28": 0.2, "40": 0.1}, "green_mm": green,
+            "second_mm": second, "overhang_steps": steps, "stack_courses": 3.0, "violations": []}
 
 
-def test_a_green_zone_tie_goes_to_the_second_weakest_placement_before_overhang():
+def test_a_z_tie_goes_to_the_second_weakest_placement_and_not_to_overhang():
+    # #222: with Z tied, the green zones weakest first decide; the noisy builds no longer rank
     arc = AR.BandArchive()
     assert arc.offer(_rec("wellkey", 3.75, 8.75, steps=4.0))["kept"]
     res = arc.offer(_rec("foldrail", 3.75, 16.25, steps=3.0))
     assert res["kept"] and res["replaced"] == ["wellkey"]
-    # a second-weakest tie (within 1.25 mm) falls through to overhang
     assert not arc.offer(_rec("x", 3.75, 16.0, steps=2.0))["kept"]
-    assert arc.offer(_rec("y", 3.75, 16.0, steps=5.0))["kept"]
+    assert not arc.offer(_rec("y", 3.75, 16.0, steps=5.0))["kept"]
 
 
 @pytest.mark.slow

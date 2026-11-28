@@ -212,7 +212,8 @@ def test_the_archive_keeps_the_pareto_set_within_noise():
 def test_archive_uses_the_overhang_term_from_the_run_goal(repo):
     from brixzle.director import __main__ as CLI
 
-    run = _init(repo, settings={"scored": ["z_target", "overhang_mean_steps", "z_mu08", "overhang_n"]})
+    # the #164 Pareto archive: name the legacy stage, or the run defaults to the radius goal's band archive
+    run = _init(repo, settings={"stage": "legacy", "scored": ["z_target", "overhang_mean_steps", "z_mu08", "overhang_n"]})
     ab = {**_rec("ab", tol=4.0), "overhang_mean_steps": 29 / 6}
     short = {**_rec("short", tol=5.0), "overhang_mean_steps": 23 / 6}
 

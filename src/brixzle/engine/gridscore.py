@@ -1,9 +1,15 @@
-"""The grid self-alignment score (#208): the green zone, where every release pose seats.
+"""The grid score (#208, scored as four quarters since #222): Z, and the green zone.
 
-A brick is meant to self-align: every release inside the error it claims must seat, so a pocket of
-jams between random samples breaks the claim. Per placement type (``radius.PLACEMENTS``: full seat,
-both bare edges and the corbel's first reach), the brick is released held (``trials.TrialConfig.held``)
-on an X-Y grid of offsets about its aim out to ``max_mm`` (40 mm):
+**The score (#222).** Z = 1/4 Z_stack + 1/4 Z_overhang1 + 1/4 Z_overhang2 + 1/4 Z_overhang3. Each term
+is Z = (S - J) / N over that placement's grid cells whose centre lies inside the ``z_ring_mm`` (16 mm)
+disc, every cell counted by its area in fine cells: S seated (+1), J jammed (-1), a wrong valley or a
+fall 0. The four placements are ``radius.QUARTERS``: the full seat (stacking) and the reaching brick of
+a back-first corbel's courses 1, 2 and 3, everything below it ideally placed. If one brick stacks,
+many do; a corbel needs each reach to seat. Z = 1 means every release within 16 mm seats on all four.
+Z over the 28 and 40 mm discs (``z_rings``) break ties.
+
+Per placement type, the brick is released in a free drop (#218) on an X-Y grid of offsets about its
+aim out to ``max_mm`` (40 mm):
 
 1. **Coarse.** Cells of ``coarse_mm`` (7.5 mm) whose square meets the 40 mm disc, one drop at each
    cell's centre.
@@ -12,14 +18,15 @@ on an X-Y grid of offsets about its aim out to ``max_mm`` (40 mm):
    middle fine cell and every drop lies on one 2.5 mm lattice. This repeats until nothing is left
    to split: every outcome change ends up at fine resolution (so a lone failing coarse cell is
    resolved, and so are its seated neighbours), while plains of one outcome stay coarse.
-3. **Early stop.** Once a placement has a failure within ``floor_mm`` (16 mm), only cells nearer
-   than its nearest failure are refined further: the rest cannot change its headline.
+3. **Early stop.** Once a placement has a failure within ``floor_mm`` (16 mm), cells farther out
+   than its nearest failure are refined only if they reach inside the ``z_ring_mm`` disc, where
+   they still change Z (#222); the rest cannot change the score.
 
-The headline, ``green_mm``, is the largest disc radius about the aim inside which every cell seats:
-the distance from the aim to the nearest point of the nearest cell that did not seat (jammed,
-wrong valley or fell), capped at ``max_mm``. The weakest placement sets the design's ``green_mm``.
-Z = (S - J) / N is reported per ring (16, 28 (p95) and 40 mm), counting cells by area in fine
-cells, as the old mean / p95 / worst boxes did.
+``green_mm``, a diagnostic since #222, is the largest disc radius about the aim inside which every
+cell seats: the distance from the aim to the nearest point of the nearest cell that did not seat
+(jammed, wrong valley or fell), capped at ``max_mm``. The weakest placement sets the design's
+``green_mm``. Any placement of ``radius.PLACEMENTS`` (the bare edges, the corbel's back brick) can
+still be gridded as a diagnostic with ``placements``; Z averages whichever placements were gridded.
 
 ``search`` is the grid logic on any ``outcome_of``; ``grid_search`` runs it in the sim with one
 ``box_search.DropPool`` across every placement (all cores, drop cache on). All results are
@@ -43,7 +50,8 @@ class GridSettings:
     fine_mm: float = 2.5        # refined cell; a coarse cell is 3 x 3 of these (7.5 mm)
     floor_mm: float = 16.0      # the least error a brick must tolerate to be worth printing (#206)
     rings_mm: tuple = (16.0, 28.0, 40.0)   # Z rings: floor, p95 and worst (#206's error range)
-    placements: tuple = tuple(RA.PLACEMENTS)
+    placements: tuple = RA.QUARTERS   # stack and overhangs 1-3 (#222)
+    z_ring_mm: float = 16.0           # the disc the score Z is counted over (#222): the floor
     z_frac: float = 1.0         # release height, as a share of the mean box's height span: its top (#218), 11.2 mm
     held: bool = False          # hover and drop (#218): a free drop; True: the held release (#206)
     early_stop: bool = True
@@ -60,10 +68,22 @@ class GridSettings:
             raise ValueError(f"z_frac must be in [0, 1], got {self.z_frac!r}")
         if not self.rings_mm or any(not (math.isfinite(r) and r > 0) for r in self.rings_mm):
             raise ValueError(f"rings_mm must be finite and > 0, got {self.rings_mm!r}")
+        if self.z_ring_mm not in self.rings_mm:
+            raise ValueError(f"z_ring_mm must be one of rings_mm {self.rings_mm!r}, got {self.z_ring_mm!r}")
 
     @property
     def coarse_mm(self):
         return 3 * self.fine_mm
+
+
+def release_z_mm(s: GridSettings):
+    """The release height above the minimum clearance: ``z_frac`` of the mean box's height span (#218)."""
+    from brixzle.engine import boxes as BX
+    return s.z_frac * 2 * BX.default_boxes()["placement"]["mean"].half_widths["z_mm"]
+
+
+def ring_key(r):
+    return f"{r:g}"
 
 
 # A cell is (i, j, size): its centre at (i, j) fine cells from the aim, its side ``size`` fine cells
@@ -141,8 +161,8 @@ def to_split(cells, s: GridSettings):
     for c, o in cells.items():
         if c[2] != 3:
             continue
-        if early and distance_mm(c, s) >= bound:
-            continue
+        if early and distance_mm(c, s) >= max(bound, s.z_ring_mm):
+            continue  # outside both the green zone's bound and the disc Z is counted over
         if any(cells[n] != o for n in _touching(c, owners)):
             out.append(c)
     return sorted(out, key=lambda c: (c[1], c[0])), early
@@ -265,11 +285,23 @@ def search(outcome_of, s: GridSettings = GridSettings(), noise_check=None):
                    "cells": [{"cell": list(c), "x_mm": centre_mm(c, s)[0], "y_mm": centre_mm(c, s)[1],
                               "size_mm": c[2] * s.fine_mm, "outcome": o}
                              for c, o in sorted(cs.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2]))]}
-    order = sorted(s.placements, key=lambda pl: (per[pl]["green_mm"], per[pl]["rings"][f"{s.rings_mm[0]:g}"]["Z"]))
+    order = sorted(s.placements, key=lambda pl: (per[pl]["green_mm"], per[pl]["rings"][ring_key(s.z_ring_mm)]["Z"]))
     green = per[order[0]]["green_mm"]
-    return {"label": LABEL, "green_mm": green, "weakest": order[0], "order": order,
+    return {"label": LABEL, **quarter_z(per, s), "green_mm": green, "weakest": order[0], "order": order,
             "floor_passed": green >= s.floor_mm, "placements": per, "rounds": rounds,
             "drops": sum(drops.values()), "settings": asdict(s), "seconds": round(time.time() - t0, 2)}
+
+
+def quarter_z(per, s: GridSettings):
+    """The score (#222): ``z``, the mean over the placements of each one's Z in the ``z_ring_mm`` disc;
+    ``z_quarters``, each placement's; and ``z_rings``, the same mean in every ring (the tie-breaks).
+    ``per`` is {placement: {'rings': ring_z(...)}}."""
+    if not per:
+        raise ValueError("no placements: Z is undefined")
+    rings = {ring_key(r): round(sum(v["rings"][ring_key(r)]["Z"] for v in per.values()) / len(per), 4)
+             for r in s.rings_mm}
+    return {"z": rings[ring_key(s.z_ring_mm)], "z_rings": rings,
+            "z_quarters": {pl: v["rings"][ring_key(s.z_ring_mm)]["Z"] for pl, v in per.items()}}
 
 
 # --- in the sim ---
@@ -284,7 +316,6 @@ def grid_search(family, p, s: GridSettings = GridSettings(), workers=None, noise
     import os
 
     from brixzle.engine import box_search as BS
-    from brixzle.engine import boxes as BX
     from brixzle.engine import jam_analysis as JA
     from brixzle.engine import zscore as ZS
 
@@ -292,11 +323,11 @@ def grid_search(family, p, s: GridSettings = GridSettings(), workers=None, noise
     span = family.lattice(p).span_voxels
     if span != 2:
         return {"label": LABEL, "error": f"the placements are laid out for a two-voxel brick; span_voxels = {span}",
-                "green_mm": 0.0, "floor_passed": False, "placements": {}, "settings": asdict(s), "drops_rows": [],
+                "z": None, "z_rings": {}, "z_quarters": {}, "green_mm": 0.0, "floor_passed": False, "placements": {}, "settings": asdict(s), "drops_rows": [],
                 "seconds": round(time.time() - t0, 1)}
     cfg = RA._ideal_cfg(s.held)
     jcfg = JA.JamConfig()
-    z = s.z_frac * 2 * BX.default_boxes()["placement"]["mean"].half_widths["z_mm"]
+    z = release_z_mm(s)
     rows = []
 
     def sample(x, y):
@@ -523,7 +554,8 @@ def write_maps(result, out_dir, family_name=None):
             ax.spines[side].set_visible(False)
         rz = r["rings"]
         zline = "   ".join(f"Z{k} {v['Z']:+.2f}" for k, v in rz.items())
-        ax.set_title(f"{family_name or ''} {pl}: green zone {g:.1f} mm\n{zline}   ({r['drops']} drops"
+        ax.set_title(f"{family_name or ''} {pl}: Z{ring_key(s.get('z_ring_mm', 16.0))} "
+                     f"{rz[ring_key(s.get('z_ring_mm', 16.0))]['Z']:+.2f}, green zone {g:.1f} mm\n{zline}   ({r['drops']} drops"
                      f"{', stopped early' if r['early_stop'] else ''})", fontsize=10, loc="left")
         handles = [Patch(facecolor=STYLE[o][0], hatch=STYLE[o][1], edgecolor="white", label=NAMES[o])
                    for o in STYLE if o in seen]
@@ -545,7 +577,8 @@ def write_maps(result, out_dir, family_name=None):
 def main(argv=None):
     """python -m brixzle.engine.gridscore <family> [--placements full,corbel_reach] [--out DIR] [--builds] [--no-jams]
 
-    The grid score of one design (a registry name or <root>:<module>). Prints a short JSON summary
+    The grid score of one design (a registry name or <root>:<module>): Z on the four quarters by
+    default (#222), or on the placements named. Prints a short JSON summary
     with the wall-clock per round; with --out (a new directory), writes grid.json, drops.json.gz
     and the maps there."""
     import argparse
@@ -574,7 +607,7 @@ def main(argv=None):
         if Path(a.out).exists():
             raise SystemExit(f"{a.out} exists; every run writes a new directory")
         res = write_grid(res, a.out, fam.name)
-    summary = {k: res.get(k) for k in ("green_mm", "weakest", "order", "floor_passed", "rounds", "cache", "workers",
+    summary = {k: res.get(k) for k in ("z", "z_quarters", "z_rings", "green_mm", "weakest", "order", "floor_passed", "rounds", "cache", "workers",
                                        "seconds", "map_seconds", "error")}
     summary["drops"] = res["drops"] if isinstance(res.get("drops"), int) else len(res.get("drops_rows", []))
     summary["placements"] = {pl: {k: v[k] for k in ("green_mm", "early_stop", "drops", "rings", "counts")}

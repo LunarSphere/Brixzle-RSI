@@ -16,11 +16,11 @@ from brixzle.engine import jam_analysis as JA
 
 
 def _rec(name, greens, steps=3.0, violations=()):
-    return {"name": name, "green_mm": min(greens.values()), "green_by_placement": greens, "overhang_steps": steps,
+    return {"name": name, "z": 0.5, "z_rings": {"16": 0.5, "28": 0.3, "40": 0.1}, "green_mm": min(greens.values()), "green_by_placement": greens, "overhang_steps": steps,
             "stack_courses": 3.0, "violations": list(violations)}
 
 
-def test_a_band_ranks_by_every_placements_green_zone_weakest_first():
+def test_with_z_tied_a_band_ranks_by_every_placements_green_zone_weakest_first():
     arc = AR.BandArchive()
     a = _rec("a", {"corbel_reach": 3.75, "full": 8.75, "plus_bare": 9.0, "minus_bare": 9.0}, steps=5.0)
     b = _rec("b", {"corbel_reach": 3.75, "full": 8.75, "plus_bare": 9.0, "minus_bare": 21.0}, steps=1.0)
@@ -28,9 +28,9 @@ def test_a_band_ranks_by_every_placements_green_zone_weakest_first():
     res = arc.offer(b)                          # ties on the weakest three, wins on the fourth
     assert res["kept"] and res["replaced"] == ["a"]
     assert AR.green_vector(b) == [3.75, 8.75, 9.0, 21.0]
-    # within 1.25 mm everywhere: overhang decides
+    # within 1.25 mm everywhere: a tie, and since #222 the noisy builds' overhang does not break it
     c = _rec("c", {"corbel_reach": 4.5, "full": 8.0, "plus_bare": 9.5, "minus_bare": 20.5}, steps=4.0)
-    assert arc.offer(c)["kept"]
+    assert not arc.offer(c)["kept"]
 
 
 def test_a_record_without_per_placement_zones_falls_back_to_its_headline():
