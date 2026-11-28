@@ -12,10 +12,11 @@ What lives where. Update this file in the same PR that adds or moves a top-level
 | `src/brixzle/director/verify.py` | The verifier's own measurement. `measure_radius` (the error-radius goal): check and gripper interface, MVP gate, the quarter screen, the grid score and Z (#222), noisy builds for finalists only, each part saved so a cut-off step resumes |
 | `src/brixzle/director/archive.py` | `BandArchive` (best design per Z band, ranked by Z16, then Z28 and Z40, then each placement's green zone weakest first; #206, #222). The #164 Pareto archive went with its goal (#204) |
 | `src/brixzle/director/library.py` | The design library (#215): one card per measured design in `runs/library/` (code, maps, scores, strengths and weaknesses, contacts, diagnosis) and `INDEX.md`; `python -m brixzle.director.library add <spec> --grid <dir>` |
+| `src/brixzle/director/roles.py` | Generates the Codex copies (`AGENTS.md`, `.codex/agents/rsi-*.toml`) from `CLAUDE.md` and the Claude role files (#229) |
 | `src/brixzle/director/decide.py` | The director's decisions, the forced-new-family rule and the record of designs tried (`designs.jsonl`) |
 | `.claude/agents/rsi-*.md`, `.claude/commands/rsi-loop.md`, `.claude/settings.json` | The four roles' instructions (designer, verifier, critic, director; read by both drivers), the `/rsi-loop` command for Claude Code, and the hook that bounds a run |
-| `.codex/agents/` | Codex helper agents for working on this repo (`brick-cad`, `brick-coding`); not loop roles |
-| `CLAUDE.md`, `AGENTS.md` | Working rules for Claude Code and Codex in this repo (the same rules) |
+| `.codex/agents/`, `.codex/hooks.json` | `rsi-*.toml`: the four roles for a hand-run Codex session, generated from `.claude/agents/rsi-*.md` (`python -m brixzle.director.roles sync`, #229); `brick-cad`, `brick-coding`: Codex helper agents for working on this repo, not loop roles; `hooks.json`: the run guard's hook |
+| `CLAUDE.md`, `AGENTS.md` | Working rules for Claude Code and Codex in this repo (the same rules; `AGENTS.md` is generated from `CLAUDE.md`, #229) |
 
 ## The measurement (`src/brixzle/engine/`)
 
