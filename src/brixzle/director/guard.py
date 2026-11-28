@@ -6,7 +6,10 @@ While a loop runs, ``LOCK`` (written by run.init_run at the repo root) names its
   agent can edit ``docs/requirements.md``, ``src/brixzle/rules/``, the scorer, the sim, the caches,
   the agents' own instructions under ``.claude/`` or the lock itself. ``hook`` enforces it as a
   Claude Code PreToolUse hook on Write, Edit, MultiEdit and NotebookEdit, and refuses a Bash command
-  that redirects or copies into a path outside the run.
+  that redirects or copies into a path outside the run. Codex (``.codex/hooks.json``) sends the same
+  events, with its edits as ``apply_patch`` (the patch text in ``tool_input.command``, paths relative
+  to the event's ``cwd``); every path a patch adds, updates, deletes or moves to must be inside the run
+  (#231).
 - **Reads** of the lock's ``deny_read`` paths are refused (a replay hides the designs it replays).
 - **The tracked tree must not change** (``changed_tracked``): the orchestrator checks after every
   iteration, and a change ends the run. This also catches anything the hook could not see.
@@ -25,6 +28,8 @@ WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 READ_TOOLS = ("Read", "Grep", "Glob")
 TEMP_ROOTS = (Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve(), Path("/private/tmp"))
 # Bash: writes into a path (redirection, tee, cp/mv/rm/touch/sed -i target)
+# Codex's apply_patch: the files a patch touches (#231)
+_PATCH_PATH = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$", re.M)
 _BASH_WRITE = re.compile(r"(?:>>?|\btee\b(?:\s+-a)?|\bcp\b|\bmv\b|\brm\b|\btouch\b|\bsed\s+-i\S*|\bmkdir\b)\s+([^\s;&|]+)")
 
 
@@ -73,6 +78,11 @@ def decide(event):
         path = inp.get("file_path") or inp.get("notebook_path") or ""
         if not write_allowed(path, lock, repo):
             return False, f"the loop's agents write only inside the run directory {lock['run']}; {path} is outside the run"
+    if tool == "apply_patch":
+        for target in _PATCH_PATH.findall(inp.get("command", "") or inp.get("patch", "")):
+            path = target if Path(target).is_absolute() else Path(cwd) / target
+            if not write_allowed(path, lock, repo):
+                return False, f"the loop's agents write only inside the run directory {lock['run']}; {target} is outside the run"
     if tool in READ_TOOLS:
         path = inp.get("file_path") or inp.get("path") or ""
         if path and not read_allowed(path, lock, repo):

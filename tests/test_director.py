@@ -75,6 +75,37 @@ def test_in_a_loop_agents_write_only_inside_the_run(repo):
     assert _hook(repo, "Bash", command="uv run python -m brixzle.tools slices --map runs/x").returncode == 0
 
 
+def _patch(*ops):
+    """A Codex apply_patch body (#231): each op is (header, path), e.g. ("Update File", "a.py")."""
+    lines = ["*** Begin Patch"]
+    for head, path in ops:
+        lines += [f"*** {head}: {path}", "@@", "-a", "+b"] if head != "Move to" else [f"*** {head}: {path}"]
+    return "\n".join(lines + ["*** End Patch"])
+
+
+def _codex_hook(repo, cwd, patch):
+    """The event Codex sends for an edit (codex-cli 0.171.0, runs/codexhook-20261128-030559): tool_name
+    apply_patch, the patch in tool_input.command, paths relative to the event's cwd."""
+    payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                          "tool_input": {"command": patch}, "cwd": str(cwd)})
+    return subprocess.run([sys.executable, "-m", "brixzle.director.guard", "hook"], input=payload, text=True,
+                          capture_output=True, cwd=repo)
+
+
+def test_codex_patches_are_kept_inside_the_run(repo):
+    assert _codex_hook(repo, repo, _patch(("Update File", "docs/requirements.md"))).returncode == 0  # no loop
+    run = _init(repo)
+    (run / "iter-01").mkdir()
+    assert _codex_hook(repo, run, _patch(("Add File", "iter-01/m/family.py"), ("Update File", "STATE.md"))).returncode == 0
+    for patch in (_patch(("Update File", "../../../docs/requirements.md")),
+                  _patch(("Add File", str(repo / "src/brixzle/rules/new.md"))),
+                  _patch(("Delete File", "../../../README.md")),
+                  _patch(("Update File", "STATE.md"), ("Move to", "../../../src/brixzle/x.py")),
+                  _patch(("Update File", "STATE.md"), ("Update File", str(repo / ".rsi-loop-active")))):
+        r = _codex_hook(repo, run, patch)
+        assert r.returncode == 2 and "outside the run" in r.stderr, patch
+
+
 def test_the_tracked_tree_must_not_change_during_a_run(repo):
     run = _init(repo)
     assert GU.changed_tracked(run) == []
