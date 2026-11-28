@@ -13,4 +13,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv python install 3.12
       - run: uv sync --locked
-      - run: uv run pytest
+      # Pull requests skip the long sim runs (marked slow); main runs everything (#224).
+      - if: github.event_name == 'pull_request'
+        run: uv run pytest -m "not slow" -n auto
+      - if: github.event_name != 'pull_request'
+        run: uv run pytest -n auto

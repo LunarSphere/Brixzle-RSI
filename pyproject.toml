@@ -25,7 +25,10 @@ dependencies = [
 agents = ["claude-agent-sdk>=0.2.180"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3.8.0",
+]
 
 [build-system]
 requires = ["hatchling"]
