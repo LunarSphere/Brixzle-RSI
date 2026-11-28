@@ -16,12 +16,14 @@ side pockets, and a ring kit built from single cells.
 - **A branch** is a subclass of ``TwinHook`` with its own parameter defaults (a ``TwinHookParams``
   subclass) and bounds, overriding only what it changes:
 
-  - ``TwinHook``: twinhook4 itself, and ``fable_reach`` (a 36 deg hook lean; its own rule floor).
-  - ``WebbedTwinHook``: a turn piece whose web is placed by search and may slope (``fable_gentle``,
-    ``fable_feather``).
+  - ``TwinHook``: twinhook4 itself.
+  - ``WebbedTwinHook``: a turn piece whose web is placed by search and may slope (``fable_gentle``).
   - ``WingedTwinHook``: wings on the brick and the base, the highest opening each side as the
     carrying openings, a release that clears the wings, and a solid turn-piece corner cell
-    (``fable_wide``, ``fable_allround``).
+    (``fable_allround``).
+
+  The other branches (``fable_reach``, ``fable_feather``, ``fable_wide``, and gentle's longhook and
+  tpuhook) were removed in #227; the tag ``pre-debloat-2026-11-28`` has them.
 
 A family is ``SomeBranch.instance().family()``. The instance is one per class and pickles by
 reference, so the family can be sent to the sim's worker processes.

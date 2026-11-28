@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 
 from brixzle.families import builders as B
-from brixzle.families.pyramid.family import FAMILY as PYRAMID
-from brixzle.families.wedge.family import FAMILY as WEDGE
+from pyramid.family import FAMILY as PYRAMID
+from wedge.family import FAMILY as WEDGE
 
 REL = 1e-3  # CadQuery tessellation of the round bores
 

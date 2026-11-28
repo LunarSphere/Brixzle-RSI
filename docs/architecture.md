@@ -33,7 +33,7 @@ Issue #165. The twinhook line beat the SDK loop because the maintainer steered b
 |---|---|---|
 | designer | `iter-NN/brief.json`, the parent's `family.py`, the tools | `iter-NN/<module>/`, `design_note.md`, `claim.json` |
 | verifier | the note, `verified.json`, cited runs | `audit.md` |
-| critic | `verified.json`, and the tools' slices, mapdiff and contacts | `diagnosis.md` |
+| critic | `verified.json`, the grid's maps and `jams.json`, and the tools' contacts | `diagnosis.md` |
 | director | `goal.json`, `STATE.md`, `archive.json`, `decisions.jsonl`, the iteration's files | `STATE.md`, `iter-NN/decision.json` |
 
 Separate subagents give each role a clean context, so the critic never grades work it wrote.
@@ -62,29 +62,18 @@ Every step's output is a file in the run directory, and `next.json` names the ne
 
 **Acceptance** is the band archive (`director/archive.BandArchive`; see [The error-radius goal](#the-error-radius-goal-206)): the best verified, feasible design per Z band. The #164 goal and its Pareto archive were removed in #204.
 
-## What a build needs: the build-aware objective
-
-Issue #164. Capture Z alone was won by `fable_allround`, a brick the SO-101 cannot grip well, reach far with, or release low (`docs/decisions.md`). `engine/objective.py` adds the terms a real build needs, and `scripts/objective_baselines.py` scores designs on them.
-
-- **Error-tolerant overhang** (`overhang_tolerance`). The back-first corbel (6 steps, 17 seeded builds) is built with every brick released at a seeded error inside an r-disc about its supporter's seat, at the mean box's release heights. The score is the mean of the median reaching steps at 0, 1, 2, 3, 4 and 5 mm (#171). Larger diagnostic radii are 7, 10 and 14.8 mm. The sweep stops when it has covered the scoring radii and one diagnostic point past the first median below 3 steps, if needed. Reports retain the threshold radius and the curve.
-- **Grip** (`grip_rule`, `grip_lift`). #153's top-down stock-jaw grasp at a strict setting: within 2 mm of the centre of mass along the brick, 30 % fingertip coverage. Then a 100 mm lift from the mould station, which passes within 1 mm and 1°.
-- **Size and reach** (`size`, `arm_reach`). Length, depth, pitch and release lift, and the longest overhang and the bridge(3) riser the SO-101 reaches with the real grasp.
-- **`Settings`** holds the proposed hard constraints and the scored terms. `rank` orders designs by feasibility, then by Pareto layer. The loop's acceptance rule does not use it yet; #165's director does.
-
 ## Tools for the mechanical steps
 
 Issue #163. The hand-run twinhook line spent LLM turns on steps that are mechanical: re-dropping failing poses, reading rest contacts, splitting Z by slice, comparing two maps, sweeping one parameter, and running the stages by hand-written script. `python -m brixzle.tools <tool>` does each one deterministically. Each tool writes `runs/<tool>-<UTC>-<family>/result.json` and prints a short JSON summary for an agent to read.
 
 | Tool | Does | Sim |
 |---|---|---|
-| `redrop` | Chosen poses of a map (by box, outcome, slice, course, a seeded sample), at a friction | yes, cached |
+| `redrop` | Chosen drops of a grid run (`drops.json.gz`, by outcome, placement, a seeded sample), at a friction | yes, cached |
 | `edgemap` | Fixed drop grids for both half-supported edges and the first two reaching corbel seats (#172) | yes, cached |
 | `contacts` | The same, with each drop's rest pose and its contacts grouped by the pair touching | yes, cached |
-| `sweep` | One parameter over a list of values, on a map's poses; a value the family refuses is reported | yes, cached |
-| `slices` | Counts and Z per box, slice and course | no |
-| `mapdiff` | Two maps cell by cell: per box ΔZ against the noise band, and every changed cell | no |
+| `sweep` | One parameter over a list of values, on a grid run's drops; a value the family refuses is reported | yes, cached |
 | `diffdesign` | Changed parameters and fingerprint items between two designs (#162) | no |
-| `gate`, `ring`, `friction` | The stages alone | yes; gate and ring cached |
+| `gate`, `ring` | The stages alone | yes, cached |
 
 A family is a registry name or `<root>:<module>`.
 
@@ -108,75 +97,25 @@ Unset, as in the loop and the tests, every drop is simulated. A cached result is
 
 ## Evaluation engine (no LLM)
 
-It scores each target box: the drone's mean, 95th-percentile and worst error. For now it scores placement (R11) only. The pickup trial and the pickup predictor (R12) stay in the code with their tests, but the loop does not run them (issue #46).
+The score is the grid (see [The error-radius goal](#the-error-radius-goal-206)): free drops on an X-Y grid per placement, Z within 16 mm averaged over the stack and overhangs 1-3 (#222), with the quarter screen before it (`engine/quick_check.py`). Placement only (R11): pickup is the landing pad's job (R12, not planned), and the pickup trial was removed in #227.
 
-1. **Analytic predictor.** It is not part of the score (issue #61). The jam analysis uses its stability tests to explain jams, and `engine/validate.py` checks it against the sim. It takes a 2D section of the brick in X, Z and θ. For each pose, it steps through the contacts:
+1. **Analytic predictor.** It is not part of the score (issue #61). The jam analysis uses its stability tests to explain jams. It takes a 2D section of the brick in X, Z and θ. For each pose, it steps through
    - find the first contact (configuration-space geometry);
    - decide slide or stick, from the friction cone;
    - find the next contact;
    - at two or more contacts, run a jam test, which asks whether friction can hold the part still.
 
-   It repeats this across μ ≈ 0.2–0.5, and returns a predicted box and contact traces in seconds.
-2. **Sim verifier.** MuJoCo drops through the full sim map (below). The older box search (`engine/box_search.py`: bisection on the scale of a box until every drop at its corners, faces and a few interior points succeeds) is kept for the pickup trial and the predictor validation; it is no longer the score.
-
-### Objective Z
-
-Issue #61. For each target box (mean, p95, worst), every drop of the full sim map whose pose lies inside the box counts, across all slices and both courses. Since issue #86 X and Y form a disc: a drop at (x, y) is inside when x² + y² ≤ r² (r the box's X half-width) and its release height and pitch are inside the box. Only the `xy` slice moves Y, so the other slices count as before. The report also gives `z_x_only`, Z over the X slices' drops alone (the `xy` slice left out), so earlier runs stay comparable, and `y_capture_mm`, the largest |y| on each side that still seats in the `xy` slice's column through the aim, per course. `--no-y-error` scores as before #86 (no `xy` slice, X-only held-out shift). The quick check samples along X either way (issue #97).
-
-- S = seated, J = jammed, N = every drop in the box;
-- **Z = (S − J) / N**: a seated drop counts +1, a jammed one −1, and a fall, a wrong valley or any other outcome 0;
-- Z runs from −1 to 1, and **Z = 1 passes**: every drop in the box seated.
-
-Z is counted over the target box, not over the green zone. The box is fixed by the drone's measured error, so a design cannot raise Z by shrinking its green zone. Zoom drops, which are overrides at a finer step, are not counted.
-
-- **Cells in a box.** The map's cells are 1 mm in X, 5 mm in release height and 2° in pitch at U = 25 mm, so the target boxes' ±0.2–0.4° of pitch hold only the zero-pitch row. On A/B the mean box holds 29 X columns: 89 drops per course over the three slices, 178 in all; p95 holds 446 and the worst box 622.
-- **Without the full map.** A drop depends only on its pose, so dropping the map's cells inside the boxes alone gives the same Z (`zscore.ZScore`), in about a third of the drops and with no grid fitting. The end tune and the loop's acceptance rule use it.
-- **Held-out Z.** Each in-box pose is shifted by a seeded amount (up to half a cell, or the box's half-width if smaller) and kept inside the box, and dropped at friction 0.2 and 0.5 (`zscore.HeldOutZ`). The critic never sees it.
-
-### Quick random check
-
-`engine/quick_check.py` is the go/no-go gate before the full map. It exists so that a weak design is turned back in seconds.
-
-- **Poses:** 40 poses inside the target box, from one seeded Latin hypercube over X, Z, θ and the course. Each axis has one pose in each of its 40 equal slices, and each course gets 20 poses.
-- **Physics:** the MuJoCo drop trial, not the predictor.
-- **Pass rule:** at least 32 of 40 seated. The check stops at the 9th failure, because 32 is then out of reach. Poses are judged in order, so the result does not depend on how many processes ran it.
-- **On a fail:** the failing poses are listed with their outcomes and contact traces.
-- **Output:** `runs/check-<UTC>-<family>-<target>/check.json`, labelled "simulated, uncalibrated contact".
-
-The check is not the score. A design that seats every drop in the box always passes it, so it never turns back a design with Z = 1.
-
-### Full sim map
-
-`engine/sim_map.py` maps a design that passed the quick check. It drops the brick over three slices through the aim point, on both courses, and records seated, jammed, wrong valley and fell for every cell. Course 0 lands on the base. Course 1 lands across the joint between two seated course-0 bricks, a running bond, as in a wall, a bridge or an overhang (issue #82). A brick that can only stack straight on one brick fails there, and a jam at the joint shows up. A one-voxel brick keeps the stack drop.
-
-| Slice | Axes | Held at the aim |
-|---|---|---|
-| `xz` | X offset against release height | zero pitch |
-| `xt` | X offset against pitch | the target box's centre height |
-| `zt` | release height against pitch | zero X offset |
-| `xy` | X offset against Y offset (issue #86) | zero pitch, the target box's centre height |
-
-- **Coordinates:** X is the offset about the aim. Z is the release height above the minimum release clearance, so it never goes below 0. θ is pitch.
-- **Cells:** U/25 in X (1 mm for a 25 mm voxel), U/5 in Z and 2° in θ. The `xy` slice has X cells four times larger (4 mm) and Y cells of 2U/25 (2 mm), both signs of Y, out to ±2 U; it never crops inside the target discs. The quick check samples along X only (issue #97); `quick_check(disc=True)` samples X and Y inside the disc. Held-out Z shifts Y too. Sizes in X and Z follow the voxel pitch U, so bricks of different sizes get maps with about the same number of cells. Extents are reported in U as well as in mm.
-- **Fitting,** in code (`GridFit`):
-  1. start from the quick check's drops, widened to the target box, plus a one-cell margin;
-  2. grow any edge that still has a seated cell on it, until it has none or reaches the axis limit;
-  3. trim outer rows and columns with no seated cell, keeping one such row past the last green one. Where the misses start is the capture limit.
-- **Limits:** ±2 U in X, 1 U of release height and ±10° of pitch. An edge that is still green at a limit is marked `limit` in the map, not left looking closed.
-- **Guardrail:** the grid never shrinks inside the target boxes it covers (`cover`; the scorer passes all three), and a target box wins over a limit. Z is counted over the target box, whatever else the map covers, so cropping the map cannot raise it.
-- **Limits accepted:** the maintainer accepted 1 U of release height and ±10° of pitch on 2026-11-12 (#61).
-- **Overrides:** a caller may add a zoom (an extra, finer grid over part of a slice) or change the grid settings. Either needs a reason, and both are written to `overrides` in `map.json` for the design log (issue #20). A zoom never replaces a fitted slice.
-- **Inside the green zone:** each grid lists its failing cells that lie inside the zone, for the jam analysis (issue #49). A failure beyond the zone's edge is the capture limit, not a jam inside it.
-- **Output:** `runs/map-<UTC>-<family>-<target>/map.json` holds the grids. `drops.json.gz` beside it holds every drop with its contact trace. Both are labelled "simulated, uncalibrated contact".
+   It repeats this across μ ≈ 0.2–0.5 in seconds. Issue #11 checked it against the sim ([`predictor-validation.md`](predictor-validation.md); the check's code, `engine/validate.py`, was removed in #227 and is in the tag `pre-debloat-2026-11-28`).
+2. **Sim.** MuJoCo drops (`engine/sim/trials.DropRig`) in parallel worker processes (`box_search.DropPool`), with the drop cache. The older bisection on a box's scale (`box_search.box_search`) is kept; the fitted sim map and Z over target boxes of the first loop were removed in #227.
 
 ### Jam analysis
 
-`engine/jam_analysis.py` takes the failing cells inside the map's green zone and tells the critic which are real and what holds the brick. The failure type (jammed, wrong valley, fell) comes from the sim. The mechanism comes from the predictor's stability tests, applied to the sim's contacts.
+`engine/jam_analysis.py` takes the grid's failing cells nearest each placement's aim (`gridscore.jam_candidates`) and tells the critic which are real and what holds the brick. The failure type (jammed, wrong valley, fell) comes from the sim. The mechanism comes from the predictor's stability tests, applied to the sim's contacts.
 
-A family that varies along Y (any `Solid3D`, issue #105) gets steps 1 and 2 as usual, but step 3 stops at the sim: each band and capture limit reports the failure type, the rest pose (`rest_pose`), the contact count and the share of force along Y, with no sites, no holding set and no mechanism (`sim_only`). A 2D reduction of one XZ slice does not describe such a brick, and the summary says so.
+A family that varies along Y (any `Solid3D`, issue #105) gets steps 1 and 2 as usual, but step 3 stops at the sim: each band reports the failure type, the rest pose (`rest_pose`), the contact count and the share of force along Y, with no sites, no holding set and no mechanism (`sim_only`). A 2D reduction of one XZ slice does not describe such a brick, and the summary says so.
 
-1. **Repeatable or one-off.** Each cell is re-run with 3 seeds at each friction coefficient (0.2, 0.3, 0.4, 0.5). A seed shifts the pose by up to 5% of a map cell. A cell is repeatable if it fails at least two thirds of the seeds at some friction; otherwise it is a one-off (solver noise).
-2. **Bands.** Repeatable cells that touch, on one slice and course, form a band.
+1. **Repeatable or one-off.** Each cell is re-run with 3 seeds at each friction coefficient (0.2, 0.3, 0.4, 0.5). A seed shifts the pose by up to 5% of a fine grid cell. A cell is repeatable if it fails at least two thirds of the seeds at some friction; otherwise it is a one-off (solver noise).
+2. **Bands.** Repeatable cells that touch, on one placement, form a band.
 3. **Contacts.** The drop nearest each band's centre is run again, and its contacts at rest are reduced:
    - keep the contacts between the brick and what it rests on that still touch;
    - flatten them to the X–Z plane and merge points that lie together into sites. A flat patch becomes its two end points, the rule the predictor uses. A site must carry more than 5% of the brick's weight;
@@ -189,9 +128,8 @@ A family that varies along Y (any `Solid3D`, issue #105) gets steps 1 and 2 as u
    - three or more: reported as found;
    - a set that holds without friction is a stable rest away from the seat, not a friction jam.
 
-**Capture limits (issue #56).** A zone with no jam inside it can still be too narrow for the target box. So on each slice with an X axis, in the row through the aim, the first failing cell past each end of the green band is dropped again and reduced the same way. It is also dropped once at each friction coefficient, to show whether the edge moves with friction. The result is under `capture_limits`, one entry per slice, course and side.
 
-**Output:** `jam_analysis.json` in the map's run directory. Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
+**Output:** `jams.json` beside the grid (`gridscore.analyse_jams`). Sim results are labelled "simulated, uncalibrated contact" and the mechanism "predicted, quasi-static 2D".
 
 ### How the gate builds (#137)
 
@@ -220,10 +158,6 @@ Issue #81. `engine/structures.py` and `engine/sim/assemble.py` port aerial-assem
 
 Only ideal placement is reported so far.
 
-### Pickup check on the final design
-
-Issue #113: a report, not a gate (maintainer, 2026-11-13). After the end tune, the run's final design (at its tuned parameters if the tune was accepted) gets `engine/pickup_check.py`: the R10 margins (two large through-Y openings straddling and above the centre of mass; brick plus gripper within 35 g, the 5 g gripper allowance a guess until #24), and, for a Prismatic family with two usable openings, today's fixed fork as a stand-in for the gripper: one pick at ideal alignment and six seeded picks inside the mean pickup box, then the clean release check. Otherwise the report says plainly why the fork was not run. It is written to `runs/pickup-<UTC>-<family>/pickup.json` and the run summary's Pickup section; nothing is rejected on it. `--no-pickup` skips it. A/B: R10 passes; the fork picks it at ideal alignment only (1 of 7: four offset picks jam, two miss) and releases it cleanly; 11.3 s (`runs/pickup-20261114T040502193725Z-ab`, simulated, uncalibrated contact).
-
 ## Files
 
 | Path | Written by | Read by |
@@ -236,7 +170,6 @@ Issue #113: a report, not a gate (maintainer, 2026-11-13). After the end tune, t
 
 ## Open questions
 
-- The pickup trial (R12) doesn't exist in aerial-assembly yet. Its success test is defined in `docs/requirements.md` under "R12 in detail": capture, self-centring, gentle contact and clean release.
 - The Z and θ sides of the target box need real measurements of the drone's height and tilt error.
 - The analytic predictor is quasi-static and 2D. Issue #11 checked it against the sim on the A/B baseline; [`predictor-validation.md`](predictor-validation.md) says where it can be trusted (seated or not and the capture edge, yes; the failure class, no).
 

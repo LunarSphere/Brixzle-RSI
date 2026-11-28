@@ -73,7 +73,7 @@ def test_the_a_b_kit_has_its_parts_and_exact_collision():
 
 def test_a_family_with_no_kit_gives_no_ring_kit(tmp_path):
     from brixzle.engine.sim import ring_build as RB
-    from brixzle.families.wedge.family import FAMILY as WEDGE
+    from wedge.family import FAMILY as WEDGE
 
     assert WEDGE.ring is None
     r = RB.build_ring(WEDGE, WEDGE.defaults, runs=tmp_path)
@@ -84,7 +84,7 @@ def test_check_family_reports_the_ring_kit():
     from brixzle.tools import check_family as CF
 
     assert CF.ring_report(AB) == {"kit": True, "parts": sorted(AB.ring.parts), "built": True, "error": None}
-    from brixzle.families.wedge.family import FAMILY as WEDGE
+    from wedge.family import FAMILY as WEDGE
 
     r = CF.ring_report(WEDGE)
     assert r["kit"] is False and "kit_from_cell" in r["error"]

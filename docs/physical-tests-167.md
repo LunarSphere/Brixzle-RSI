@@ -1,5 +1,7 @@
 # Physical tests for bounce-out and mixed materials (issue #167)
 
+> **Record, 2026-11-28.** The bounce model (`engine/bounce.py`) and `fable_gentle_tpuhook` were removed in #227; they are in the tag `pre-debloat-2026-11-28`. The bench protocol below still holds for calibrating the sim's contact values.
+
 The sim's contact values are uncalibrated, and the TPU values are guesses (`fable_gentle_tpuhook`'s `TPU_CONTACT`). The tests below give the numbers that replace them. None of them is run from this repo: a person prints and tests the parts.
 
 Record every measurement with:

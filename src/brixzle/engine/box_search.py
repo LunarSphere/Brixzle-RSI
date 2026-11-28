@@ -1,5 +1,5 @@
-"""Sim verifier for R11 (placement) and R12 (pickup): the largest scale of a target box where every
-trial succeeds.
+"""Sim verifier for R11 (placement): the largest scale of a target box where every drop seats, and the
+drop pool every sim score uses (``DropPool``).
 
 A box (engine/boxes.py) gives half-widths in X, Z and theta around the aim point. At scale s
 the verifier drops the brick at s times a fixed set of unit points: the centre, the 8 corners,
@@ -8,10 +8,6 @@ the 6 face centres and a few seeded interior points. A scale passes only if ever
 the design covers the target box. Both placements are searched, course 0 (onto the anchored
 base) and course 1 (across two seated course-0 bricks since #82), and the placement scale is the smaller.
 Every drop logs its contact sequence (trials.DropRig).
-
-Pickup (R12) uses the same search over the pickup box with the pickup trial (sim/pickup.py): a
-scale passes only if every pick is 'picked' (captured, self-centred, gentle). The pickup score
-also needs the clean-release check, run once per design.
 
 Drops at one scale run in parallel worker processes, each with its own compiled scene. A drop
 depends only on its pose, so parallel and serial searches give identical drops.
@@ -24,13 +20,9 @@ Pose mapping, around the aim (ErrorModel.aim_bias):
 - theta: pitch, rotation in the XZ profile plane.
 Y, roll and yaw are zero: the placement box is the profile plane.
 
-Pickup pose mapping, centred on the bore axis: dx = s * x * half_width_x (across the tines),
-dz = s * z * half_width_z, psi = s * a * half_width_psi (yaw).
-
 Results are simulated, uncalibrated contact. Run it from the command line to record a run:
 
     uv run python -m brixzle.engine.box_search --family ab --statistic mean --seed 0
-    uv run python -m brixzle.engine.box_search --task pickup --family ab --statistic mean --seed 0
 """
 
 import argparse
@@ -47,7 +39,6 @@ import time
 import numpy as np
 
 from brixzle.engine import boxes as BX
-from brixzle.engine.sim import pickup as PK
 from brixzle.engine.sim import trials as T
 from brixzle.engine.sim.trials import DropRig
 from brixzle.families import builders as B
@@ -58,7 +49,7 @@ LABEL = "simulated, uncalibrated contact"
 # worker also costs ~1 s to start (imports, scene compile). 4 gave the fastest whole search.
 DEFAULT_WORKERS = 4
 CORNERS = np.array([(x, z, a) for x in (-1, 1) for z in (-1, 1) for a in (-1, 1)], dtype=float)
-SUCCESS = {"placement": "seated", "pickup": "picked"}
+SUCCESS = {"placement": "seated"}  # the pickup trial (R12) was removed in #227
 FACES = np.array([v for i in range(3) for v in (np.eye(3)[i], -np.eye(3)[i])], dtype=float)
 
 __all__ = ["DropRig", "DropPool", "unit_points", "pose_sample", "bisect_scale", "box_search"]
@@ -73,14 +64,9 @@ def unit_points(n_interior=4, seed=0):
 
 
 def pose_sample(box: BX.TargetBox, scale, unit, cfg):
-    """The trial sample for a unit point at a box scale: ErrorModel.sample keys for placement,
-    {dx, dz, psi} for pickup (``cfg`` is unused there)."""
+    """The trial sample (ErrorModel.sample keys) for a unit point at a placement box's scale."""
     w = box.half_widths
     x, z, a = (float(v) for v in unit)
-    if box.task == "pickup":
-        # + 0.0 turns -0.0 into 0.0, so equal poses compare (and dedupe) equal.
-        return {"dx": scale * x * w["x_mm"] + 0.0, "dz": scale * z * w["z_mm"] + 0.0,
-                "psi": scale * a * w["psi_deg"] + 0.0}
     aim = cfg.error.aim_bias
     return {"dx": aim + scale * x * w["x_mm"], "dy": 0.0, "aim": aim,
             "yaw": 0.0, "roll": 0.0, "pitch": scale * a * w["theta_deg"] + 0.0,
@@ -125,7 +111,7 @@ def _init_worker(family, p, cfg, bodies):
 
 def _drop(job):
     """Run one pose in this process's rig for the course (built once, from the shared bodies):
-    course 0 or 1 is a placement drop, 'pick' a pickup.
+    course 0 or 1, or an edge layout.
 
     A placement job may carry options as a third item (the jam analysis, issue #49): 'friction'
     drops in a rig built with that friction coefficient, and 'rest' and 'trace' are passed to
@@ -135,16 +121,11 @@ def _drop(job):
     w = _WORKER
     key = (course, opts["friction"]) if "friction" in opts else course
     if key not in w["rigs"]:
-        if course == "pick":
-            w["rigs"][key] = PK.PickRig(w["family"], w["p"], w["cfg"], bodies=w["bodies"])
-        else:
-            cfg = w["cfg"]
-            if "friction" in opts:
-                cfg = replace(cfg, physics=replace(cfg.physics, friction=float(opts["friction"])))
-            w["rigs"][key] = DropRig(w["family"], w["p"], cfg, course=course, bodies=w["bodies"])
+        cfg = w["cfg"]
+        if "friction" in opts:
+            cfg = replace(cfg, physics=replace(cfg.physics, friction=float(opts["friction"])))
+        w["rigs"][key] = DropRig(w["family"], w["p"], cfg, course=course, bodies=w["bodies"])
     rig = w["rigs"][key]
-    if course == "pick":
-        return rig.pick(sample)
     return rig.drop(sample, trace=opts.get("trace", True), rest=opts.get("rest", False))
 
 
@@ -266,25 +247,16 @@ def _search_course(box, cfg, course, unit, s_max, tol, pool):
 
 def box_search(family, p, box: BX.TargetBox, cfg=None, courses=(0, 1), seed=0, s_max=2.0, tol=0.05,
                n_interior=4, workers=None, release=True):
-    """Bisect the scale of a placement or pickup box for one family; returns a JSON-safe result dict.
+    """Bisect the scale of a placement box for one family; returns a JSON-safe result dict.
 
     Placement: ``courses`` 0 drops onto the anchored base, 1 onto a seated course-0 brick (for
     A/B, a B onto an A); the scale is the smaller over the courses searched. ``cfg`` is a
     trials.TrialConfig.
-    Pickup: one course, 'pick' (``courses`` is ignored), plus the release check; passes only if
-    the scale reaches 1 and the release is clean. ``cfg`` is a pickup.PickConfig.
     ``workers``: parallel trial processes (default DEFAULT_WORKERS, capped by the CPU count);
-    1 runs serially in this process. ``release=False`` skips the pickup release check (it does not
-    depend on the box, so a caller scoring several pickup boxes runs it once itself); the result
-    then has no 'release' key and ``passed`` covers the scale only."""
+    1 runs serially in this process. ``release`` is unused (it was the pickup release check)."""
     if box.task not in SUCCESS:
         raise ValueError(f"unknown box task {box.task!r}; expected one of {sorted(SUCCESS)}")
-    pickup = box.task == "pickup"
-    if pickup:
-        cfg = cfg or PK.PickConfig()
-        courses = ("pick",)
-    else:
-        cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
+    cfg = cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
     unit = unit_points(n_interior, seed)
     workers = min(workers or DEFAULT_WORKERS, os.cpu_count() or 1, len(unit))
     t0 = time.time()
@@ -309,14 +281,11 @@ def box_search(family, p, box: BX.TargetBox, cfg=None, courses=(0, 1), seed=0, s
         "label": LABEL, "task": box.task,
         "family": family.name, "family_version": family.version, "params": p.to_dict(),
         "box": box.to_dict(), "seed": seed, "s_max": s_max, "tol": tol, "n_interior": n_interior,
-        "workers": workers, "config": json.loads(json.dumps(cfg.to_dict() if pickup else T.as_dict(cfg))),
+        "workers": workers, "config": json.loads(json.dumps(T.as_dict(cfg))),
         "scale": scale, "passed": scale >= 1.0, "limiting_course": limiting,
         "courses": per_course,
         "drop_count": sum(r["drop_count"] for r in per_course.values()),
     }
-    if pickup and release:
-        out["release"] = PK.release_check(family, p, cfg, bodies=bodies)
-        out["passed"] = scale >= 1.0 and out["release"]["passed"]
     out["seconds"] = time.time() - t0
     return out
 

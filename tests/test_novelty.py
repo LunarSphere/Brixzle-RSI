@@ -18,7 +18,7 @@ def test_a_b_with_a_few_numbers_changed_is_a_near_copy():
 
 
 def test_a_different_profile_is_not_a_near_copy():
-    wedge = registry.get("wedge")
+    from wedge.family import FAMILY as wedge
     out = NV.near_copy(wedge, wedge.defaults, AB, AB.defaults, share=0.2)
     assert not out["near_copy"] and out["share"] > 0.2
 

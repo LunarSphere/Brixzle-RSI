@@ -69,7 +69,7 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 |---|---|
 | `src/brixzle/director/` | The loop's deterministic steps and its Codex driver (`drive.py`): run files, the one-change check, verify, the band archive, decisions and the write guard |
 | `src/brixzle/engine/` | The measurement: the screen, grid score and Z, jam analysis, structure gate, noisy builds, the drop cache and the analytic predictor |
-| `src/brixzle/engine/sim/` | The MuJoCo core: drop rigs (course and edge layouts), the held release of older goals, structure builds |
+| `src/brixzle/engine/sim/` | The MuJoCo core: drop rigs (course, edge and corbel layouts), structure and ring builds |
 | `src/brixzle/tools/` | Deterministic tools the roles call: `python -m brixzle.tools` contacts, redrop, gate and more, and `tools/check_family.py` |
 | `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, section, CAD solid, seats and rules |
 | `src/brixzle/rules/` | Design rules (`design_rules.md`) and citations (`citations.md`) |

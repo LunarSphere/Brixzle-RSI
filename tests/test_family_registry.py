@@ -6,11 +6,12 @@ import pytest
 
 from brixzle.families import registry
 from brixzle.families.interface import Family
-from brixzle.families.wedge.family import FAMILY as WEDGE
+from wedge.family import FAMILY as WEDGE
 
 
-def test_discovers_the_dummy_families():
-    assert {"wedge", "pyramid"} <= set(registry.names())
+def test_registers_only_the_reference_designs():
+    # #227: the dummy families moved to tests/fixtures; the registry keeps the reference designs
+    assert set(registry.names()) == {"ab", "fable_allround", "fable_twinhook4", "fable_gentle"}
 
 
 def test_registers_the_ab_baseline():
@@ -18,12 +19,13 @@ def test_registers_the_ab_baseline():
 
 
 def test_get_returns_the_family():
-    family = registry.get("wedge")
-    assert isinstance(family, Family) and family is WEDGE
+    from brixzle.families.ab.family import FAMILY as AB
+    family = registry.get("ab")
+    assert isinstance(family, Family) and family is AB
 
 
 def test_get_unknown_name_lists_known_names():
-    with pytest.raises(KeyError, match="wedge"):
+    with pytest.raises(KeyError, match="ab"):
         registry.get("no-such-family")
 
 

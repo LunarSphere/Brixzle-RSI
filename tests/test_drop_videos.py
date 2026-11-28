@@ -80,7 +80,7 @@ def test_frames_become_a_video_file(tmp_path):
 
 def test_the_stl_of_each_part_is_the_printed_solid(tmp_path):
     from brixzle.families import builders as B
-    from brixzle.families.wedge.family import FAMILY
+    from wedge.family import FAMILY
 
     paths = V.export_stl(FAMILY, FAMILY.defaults, tmp_path)
     assert [p.name for p in paths] == ["wedge-A.stl"]
@@ -106,7 +106,7 @@ def _can_render():
 
 @pytest.mark.skipif(not _can_render(), reason="MuJoCo cannot open an offscreen GL context here")
 def test_a_real_drop_is_recorded_and_rendered(tmp_path):
-    from brixzle.families.wedge.family import FAMILY
+    from wedge.family import FAMILY
 
     pick = {"k": 1, "slice": "xz", "course": 0, "cell": [0, 0], "dx_mm": 0.0, "clear_mm": C0, "pitch_deg": 0.0,
             "outcome": "seated", "pose": {"x": 0.0, "z": 0.0, "t": 0.0}}

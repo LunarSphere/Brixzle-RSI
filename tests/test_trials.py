@@ -113,7 +113,7 @@ def test_a_stack_only_v_does_not_seat_across_two_bricks(stack_v):
 
 
 def test_a_one_voxel_brick_keeps_the_stack_drop():
-    from brixzle.families.pyramid.family import FAMILY as PYRAMID
+    from pyramid.family import FAMILY as PYRAMID
 
     rig = T.DropRig(PYRAMID, PYRAMID.defaults, T.TrialConfig(error=T.ErrorModel(ideal=True)), course=1)
     assert rig.placed == [Placement(0, 1)] and rig.target == Placement(1, 1)

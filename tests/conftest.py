@@ -1,6 +1,13 @@
 """Shared fixtures. Building the A/B CadQuery solids takes a few seconds; the builders cache them."""
 
+from pathlib import Path
+import sys
+
 import pytest
+
+# The dummy families the contract tests use (wedge: Prismatic, pyramid: Solid3D) live in tests/fixtures
+# since #227, so the registry holds only the reference designs; they import as top-level packages.
+sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 
 
 @pytest.fixture(scope="session")
