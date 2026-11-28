@@ -231,7 +231,7 @@ def test_trace_records_contacts_modes_and_margins():
 def test_wedge_family_seats_with_a_small_offset():
     # At the engine's default column, i0 = 1, as trials.DropRig: the wedge's base puts a groove under
     # it since issue #70 (before, the wedge only seated at i0 = 0, and never in the sim).
-    from brixzle.families.wedge.family import FAMILY as WEDGE
+    from wedge.family import FAMILY as WEDGE
 
     for course in (0, 1):
         out = PR.predict_pose(WEDGE, WEDGE.defaults, {"dx": 3.0, "pitch": 0.0, "clear": 1.0}, course=course)

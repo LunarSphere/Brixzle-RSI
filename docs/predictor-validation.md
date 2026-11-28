@@ -1,5 +1,7 @@
 # Predictor validation (issue #11)
 
+> **Record, 2026-11-28.** The validation code (`engine/validate.py`) and the box-based quick check it compared against were removed in #227; they are in the tag `pre-debloat-2026-11-28`. The predictor itself stays: the jam analysis uses it.
+
 Where the analytic placement predictor (`engine/predictor/`, issue #10) can stand in for the MuJoCo drop trial (`engine/box_search.py`, issue #8).
 
 - Predictor results are **predicted, quasi-static 2D**.

@@ -13,8 +13,8 @@ from brixzle.families import rules as R
 from brixzle.families import registry
 from brixzle.families import interface as I
 from brixzle.families.interface import GripFeature, Prismatic, Section, Solid3D
-from brixzle.families.wedge import family as wedge_module
-from brixzle.families.wedge.family import FAMILY as WEDGE
+from wedge import family as wedge_module
+from wedge.family import FAMILY as WEDGE
 
 
 @pytest.mark.parametrize("name", registry.names())

@@ -69,7 +69,7 @@ A deferred requirement stays in the list, but the loop does not score it, and th
 | R5 | not planned | A design strategy, not a requirement: design rule DR20 (#206). |
 | R7 | not planned | A design strategy, not a requirement (#206). |
 | R8 | not planned | A design strategy, not a requirement (#206). |
-| R12 | not planned | Pickup error is absorbed by a landing pad, outside the loop (#206). |
+| R12 | not planned | Pickup error is absorbed by a landing pad, outside the loop (#206); the pickup trial was removed in #227. |
 
 ## Target boxes
 

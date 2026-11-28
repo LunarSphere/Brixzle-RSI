@@ -148,7 +148,7 @@ These formulas come from the same `rules.py`. aerial-assembly used the first bor
    - a feature with an outline lies inside the section's outline;
    - a feature with only a position and a size lies inside the brick's extent in X and Z.
 
-   Nothing here checks a gripper. Whether a straight tine clears an opening through the whole depth is the pickup predictor's job (`engine/predictor/pickup.py`), for the gripper step.
+   Nothing here checks a gripper. The magnet target's size and position are checked against `engine/gripper_spec.py` (R10).
 
 Each violation says which check failed, where (for example `defaults, part A`) and what to fix.
 
@@ -166,6 +166,6 @@ A refactor must not change a design. `families/fingerprint.py` hashes exactly wh
 ## Not covered yet
 
 - **The gripper:** which gripper holds which grip feature is decided after the brick is settled (issue #24). Until then nothing checks that a feature can really be held; R10 only asks that one exists.
-- **The fixed fork:** the pickup trial (`engine/sim/pickup.py`) and its predictor still assume today's fork. They read the bores and openings among a family's grip features, and they don't apply to a family that has neither. The loop doesn't run them (issue #46).
+- **The pickup trial** (the fork, the funnel station and the pickup predictor) was removed in #227: R12 is the landing pad's job, outside the loop. The tag `pre-debloat-2026-11-28` has it.
 - **Soft contact:** `SimBodies.soft_collision` is not built or simulated yet, so A/B's snap barbs (`barb_h > 0`) are rejected.
 - **Agent-written families** live outside `src/`, in the loop's run directory, as a package `<root>/<module>/` imported by path (`tools/check_family.load_family`). The contract and the rules run in a separate process with a time limit before the loop imports a family itself, so a family that hangs or crashes the interpreter cannot stop the loop. The code still runs with the loop's own permissions: it is not sandboxed.

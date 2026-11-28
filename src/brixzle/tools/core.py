@@ -115,12 +115,6 @@ def counts(outcomes):
     return c
 
 
-def band(c):
-    """One standard error of Z for counts ``c`` (zscore.z_band)."""
-    from brixzle.engine import zscore as ZS
-    return ZS.z_band({"S": c["seated"], "J": c["jammed"], "N": c["N"], "Z": c["Z"]}) if c["N"] else None
-
-
 def select_drops(drops, box=None, outcomes=None, slices=None, courses=None, limit=None, seed=0, edge_case=None):
     """Map drops (not zooms) inside ``box`` (a statistic name), with these outcomes, slices and courses;
     at most ``limit``, picked with ``seed`` and kept in map order."""
@@ -284,60 +278,6 @@ def contacts(family, p, drops, friction=None, workers=8):
     return res
 
 
-# --- slices and mapdiff (no sim) ---
-
-
-def slices(map_dir):
-    """Counts and Z per box, slice and course, from a map's drops."""
-    t0 = time.time()
-    drops = read_drops(map_dir)
-    c0 = _ideal().error.clearance[0]
-    out = {}
-    for name, b in boxes().items():
-        inside = [d for d in drops if not d.get("zoom") and in_box(d, b, c0)]
-        per = {}
-        for d in inside:
-            per.setdefault(f"{d.get('slice')}/c{d['course']}", []).append(d["outcome"])
-        out[name] = {"all": counts([d["outcome"] for d in inside]), **{k: counts(v) for k, v in sorted(per.items())}}
-    return {"label": LABEL, "map": str(map_dir), "boxes": out, "seconds": round(time.time() - t0, 3)}
-
-
-def _key(d):
-    if "edge_case" in d:
-        return (d["edge_case"], d["dx_mm"], d["dy_mm"], d["clear_mm"], d["pitch_deg"])
-    return (d.get("slice"), d["course"], tuple(d.get("cell") or ()), d["dx_mm"], d.get("dy_mm", 0.0), d["clear_mm"],
-            d["pitch_deg"])
-
-
-def mapdiff(map_a, map_b, limit=50):
-    """Two maps of the same grid, cell by cell: per box, both counts and the change in Z against
-    the noise band (one standard error of the first map's Z); and the cells whose outcome changed."""
-    t0 = time.time()
-    a = {_key(d): d for d in read_drops(map_a) if not d.get("zoom")}
-    b = {_key(d): d for d in read_drops(map_b) if not d.get("zoom")}
-    common = sorted(set(a) & set(b), key=str)
-    c0 = _ideal().error.clearance[0]
-    per_box = {}
-    for name, bx in boxes().items():
-        ca = counts([a[k]["outcome"] for k in common if in_box(a[k], bx, c0)])
-        cb = counts([b[k]["outcome"] for k in common if in_box(b[k], bx, c0)])
-        bd = band(ca)
-        dz = (cb["Z"] - ca["Z"]) if ca["N"] else None
-        per_box[name] = {"a": ca, "b": cb, "dZ": dz, "band": bd,
-                         "dZ_in_bands": (dz / bd) if dz is not None and bd else None,
-                         "verdict": None if dz is None else ("same" if bd is None or abs(dz) <= bd else
-                                                             ("better" if dz > 0 else "worse"))}
-    changed = [{**_pose(a[k]), "a": a[k]["outcome"], "b": b[k]["outcome"]} for k in common
-               if a[k]["outcome"] != b[k]["outcome"]]
-    trans = {}
-    for c in changed:
-        trans[f"{c['a']}->{c['b']}"] = trans.get(f"{c['a']}->{c['b']}", 0) + 1
-    return {"label": LABEL, "a": str(map_a), "b": str(map_b), "cells_compared": len(common),
-            "only_in_a": len(set(a) - set(b)), "only_in_b": len(set(b) - set(a)), "boxes": per_box,
-            "changed": len(changed), "transitions": trans, "changed_cells": changed[:limit],
-            "seconds": round(time.time() - t0, 3)}
-
-
 # --- diffdesign ---
 
 
@@ -400,7 +340,7 @@ def sweep(family, param, values, drops, friction=None, workers=8, p=None):
             "friction": friction, "rows": rows, "seconds": round(time.time() - t0, 2)}
 
 
-# --- gate, ring, friction, and the stage cache ---
+# --- gate, ring, and the stage cache ---
 
 
 def _engine_code():
@@ -449,19 +389,6 @@ def ring(family, p, seed=0, runs="runs", cache=True):
         r = RB.build_ring(family, p, runs=runs, seed=seed)
         return {k: r.get(k) for k in ("status", "seated", "total", "run", "failed_brick", "seconds")}
     return cached_stage(family, p, "ring", {"seed": seed, "n": 6, "courses": 2}, run) if cache else run()
-
-
-def friction(family, p, mus=(0.5, 0.6, 0.7, 0.8), seed=1, box="mean", workers=None):
-    """Held-out Z on ``box`` (seed's shifted poses) at each friction, no push (runs/fable/friction_margin.py)."""
-    from brixzle.engine import zscore as ZS
-
-    t0 = time.time()
-    out = {}
-    for name, fn in ZS.held_out_scores(family, boxes()[box], seed, mus=tuple(mus), workers=workers).items():
-        c = fn(p)
-        c = c.get("counts", c)
-        out[name] = {k: c.get(k) for k in ("Z", "S", "J", "N", "fell", "wrong_valley")}
-    return {"label": LABEL, "family": family.name, "box": box, "seed": seed, "z": out, "seconds": round(time.time() - t0, 1)}
 
 
 # --- spec helpers ---

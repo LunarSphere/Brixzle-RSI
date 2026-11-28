@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from brixzle.engine import zscore as ZS
 from brixzle.families import registry
 from brixzle.tools import core as TC
 
@@ -61,27 +60,6 @@ def test_contacts_name_what_holds_the_brick(ab, cache):
     assert all({"piece", "other", "other_geom", "n", "normal_N", "normal_from_vertical_deg"} <= set(g) for g in row["contacts"])
 
 
-def test_slices_count_each_slice_and_agree_with_z(tmp_path):
-    drops = DROPS + [_drop(0, 2.0, "wrong_valley", slice_="xy", cell=(2, 1), dy=2.0)]
-    m = _map(tmp_path, "m", drops)
-    res = TC.slices(m)
-    c0 = TC._ideal().error.clearance[0]
-    z = ZS.z_from_drops(drops, TC.boxes(), c0)
-    for name in TC.boxes():
-        assert res["boxes"][name]["all"]["Z"] == pytest.approx(z[name]["Z"])
-    assert res["boxes"]["mean"]["xz/c0"]["N"] == 2 and res["boxes"]["mean"]["xy/c0"]["wrong_valley"] == 1
-
-
-def test_mapdiff_names_every_changed_cell(tmp_path):
-    a = _map(tmp_path, "a", DROPS)
-    b = _map(tmp_path, "b", [DROPS[0], dict(DROPS[1], outcome="seated"), DROPS[2]])
-    res = TC.mapdiff(a, b)
-    assert res["cells_compared"] == 3 and res["changed"] == 1 and res["transitions"] == {"jammed->seated": 1}
-    assert res["boxes"]["mean"]["dZ"] == pytest.approx(2 / 3)
-    same = TC.mapdiff(a, a)
-    assert same["changed"] == 0 and same["boxes"]["mean"]["verdict"] == "same"
-
-
 def test_diffdesign_lists_the_changes_between_two_branches():
     res = TC.diffdesign(registry.get("fable_twinhook4"), registry.get("fable_gentle"))
     assert {"H0", "D", "side_gap", "snug_L", "y_angle", "wall"} == set(res["params_changed"])
@@ -116,14 +94,12 @@ def test_a_stage_is_run_once_per_geometry(ab, cache):
 def test_the_command_line_runs_a_tool_and_writes_its_result(tmp_path, cache, capsys):
     from brixzle.tools import __main__ as CLI
     m = _map(tmp_path, "m", DROPS)
-    assert CLI.main(["--runs", str(tmp_path / "runs"), "slices", "--map", str(m)]) == 0
-    printed = json.loads(capsys.readouterr().out)
-    assert printed["boxes"]["mean"]["all"]["N"] == 3
-    (written,) = (tmp_path / "runs").glob("slices-*/result.json")
-    assert json.loads(written.read_text())["boxes"] == printed["boxes"]
     assert CLI.main(["--runs", str(tmp_path / "runs"), "redrop", "ab", "--map", str(m), "--outcomes", "jammed",
                      "--workers", "1"]) == 0
-    assert json.loads(capsys.readouterr().out)["drops"] == 1
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["drops"] == 1
+    (written,) = (tmp_path / "runs").glob("redrop-*/result.json")
+    assert json.loads(written.read_text())["drops"] == printed["drops"]
 
 
 def test_sweep_uses_one_executor_and_drops_each_value_without_a_nested_pool(monkeypatch):

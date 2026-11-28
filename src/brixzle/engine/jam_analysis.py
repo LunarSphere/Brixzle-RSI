@@ -1,8 +1,8 @@
-"""Jam analysis inside the green zone (issue #49): which failures are real, and what holds the brick.
+"""Jam analysis (issue #49, on the grid since #208): which failures are real, and what holds the brick.
 
-The goal is a green zone with no jams inside it. The fitted map (engine/sim_map.py) lists the
-failing cells inside its green zone; this module tells the critic (#19) which of them repeat and
-why they happen:
+The grid score (engine/gridscore.py, ``analyse_jams``) lists the failing cells nearest each
+placement's aim; this module tells the critic which of them repeat and why they happen. (The fitted
+sim map it first ran on was removed in #227.)
 
 1. **Repeatable or one-off.** Each cell is re-run with several seeds (a small seeded shift of the
    pose) at each friction coefficient (0.2, 0.3, 0.4, 0.5). A cell that fails most seeds at some
@@ -32,32 +32,18 @@ jam: both sticking (Balkcom & Trinkle 2002), and wedged if they push from opposi
 the line between them inside both friction cones (Whitney 1982). Three or more are reported as
 found.
 
-**Capture limits (issue #56).** A jam inside the zone is one thing; a zone too narrow for the
-target box is another, and on the A/B baseline it is the one that caps the score. So on each
-slice with an X axis, in the row through the aim, the first failing cell past each end of the
-green band is dropped again and reduced the same way. It is not re-run for repeatability: the
-capture edge is where the outcome changes, so the cell is checked once at each friction instead.
-
-jam_analysis.json is written beside the map. Sim results are simulated, uncalibrated contact;
-predictor results are predicted, quasi-static 2D. Placement only for now (issue #46).
-
-    uv run python -m brixzle.engine.jam_analysis --map runs/map-<stamp>-ab-mean
+Sim results are simulated, uncalibrated contact; predictor results are predicted, quasi-static 2D.
 """
 
-import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import itertools
-import json
 import math
-from pathlib import Path
-import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 from shapely.geometry.polygon import orient
 
 from brixzle.engine import box_search as BS
-from brixzle.engine import sim_map as SM
 from brixzle.engine.predictor import predict as PR
 from brixzle.engine.predictor.contact_modes import Contact, ContactSystem
 from brixzle.engine.sim import trials as T
@@ -401,7 +387,7 @@ def _rot(quat):
 
 
 # The jitter seed of each slice, fixed so that adding the X-Y slice (#86) leaves the others' seeds
-# as they were (they used sorted(SM.SLICES): xt, xz, zt).
+# as they were (they used the fitted map's sorted slices: xt, xz, zt).
 SLICE_SEED_ORDER = ("xt", "xz", "zt", "xy")
 
 
@@ -569,46 +555,7 @@ def analyse_pose(family, p, course, sample, sim_cfg=None, cfg: JamConfig = JamCo
 # --- capture limits: the first failures past the green zone's X edges (issue #56) ---
 
 
-def capture_limits(sim_map):
-    """Where capture stops in X: per slice with an X axis and per course, in the row through the
-    aim, the first failing cell past each end of the green band that holds the aim.
-
-    Each entry has the side ('x-' or 'x+'), the cell and its coordinates, its outcome in the map,
-    and ``edge_mm``: the last seated X on that side. If the aim itself fails there is one entry,
-    side 'aim', with no edge. An end of the band that reaches the end of the row has no entry."""
-    out = []
-    names = sim_map.get("codes", {})
-    for g in sim_map["grids"]:
-        a, b = g["axes"]
-        # The X-Y slice's row through the aim repeats the xz slice's at coarser cells: no capture limit there.
-        if a != "x" or "rows" not in g or g["slice"] == "xy":
-            continue
-        (i0, i1), (j0, j1) = g["index_extent"][a], g["index_extent"][b]
-        j = min(range(j0, j1 + 1), key=lambda k: (abs(k * g["step"][b] - sim_map["aim"][b]), k))
-        row = g["rows"][j - j0]
-
-        def entry(side, i, edge):
-            return {"slice": g["slice"], "course": g["course"], "side": side, "cell": [i, j], a: i * g["step"][a],
-                    b: j * g["step"][b], "outcome": names.get(row[i - i0], row[i - i0]),
-                    "edge_mm": None if edge is None else edge * g["step"][a]}
-
-        if not i0 <= 0 <= i1 or row[-i0] != "S":
-            if i0 <= 0 <= i1:
-                out.append(entry("aim", 0, None))
-            continue
-        lo = hi = 0
-        while lo - 1 >= i0 and row[lo - 1 - i0] == "S":
-            lo -= 1
-        while hi + 1 <= i1 and row[hi + 1 - i0] == "S":
-            hi += 1
-        if lo - 1 >= i0:
-            out.append(entry("x-", lo - 1, lo))
-        if hi + 1 <= i1:
-            out.append(entry("x+", hi + 1, hi))
-    return out
-
-
-# --- the analysis of a map ---
+# --- shared with the grid score (#208) ---
 
 
 def _jittered(cell, seed, salt, cfg, z_axis):
@@ -619,172 +566,3 @@ def _jittered(cell, seed, salt, cfg, z_axis):
     if z_axis is not None:
         out[z_axis] = max(out[z_axis], 0.0)
     return tuple(out)
-
-
-def analyse(family, p, sim_map, cfg: JamConfig = JamConfig(), sim_cfg=None, workers=None):
-    """Analyse the failures inside the green zone of a fitted map (sim_map.sim_map's first result,
-    or map.json): re-run each, group the repeatable ones into bands and reduce each band's
-    contacts. Returns jam_analysis.json as a dict."""
-    sim_cfg = sim_cfg or T.TrialConfig(error=T.ErrorModel(ideal=True))
-    sim_mu = float(sim_cfg.physics.friction)
-    aim = sim_map["aim"]
-    t0 = time.time()
-    cells, jobs = [], []
-    for g in sim_map["grids"]:
-        axes = tuple(g["axes"])
-        steps = {**SM.MapConfig().steps(float(family.lattice(p).U_mm)), **g["step"]}
-        z_axis = axes.index("z") if "z" in axes else None
-        for f in g["inside_failures"]:
-            cell = {"slice": g["slice"], "course": g["course"], "cell": list(f["cell"]), "outcome": f["outcome"],
-                    **{a: f[a] for a in axes}, "_steps": steps}
-            cells.append(cell)
-            for mu in cfg.mus:
-                for seed in range(cfg.seeds):
-                    at = _jittered(f["cell"], seed, (g["course"], SLICE_SEED_ORDER.index(g["slice"])), cfg, z_axis)
-                    jobs.append((len(cells) - 1, mu, seed,
-                                 (g["course"], SM.cell_sample(sim_cfg, g["slice"], at, steps, aim),
-                                  {"friction": float(mu), "trace": False})))
-    n_workers = workers or (1 if len(jobs) <= 60 else SM.DEFAULT_WORKERS)
-    out_bands, references = [], {}
-    with BS.DropPool(family, p, sim_cfg, workers=n_workers) as pool:
-        for c in cells:
-            c["reruns"] = []
-        for (k, mu, seed, _), row in zip(jobs, pool.imap([j[3] for j in jobs])):
-            cells[k]["reruns"].append({"mu": float(mu), "seed": seed, "outcome": row["outcome"]})
-        for c in cells:
-            c.update(repeatability(c["reruns"], cfg))
-        groups = bands([c for c in cells if c["repeatable"]])
-        reps = [representative(g) for g in groups]
-        rep_jobs = [(r["course"], SM.cell_sample(sim_cfg, r["slice"], r["cell"], r["_steps"], aim),
-                     {"rest": True, "trace": False}) for r in reps]
-        for k, (group, rep, job, row) in enumerate(zip(groups, reps, rep_jobs, pool.imap(rep_jobs))):
-            types = {}
-            for c in group:
-                types[c["outcome"]] = types.get(c["outcome"], 0) + 1
-            axes = SM.SLICES[rep["slice"]]
-            out_bands.append({
-                "id": k, "slice": rep["slice"], "course": rep["course"], "cells": [c["cell"] for c in group],
-                "extent": {a: [min(c[a] for c in group), max(c[a] for c in group)] for a in axes},
-                "failure_types": dict(sorted(types.items())), "failure_type": max(sorted(types), key=types.get),
-                "repeat_rate": float(np.mean([c["repeat_rate"] for c in group])),
-                "per_mu": {m: float(np.mean([c["per_mu"][m] for c in group])) for m in group[0]["per_mu"]},
-                "representative": {"cell": rep["cell"], **{a: rep[a] for a in axes},
-                                   "sample": {q: v for q, v in job[1].items() if q != "vel"}},
-                **reduce_row(family, p, rep["course"], row, sim_mu, cfg)})
-        # Capture limits (issue #56): the first failing cell past each X edge, reduced the same way,
-        # and dropped once more at each friction to show whether the edge moves with it.
-        limits = capture_limits(sim_map)
-        grid_of = {(g["slice"], g["course"]): g for g in sim_map["grids"]}
-        lim_jobs, mu_jobs = [], []
-        for lim in limits:
-            g = grid_of[(lim["slice"], lim["course"])]
-            steps = {**SM.MapConfig().steps(float(family.lattice(p).U_mm)), **g["step"]}
-            sample = SM.cell_sample(sim_cfg, lim["slice"], lim["cell"], steps, aim)
-            lim_jobs.append((lim["course"], sample, {"rest": True, "trace": False}))
-            mu_jobs += [(lim["course"], sample, {"friction": float(mu), "trace": False}) for mu in cfg.mus]
-        mu_rows = list(pool.imap(mu_jobs))
-        out_limits = []
-        for k, (lim, job, row) in enumerate(zip(limits, lim_jobs, pool.imap(lim_jobs))):
-            per = mu_rows[k * len(cfg.mus):(k + 1) * len(cfg.mus)]
-            out_limits.append({**{q: v for q, v in lim.items() if q != "outcome"}, "map_outcome": lim["outcome"],
-                               "per_mu": {_mu_key(mu): r["outcome"] for mu, r in zip(cfg.mus, per)},
-                               "sample": {q: v for q, v in job[1].items() if q != "vel"},
-                               **reduce_row(family, p, lim["course"], row, sim_mu, cfg)})
-        # A seated drop at the aim on each course, for comparison: its Y force share shows what a
-        # clean seat looks like on this family (a V gutter leans its faces across Y).
-        courses = sorted({c["course"] for c in cells} | {lim["course"] for lim in limits})
-        aim_jobs = [(course, SM.cell_sample(sim_cfg, "xz", (0, 0), {"x": 1.0, "z": 1.0, "t": 1.0}, aim),
-                     {"rest": True, "trace": False}) for course in courses]
-        for course, row in zip(courses, pool.imap(aim_jobs)):
-            r = reduce_row(family, p, course, row, sim_mu, cfg)
-            scales = [s["mu_scale"] for s in r["sites"]]
-            references[str(course)] = {k: r[k] for k in ("outcome", "y_share", "y_share_raw", "contacts_touching",
-                                                         "max_point_share", "out_of_plane", "three_d")} | {
-                "sites": len(r["sites"]), "mu_scale": [min(scales), max(scales)] if scales else None}
-    for c in cells:
-        c.pop("_steps")
-    return {
-        "labels": dict(LABELS), "family": family.name, "family_version": family.version, "params": p.to_dict(),
-        "sim_only": B.varies_along_y(family),
-        "box": sim_map["box"], "config": {**asdict(cfg), "mus": list(cfg.mus)}, "sim_mu": sim_mu,
-        "cells": cells, "bands": out_bands, "one_offs": [c for c in cells if not c["repeatable"]],
-        "capture_limits": out_limits, "seated_reference": references,
-        "counts": {"inside_failures": len(cells), "repeatable": sum(c["repeatable"] for c in cells),
-                   "bands": len(out_bands), "three_d": sum(b["three_d"] for b in out_bands),
-                   "reruns": len(jobs), "capture_limits": len(out_limits)},
-        "workers": n_workers, "seconds": time.time() - t0,
-    }
-
-
-def write_analysis(result, map_dir):
-    """Write jam_analysis.json into the map's run directory; never overwrites one."""
-    text = json.dumps(result, indent=2, allow_nan=False) + "\n"
-    path = Path(map_dir) / FILE
-    with open(path, "x", encoding="utf-8") as f:
-        f.write(text)
-    return path
-
-
-def summary(result):
-    """A short text summary, for the terminal."""
-    c = result["counts"]
-    if result.get("sim_only"):
-        LABELS_NOTE = "; the family varies along Y, so mechanisms are not reduced: sim failure type and rest pose only"
-    else:
-        LABELS_NOTE = ""
-    lines = [f"{result['family']} placement {result['box']['statistic']}: {c['inside_failures']} failures inside the "
-             f"green zone, {c['repeatable']} repeatable in {c['bands']} bands ({c['three_d']} of them 3D effects), "
-             f"{len(result['one_offs'])} one-off; {c['reruns']} re-runs, {result['seconds']:.1f} s "
-             f"(sim: {LABELS['sim']}; mechanism: {LABELS['pred']}{LABELS_NOTE})"]
-    def detail(b):
-        lines.append(f"    {b['mechanism']}")
-        show = b["sites"] if b["holding"] is None else [b["sites"][i] for i in b["holding"]["sites"]]
-        for s in show:
-            pts = " to ".join(f"({x:.1f}, {z:.1f})" for x, z in s["points"])
-            lines.append(f"    - {s['on_brick']['label']}  ON  {s['on_support']['label']}; at {pts} mm, normal "
-                         f"({s['normal'][0]:+.2f}, {s['normal'][1]:+.2f}), {s['normal_N'] / b['weight_N']:.2f} of the weight")
-        if b["holding"] is not None:
-            h = b["holding"]
-            lines.append(f"    holding set of {h['size']}: stick margin {h['stick_margin']:+.3f}, wedged {h['wedged']}, "
-                         f"needs friction {h['needs_friction']}")
-
-    for b in result["bands"]:
-        ext = ", ".join(f"{a} {lo:+g} to {hi:+g} {SM.AXIS_UNITS[a]}" for a, (lo, hi) in b["extent"].items())
-        lines.append(f"  band {b['id']} ({b['slice']} course {b['course']}, {ext}; {len(b['cells'])} cells): "
-                     f"{b['failure_type']}, repeat rate {b['repeat_rate']:.0%} {b['per_mu']}")
-        detail(b)
-    for lim in result.get("capture_limits", []):
-        second = SM.SLICES[lim["slice"]][1]
-        edge = "the aim itself fails" if lim["edge_mm"] is None else f"seats to x {lim['edge_mm']:+g} mm"
-        lines.append(f"  capture limit {lim['side']} ({lim['slice']} course {lim['course']}, {second} "
-                     f"{lim[second]:+g} {SM.AXIS_UNITS[second]}): {edge}; at x {lim['x']:+g} mm {lim['map_outcome']} "
-                     f"in the map, per mu {lim['per_mu']}")
-        detail(lim)
-    return "\n".join(lines)
-
-
-def parser():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--map", required=True, help="a map run directory (runs/map-<stamp>-<family>-<target>)")
-    ap.add_argument("--seeds", type=int, default=JamConfig().seeds)
-    ap.add_argument("--workers", type=int, default=None)
-    return ap
-
-
-def main(argv=None):
-    from brixzle.families import registry
-
-    args = parser().parse_args(argv)
-    map_dir = Path(args.map)
-    sim_map = json.loads((map_dir / "map.json").read_text(encoding="utf-8"))
-    family = registry.get(sim_map["family"])
-    p = family.params_type.from_dict(sim_map["params"])
-    result = analyse(family, p, sim_map, cfg=JamConfig(seeds=args.seeds), workers=args.workers)
-    result["map"] = map_dir.name
-    path = write_analysis(result, map_dir)
-    print(summary(result))
-    print(f"-> {path}")
-
-
-if __name__ == "__main__":
-    main()

@@ -10,8 +10,6 @@ BORROWED = [
     "src/brixzle/engine/sim/scene.py",
     "src/brixzle/engine/sim/trials.py",
     "src/brixzle/engine/sim/approach_error.py",
-    "src/brixzle/engine/sim/drone.py",
-    "src/brixzle/engine/sim/fork.py",
     "src/brixzle/families/ab/params.py",
     "src/brixzle/families/ab/profile.py",
     "src/brixzle/families/convex.py",

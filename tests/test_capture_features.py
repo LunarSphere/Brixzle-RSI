@@ -86,7 +86,7 @@ def test_a_ring_kit_builds_from_the_interlock_cell_of_a_solid3d_family(yfunnel):
 
 def test_kit_from_cell_still_refuses_a_solid3d_family_without_a_prismatic_interlock():
     from brixzle.engine import ring_cells
-    from brixzle.families.pyramid.family import FAMILY as pyramid
+    from pyramid.family import FAMILY as pyramid
 
     with pytest.raises(ValueError, match="prismatic interlock"):
         ring_cells.kit_from_cell(pyramid, lambda *a, **k: None)

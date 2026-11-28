@@ -10,7 +10,7 @@ from brixzle.families import registry
 ROOT = Path(__file__).resolve().parents[1]
 FABLE = ROOT / "runs" / "fable"
 FAMILIES = ROOT / "src" / "brixzle" / "families"
-LINE = ("fable_twinhook4", "fable_gentle", "fable_feather", "fable_reach", "fable_wide", "fable_allround")
+LINE = ("fable_twinhook4", "fable_gentle", "fable_allround")  # the reference designs kept in #227
 
 
 @pytest.mark.parametrize("name", LINE)
@@ -78,9 +78,8 @@ def test_the_branches_share_the_base():
     from brixzle.families.twinhook.base import TwinHook, WebbedTwinHook, WingedTwinHook
     kinds = {name: type(_line_instance(name)) for name in LINE}
     assert kinds["fable_twinhook4"] is TwinHook
-    assert issubclass(kinds["fable_reach"], TwinHook) and not issubclass(kinds["fable_reach"], WebbedTwinHook)
-    assert all(issubclass(kinds[n], WebbedTwinHook) for n in ("fable_gentle", "fable_feather"))
-    assert all(issubclass(kinds[n], WingedTwinHook) for n in ("fable_wide", "fable_allround"))
+    assert issubclass(kinds["fable_gentle"], WebbedTwinHook)
+    assert issubclass(kinds["fable_allround"], WingedTwinHook)
 
 
 def _lift_in_worker(family):

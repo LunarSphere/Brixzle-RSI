@@ -530,3 +530,14 @@ The maintainer approved on 2026-11-28, after #223 showed CI at 25 minutes and mo
 - **Moved, unchanged:** `check_family` to `tools/`, `render` and `videos` to `tools/`, `novelty` to `director/`.
 - **The director has one goal.** `verify.measure` (the #164 and held measurements), the Pareto archive and the #164 settings went with `tools evaluate`; `init` refuses any other `stage`, and a goal change may change only the goal's text (no radius setting is tightenable yet).
 - The engine code of held placement, the pickup sim, the SO-101 arm, the fitted sim map and the extra families goes in the next strip issue.
+
+## The paused engine features and the non-reference families removed (issue #227)
+
+The maintainer approved on 2026-11-28 (the third part of the debloat, after #224 and #204). Tag `pre-debloat-2026-11-28` (`1f731c6`) keeps everything removed here.
+
+- **SO-101 arm:** `engine/sim/arm.py`, `grasp.py`, `pickplace.py`, the 17 MB model in `data/so101/`, the arm scripts, and the grip, size and reach terms of the #164 objective.
+- **Held placement (stage B):** `engine/sim/held.py`, `engine/heldmap.py`, `tools heldmap`, `docs/held-placement.md`, and the prop-guard and drone models (`engine/sim/guards.py`, `drone.py`), which only the held mission used. The drone's payload limit stays in `engine/gripper_spec.py`.
+- **Pickup sim (R12):** `engine/sim/pickup.py`, `fork.py`, `funnel.py`, `engine/pickup_check.py`, `engine/predictor/pickup.py`, and the pickup task in `box_search`. `family.pickup()` and `GripFeature` stay: R10's magnet target is checked through them.
+- **The first loop's scoring:** the fitted sim map (`engine/sim_map.py`) and the map half of the jam analysis (capture limits, `analyse`), Z over target boxes and held-out Z (`zscore.py` keeps `counts`, `z_band`, `inside`, `drop_pose`, `_sample`), the box-based quick check (`quick_check.py` keeps the quarter screen), `engine/validate.py`, `engine/bounce.py`, and `tools slices`, `mapdiff` and `friction`. `tools sweep` stays: it works on a grid run's drops.
+- **Families:** the registry keeps `ab`, `fable_allround`, `fable_twinhook4` and `fable_gentle` (and the `twinhook` base). `fable_feather`, `fable_reach`, `fable_wide`, `fable_gentle_longhook`, `fable_gentle_tpuhook` and `prim` are removed; the dummy families `wedge` and `pyramid` moved to `tests/fixtures/`.
+- **Behaviour unchanged** (simulated, uncalibrated contact): `gridscore ab` gives Z −0.2597 with the same quarters and rings as `runs/quarterz-20261127-233337-ab` (`runs/strip227-20261128-021519-ab`), and the ab screen at seed 0 the same line.

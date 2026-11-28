@@ -7,7 +7,7 @@ expects: a course-0 brick at Placement(0, 1), centred at x = 2U. Simulated, unca
 import pytest
 
 from brixzle.engine.sim import trials as T
-from brixzle.families.wedge.family import FAMILY as WEDGE
+from wedge.family import FAMILY as WEDGE
 
 
 @pytest.mark.parametrize("course", [0, 1])

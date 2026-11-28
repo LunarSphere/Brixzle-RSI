@@ -1,15 +1,12 @@
 """python -m brixzle.tools <tool> ... (#163). Each tool writes runs/<tool>-<UTC>-<family>/result.json
 and prints a short JSON summary. Simulated, uncalibrated contact.
 
-    heldmap    <family> [--gripper FILE] [--full]                     five-phase held placements and corbel builds
     edgemap    <family>                                     half-supported seat map
-    redrop     <family> --map DIR [selection] [--friction MU]  re-drop chosen map poses
+    redrop     <family> --map DIR [selection] [--friction MU]  re-drop chosen poses (a grid dir's drops.json.gz)
     contacts   <family> --map DIR [selection]                  rest pose and contacts of chosen drops
     sweep      <family> --param NAME --values V,V,.. --map DIR [selection]
-    slices     --map DIR                                        Z per box, slice and course (no sim)
-    mapdiff    --a DIR --b DIR                                   two maps cell by cell (no sim)
     diffdesign <family> <family>                                 changed parameters and geometry
-    gate | ring | friction <family>
+    gate | ring <family>
 
 A family is a registry name or <root>:<module>. Selection: --box mean|p95|max, --outcomes jammed,..,
 --slices xz,.., --courses 0,1, --limit N, --seed S.
@@ -49,11 +46,6 @@ def parser():
     ap = argparse.ArgumentParser(prog="python -m brixzle.tools", description=__doc__.splitlines()[0])
     ap.add_argument("--runs", default="runs")
     sub = ap.add_subparsers(dest="tool", required=True)
-    h = sub.add_parser("heldmap")
-    h.add_argument("family")
-    h.add_argument("--gripper")
-    h.add_argument("--full", action="store_true", help="include the radius sweep and longer corbels")
-    h.add_argument("--seed", type=int, default=192)
     s = sub.add_parser("edgemap")
     s.add_argument("family")
     s.add_argument("--workers", type=int, default=8)
@@ -67,21 +59,14 @@ def parser():
     s.add_argument("--param", required=True)
     s.add_argument("--values", required=True)
     _selection(s)
-    s = sub.add_parser("slices")
-    s.add_argument("--map", required=True)
-    s = sub.add_parser("mapdiff")
-    s.add_argument("--a", required=True)
-    s.add_argument("--b", required=True)
     s = sub.add_parser("diffdesign")
     s.add_argument("a")
     s.add_argument("b")
-    for name in ("gate", "ring", "friction"):
+    for name in ("gate", "ring"):
         s = sub.add_parser(name)
         s.add_argument("family")
-        s.add_argument("--seed", type=int, default=0 if name != "friction" else 1)
+        s.add_argument("--seed", type=int, default=0)
         s.add_argument("--no-cache", action="store_true")
-        if name == "friction":
-            s.add_argument("--mus", default="0.5,0.6,0.7,0.8")
     return ap
 
 
@@ -98,22 +83,12 @@ def _short(res):
 def main(argv=None):
     a = parser().parse_args(argv)
     TC.cache_on() if not getattr(a, "no_cache", False) else None
-    if a.tool in ("slices", "mapdiff"):
-        res = TC.slices(a.map) if a.tool == "slices" else TC.mapdiff(a.a, a.b)
-        name = "map"
-    elif a.tool == "diffdesign":
+    if a.tool == "diffdesign":
         fa, fb = TC.load(a.a), TC.load(a.b)
         res, name = TC.diffdesign(fa, fb), f"{fa.name}-vs-{fb.name}"
     else:
         fam = TC.load(a.family)
         p, name = fam.defaults, fam.name
-        if a.tool == "heldmap":
-            from brixzle.engine import heldmap as HM
-            res = HM.heldmap(fam, p, HM.gripper_config(a.family, a.gripper), HM.HeldMapSettings(seed=a.seed, full=a.full))
-            res = TC.write(TC.new_run(a.tool, name, a.runs), {**res, "family_spec": a.family})
-            summary = {k: v for k, v in res.items() if k not in ("rows", "builds", "params", "gripper", "mean_box")}
-            print(json.dumps(summary, indent=1, allow_nan=False))
-            return 0
         if a.tool == "redrop":
             res = TC.redrop(fam, p, _drops(a), friction=a.friction, workers=a.workers)
         elif a.tool == "edgemap":
@@ -124,10 +99,8 @@ def main(argv=None):
             res = TC.sweep(fam, a.param, _csv(a.values, float), _drops(a), friction=a.friction, workers=a.workers)
         elif a.tool == "gate":
             res = TC.gate(fam, p, seed=a.seed, runs=a.runs, cache=not a.no_cache)
-        elif a.tool == "ring":
-            res = TC.ring(fam, p, seed=a.seed, runs=a.runs, cache=not a.no_cache)
         else:
-            res = TC.friction(fam, p, mus=_csv(a.mus, float), seed=a.seed)
+            res = TC.ring(fam, p, seed=a.seed, runs=a.runs, cache=not a.no_cache)
     res = TC.write(TC.new_run(a.tool, name, a.runs), res)
     print(json.dumps(_short(res), indent=1, default=str))
     return 0

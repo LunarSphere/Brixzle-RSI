@@ -9,7 +9,7 @@ from brixzle.families import builders as B
 from brixzle.families import rules as R
 from brixzle.families.ab.family import FAMILY as AB
 from brixzle.families.interface import bore
-from brixzle.families.wedge.family import FAMILY as WEDGE
+from wedge.family import FAMILY as WEDGE
 
 KEYS = ("R10.two_openings", "R10.hangs_below", "R10.straddles_com")
 
@@ -71,9 +71,9 @@ def test_small_bores_are_not_carrying_openings():
 
 @pytest.mark.parametrize("name", ["wedge", "pyramid"])
 def test_the_dummy_families_carry_on_two_openings(name):
-    from brixzle.families import registry
+    import importlib
 
-    fam = registry.get(name)
+    fam = importlib.import_module(f"{name}.family").FAMILY
     for part in fam.parts:
         m = _margins(fam, part)
         assert all(m[k] >= 0 for k in KEYS), (name, part, {k: m[k] for k in KEYS})
