@@ -56,4 +56,5 @@ This repo has no flight code. Never arm a drone, open a radio link, or run anyth
 - **Quaternions:** `[w, x, y, z]`.
 - **Runs:** every run writes to a new directory under `runs/` and never overwrites an earlier one. `runs/` is git-ignored.
 - **Requirements:** the files in `docs/` and `rules/` define what the agents see. Change them only in a reviewed PR.
+- **Codex copies:** `AGENTS.md` and `.codex/agents/rsi-*.toml` are generated from `CLAUDE.md` and `.claude/agents/rsi-*.md`. Edit the sources, then run `uv run python -m brixzle.director.roles sync`; a test fails if a copy drifts (#229).
 - **Commits:** a short imperative subject, one coherent change.
