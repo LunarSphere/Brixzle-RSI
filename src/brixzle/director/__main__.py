@@ -151,7 +151,8 @@ def _measure(run, spec, directory, **options):
         from brixzle.engine import radius as RA
         gs = GS.GridSettings(**{k: tuple(v) if isinstance(v, list) else v
                                 for k, v in (settings.get("grid") or {}).items()})
-        bs = RA.BuildSettings(**(settings.get("builds") or {}))
+        # the noisy builds are for finalists (#222): only when the campaign turns them on
+        bs = RA.BuildSettings(**(settings.get("builds") or {})) if settings.get("run_builds") else None
         return VE.measure_radius(spec, directory / "measured", gs, bs)
     if settings.get("stage") == "held":
         baseline = RN.read_json(run / "baseline" / "verified.json", {})
@@ -162,7 +163,7 @@ def _measure(run, spec, directory, **options):
 
 def _archive_terms(measured):
     if measured.get("stage") == "radius":
-        return {k: measured.get(k) for k in ("green_mm", "second_mm", "green_by_placement", "floor_passed", "weakest",
+        return {k: measured.get(k) for k in ("z", "z_quarters", "green_mm", "second_mm", "green_by_placement", "floor_passed", "weakest",
                                              "z_rings", "overhang_steps", "stack_courses", "build_radius_mm")}
     held = measured.get("held", {})
     counts = {f"held_{key}_z_counts": {k: value[k] for k in ("S", "J", "N")}

@@ -59,35 +59,36 @@ class Archive:
         return {"members": self.members}
 
 
-# --- the archive by error band (#206) ---
+# --- the archive by Z band (#206; ranked on the four-quarter Z since #222) ---
 
-BAND_EDGES_MM = (16.0, 22.0, 28.0, 34.0)  # below 16, 16-22, 22-28, 28-34, 34 and above
-GREEN_TIE_MM = 1.25                       # half a fine grid cell (#208): closer is a tie (see better)
+BAND_EDGES = (0.0, 0.5, 0.8, 0.95)  # Z16: below 0, 0-0.5, 0.5-0.8, 0.8-0.95, 0.95 and above
+Z_TIE = 0.02                        # closer Z is a tie (about one fine cell's share of the 16 mm disc)
+GREEN_TIE_MM = 1.25                 # half a fine grid cell (#208): closer green zones tie (see better)
+RING_ORDER = ("16", "28", "40")     # Z16 first, then the wider discs break ties
 
 
-def band_of(green_mm, edges=BAND_EDGES_MM):
-    """The band's name for an error radius: 'below 16', '16-22', ..., '34+'."""
-    r = float(green_mm or 0.0)
-    if r < edges[0]:
+def band_of(z, edges=BAND_EDGES):
+    """The band's name for a design's Z (#222): 'below 0', '0-0.5', ..., '0.95+'."""
+    v = float(z if z is not None else -1.0)
+    if v < edges[0]:
         return f"below {edges[0]:g}"
     for lo, hi in zip(edges, edges[1:]):
-        if r < hi:
+        if v < hi:
             return f"{lo:g}-{hi:g}"
     return f"{edges[-1]:g}+"
 
 
-def band_key(rec):
-    """What a band ranks its designs on after the green zone: overhang, then stack, then the weakest
-    placement's Z within 16 mm, then the green zone itself."""
-    g = float(rec.get("green_mm") or 0.0)
-    z16 = (rec.get("z_rings") or {}).get("16")
-    return (float(rec.get("overhang_steps") or 0.0), float(rec.get("stack_courses") or 0.0),
-            -1.0 if z16 is None else float(z16), g)
+def z_vector(rec):
+    """Z over the 16, 28 and 40 mm discs, the mean over the quarters (#222). Z16 is ``rec['z']``."""
+    rings = rec.get("z_rings") or {}
+    out = [float(rec["z"])]
+    out += [float(rings[k]) for k in RING_ORDER[1:] if rings.get(k) is not None]
+    return out
 
 
 def green_vector(rec):
-    """The placements' green zones, weakest first (#214). A record without them falls back to its
-    headline, and its second-weakest placement if it has one (#210)."""
+    """The placements' green zones, weakest first (#214): the last tie-break since #222. A record
+    without them falls back to its headline, and its second-weakest placement if it has one (#210)."""
     by = rec.get("green_by_placement")
     if by:
         return sorted(float(v) for v in by.values())
@@ -97,28 +98,33 @@ def green_vector(rec):
     return out
 
 
-def better(a, b, tie_mm=GREEN_TIE_MM):
-    """``a`` ranks above ``b`` in a band (leximin, #214): compare the placements' green zones weakest
-    first, and the first that differs by at least ``tie_mm`` decides; if every one ties, a larger
-    ``band_key`` (overhang, stack, Z16)."""
+def better(a, b, z_tie=Z_TIE, tie_mm=GREEN_TIE_MM):
+    """``a`` ranks above ``b`` (#222): Z16, then Z28, then Z40, the first that differs by at least
+    ``z_tie`` decides; if all tie, the placements' green zones weakest first (leximin, #214)."""
+    for x, y in zip(z_vector(a), z_vector(b)):
+        if abs(x - y) >= z_tie:
+            return x > y
     for x, y in zip(green_vector(a), green_vector(b)):
         if abs(x - y) >= tie_mm:
             return x > y
-    return band_key(a) > band_key(b)
+    return False
 
 
 class BandArchive:
-    """The best design in each error band (#206), so a new concept competes in its own band and not
-    against a polished design that tolerates more. A design breaking a hard constraint is not kept."""
+    """The best design in each Z band (#206, #222), so a new concept competes in its own band and not
+    against a polished design that scores more. A design breaking a hard constraint is not kept, and
+    nor is one without a Z (scored before #222): rescore it, never guess its Z."""
 
-    def __init__(self, members=None, edges=BAND_EDGES_MM):
+    def __init__(self, members=None, edges=BAND_EDGES):
         self.members = list(members or [])
         self.edges = edges
 
     def offer(self, rec):
         if rec.get("violations"):
             return {"kept": False, "reason": f"infeasible: {rec['violations']}", "replaced": [], "band": None}
-        band = band_of(rec.get("green_mm"), self.edges)
+        if rec.get("z") is None:
+            return {"kept": False, "reason": "no Z (scored before #222): rescore it", "replaced": [], "band": None}
+        band = band_of(rec["z"], self.edges)
         rec = {**rec, "band": band}
         same = [m for m in self.members if m.get("band") == band]
         if same and not better(rec, same[0]):

@@ -76,7 +76,8 @@ def explore_due(run, goal, iteration):
     return ""
 
 
-RULES_VERSION = "218"  # which requirements and score a design was judged under (#206; grid #208; free drop #218)
+RULES_VERSION = "222"  # which requirements and score a design was judged under (#206; grid #208; free drop #218;
+                      # Z on the stack and overhangs 1-3 #222)
 
 
 def design_line(run, n):
@@ -98,7 +99,8 @@ def design_line(run, n):
     g = m.get("grid") or {}
     return {"time": RN.now(), "run": run.name, "iteration": int(n), "spec": m.get("spec"),
             "parent": brief.get("parent") or "", "new_family": brief.get("may_change") == [NEW_FAMILY],
-            "brief": (brief.get("brief") or "")[:300], "green_mm": m.get("green_mm"), "weakest": g.get("weakest"),
+            "brief": (brief.get("brief") or "")[:300], "z": m.get("z"), "z_quarters": m.get("z_quarters"),
+            "green_mm": m.get("green_mm"), "weakest": g.get("weakest"),
             "z_rings": m.get("z_rings"),
             "overhang_steps": m.get("overhang_steps"), "stack_courses": m.get("stack_courses"),
             "violations": m.get("violations"), "kept": (v.get("offer") or {}).get("kept"),

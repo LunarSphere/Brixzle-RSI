@@ -6,7 +6,7 @@ Brixzle-RSI is a recursive self-improving loop for designing brick families that
 
 ## Status
 
-The director loop (#165) runs the error-radius goal (#206): bricks a Crazyflie 2.1 Brushless places with a passive magnet under 16 to 40 mm of error (`docs/requirements.md`). Don't write loop code until the issue for it exists and has been agreed.
+The director loop (#165) runs the error-radius goal (#206): bricks a Crazyflie 2.1 Brushless places with a passive magnet under 16 to 40 mm of error, scored as Z within 16 mm on a stack and overhangs 1, 2 and 3 (#222; `docs/requirements.md`). Don't write loop code until the issue for it exists and has been agreed.
 
 ## Speed
 

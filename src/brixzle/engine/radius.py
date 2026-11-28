@@ -29,7 +29,11 @@ import numpy as np
 
 LABEL = "simulated, uncalibrated contact"
 PLACEMENTS = {"full": 1, "plus_bare": "plus_bare", "minus_bare": "minus_bare", "corbel_reach": "plus_anchored",
-              "corbel_back": "back_cantilever", "corbel_reach2": "plus_cantilever"}  # the last two: #210
+              "corbel_back": "back_cantilever", "corbel_reach2": "plus_cantilever",  # the last two: #210
+              "corbel_reach3": "plus_cantilever3"}                                    # overhang 3 (#222)
+# The four placements the score Z averages (#222): stacking and overhangs 1, 2 and 3 (each the reaching
+# brick of a back-first corbel's course 1, 2 and 3, everything below it ideally placed).
+QUARTERS = ("full", "corbel_reach", "corbel_reach2", "corbel_reach3")
 GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 
 
@@ -256,14 +260,15 @@ class BuildSettings:
 def corbel_layout(brick):
     """The single-brick drop rig that replays a back-first corbel brick (``b<course>_<voxel>``): course 0
     on the base (0), the course-1 back brick across two course-0 bricks (1), the first reach
-    ('plus_anchored'), later back bricks ('back_cantilever') and later reaches ('plus_cantilever')."""
+    ('plus_anchored'), later back bricks ('back_cantilever'), the second reach ('plus_cantilever') and
+    the third and later reaches ('plus_cantilever3', #222)."""
     from brixzle.engine import objective as OB
 
     c, v = OB._placement(brick)
     if c == 0:
         return 0
     if v == c:
-        return "plus_anchored" if c == 1 else "plus_cantilever"
+        return {1: "plus_anchored", 2: "plus_cantilever"}.get(c, "plus_cantilever3")
     if v == c - 2:
         return 1 if c == 1 else "back_cantilever"
     raise ValueError(f"{brick} is not a back-first corbel brick")

@@ -370,11 +370,15 @@ def rig_layout(lat: Lattice, course, neighbour=False):
 # Half-supported seats (issue #146), as the structures build them: placed bricks (the first is the
 # supporter the target is judged against), the target and the base's voxel range. 'back_cantilever'
 # (#210) is a back-first corbel's back brick from course 2 up: it lands across the back brick below and
-# the reaching brick that cantilevers past it, and holds that reach's tail down.
+# the reaching brick that cantilevers past it, and holds that reach's tail down. 'plus_cantilever3' (#222)
+# is overhang 3: the course-3 reach, three voxels past the course-0 face, on courses 0-2 and the
+# course-3 back brick.
 _EDGE_LAYOUTS = {
     'plus_anchored': ([Placement(0, 0), Placement(0, -2), Placement(1, -1)], Placement(1, 1), (-3, 2)),  # corbel step 1
     'plus_cantilever': ([Placement(1, 1), Placement(0, 0), Placement(0, -2), Placement(1, -1), Placement(2, 0)],
                         Placement(2, 2), (-3, 2)),                                                       # corbel step 2
+    'plus_cantilever3': ([Placement(2, 2), Placement(0, 0), Placement(0, -2), Placement(1, -1), Placement(1, 1),
+                          Placement(2, 0), Placement(3, 1)], Placement(3, 3), (-3, 2)),                    # corbel step 3 (#222)
     'back_cantilever': ([Placement(1, -1), Placement(1, 1), Placement(0, 0), Placement(0, -2)],
                         Placement(2, 0), (-3, 2)),                                                       # corbel back brick (#210)
     'plus_bare': ([Placement(0, 0)], Placement(1, 1), (-1, 2)),                                          # bridge arm, +x

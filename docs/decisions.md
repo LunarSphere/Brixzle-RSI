@@ -498,3 +498,26 @@ Two loop campaigns aimed at one brick that handles every placement (`runs/rsi/al
 - **Check seated controls when you add a guide.** The guide tongue intercepted an approach the sill had seated; reworking it into a cheek moved the load to an adjacent tooth.
 - **An edge-seat gain must carry through.** The corner rocker made the +x edge positive (+0.15) but lost full-seat Z (+0.922) and stayed at one step at 4 mm. Judge a change on both bare edges, the full seat and the noisy builds together, as the archive does.
 
+
+## Z on four quarters: the stack and overhangs 1, 2 and 3 (issue #222)
+
+The maintainer chose this on 2026-11-27, after campaigns 1 and 2 under `green_mm` (#208) produced no design above 3.75 mm.
+
+- **The score is Z = ¼ Z_stack + ¼ Z_overhang1 + ¼ Z_overhang2 + ¼ Z_overhang3**, each (S − J) / N over the placement's grid cells within 16 mm of the aim, by cell area: the first loop's Z (#61) on the placements the short-term goal needs. If one brick stacks, many do, and an overhang of 3 needs each of its three reaching bricks to seat.
+- **Why not the green zone.** One repeatable failing cell ends it, so every design scored 1.25–3.75 mm and the designer had no gradient. It was the minimum over six placements, and the bare edges (bridge arms, not the short-term goal) set it. Z rewards each cell that seats.
+- **Overhang n is the reaching brick only.** Course n's reach (`Placement(n, n)`) is dropped onto an ideally built back-first corbel with course n's back brick (`Placement(n, n − 2)`) in place. The back brick and the bare edges stay as diagnostics (`--placements`). Overhang 3 needed a new layout, `plus_cantilever3`; one ideal drop of `fable_allround` on it seats (`tests/test_quarter_z.py`, simulated, uncalibrated contact).
+- **16 mm disc.** Z16 is the floor and the old mean box; Z28 and Z40 break ties within 0.02. The early stop still refines every outcome change inside 16 mm.
+- **Noisy builds are for finalists.** They cost about a minute per design and the single-brick drops carry their signal; `settings.run_builds` turns them on. The ideal MVP gate (stack 3, overhang 3) stays a hard constraint.
+- **The screen** before the grid uses the same four placements: 40 seeded random drops within 16 mm, 10 each, at least 32 seated (the #47 rule). A brick that cannot seat one placement fails it.
+- **Archive.** Bands on Z (below 0, 0–0.5, 0.5–0.8, 0.8–0.95, 0.95+); a design scored before #222 has no Z and is refused until rescored, never guessed.
+
+**Calibration (#222, 2026-11-27; simulated, uncalibrated contact).** Screen seed 0 (`runs/quarterz-20261127-233337-screen`) and the default grid (`runs/quarterz-20261127-233337-<family>`), cold drop cache, 14 workers:
+
+| design | screen | Z16 | full | overhang 1 | overhang 2 | overhang 3 | Z28 | grid (s) |
+|---|---|---|---|---|---|---|---|---|
+| ab | fail (1 of 10) | −0.26 | +0.08 | −0.35 | −0.29 | −0.47 | −0.18 | 158 |
+| fable_allround | fail (3 of 12) | −0.33 | +0.92 | −0.70 | −0.74 | −0.78 | −0.14 | 478 |
+| fable_twinhook4 | fail (3 of 12) | +0.17 | +0.91 | −0.07 | −0.08 | −0.09 | −0.01 | 174 |
+| fable_gentle | fail (3 of 12) | −0.28 | +0.83 | −0.62 | −0.64 | −0.71 | −0.16 | 352 |
+
+All three Fable designs stack (full Z 0.83–0.92) and none holds an overhang, matching the bench drops of a printed `allround` (stacking works, overhang fails). None passes the screen, so in verify none would reach the grid. The grid is slower than #208's: every outcome change inside 16 mm is refined now, including jammed against fell (they differ in Z), and the overhang 3 scene has eight bricks. A design that passes the screen seats most of the disc and has fewer changes to refine.

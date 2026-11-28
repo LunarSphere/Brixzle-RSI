@@ -7,7 +7,8 @@ per design and an ``INDEX.md`` with one line each:
     <name>/family.py            the code (copyable; the maintainer's own designs may be reused)
     <name>/card.md              the idea, scores per placement, strengths and weaknesses with numbers,
                                 the jam bands with named contacts, and the critic's diagnosis
-    <name>/scores.json          green zone and Z per placement, overhang, stack, rules, sources
+    <name>/scores.json          Z (#222: the stack and overhangs 1-3 in the 16 mm disc), green zone and
+                                Z per placement, overhang, stack (finalists only), rules, sources
     <name>/map-<placement>.png  the grid maps; jams.json the failure analysis
     <name>/module.png, *.stl    three orthographic views and the printable solid
 
@@ -22,7 +23,7 @@ from pathlib import Path
 import shutil
 
 LABEL = "simulated, uncalibrated contact"
-RULES = "218"   # the score the entries were measured under: the #208 grid, #210 placements and builds, #218 free drop
+RULES = "222"   # the score the entries were measured under: the #208 grid, #218 free drop, #222 Z on four quarters
 FLOOR_MM = 16.0
 
 
@@ -41,6 +42,7 @@ def entry_from(name, spec, origin, grid, builds=None, idea="", diagnosis=None, v
     builds = builds or {}
     places = grid.get("placements") or {}
     return {"name": name, "spec": spec, "origin": origin, "idea": idea, "rules": RULES, "label": LABEL,
+            "z": grid.get("z"), "z_quarters": grid.get("z_quarters") or {}, "z_mean_rings": grid.get("z_rings") or {},
             "green_mm": grid.get("green_mm"), "weakest": grid.get("weakest"),
             "green_by_placement": {pl: v["green_mm"] for pl, v in places.items()},
             "z_rings": {pl: {k: z["Z"] for k, z in v.get("rings", {}).items()} for pl, v in places.items()},
@@ -62,9 +64,13 @@ def card_md(e):
              f"`{e['spec']}`, from {e['origin']}. Scored under rules {e['rules']}; every number is {LABEL}.", ""]
     if e.get("idea"):
         lines += ["## Idea", "", e["idea"], ""]
+    zr = e.get("z_mean_rings") or {}
+    builds = (f" Noisy builds at {_num(e['build_radius_mm'])} mm: overhang {_num(e['overhang_steps'])}, "
+              f"stack {_num(e['stack_courses'])}." if e.get("build_radius_mm") is not None else "")
     lines += ["## Scores", "",
-              f"Green zone {_num(e['green_mm'])} mm (weakest: {e['weakest']}). Noisy builds at "
-              f"{_num(e['build_radius_mm'])} mm: overhang {_num(e['overhang_steps'])}, stack {_num(e['stack_courses'])}.",
+              f"Z {_num(e.get('z'))} (the mean over the stack and overhangs 1-3 of Z in the 16 mm disc; Z28 "
+              f"{_num(zr.get('28'))}, Z40 {_num(zr.get('40'))}). Green zone {_num(e['green_mm'])} mm "
+              f"(weakest: {e['weakest']}).{builds}",
               "", "| placement | green zone (mm) | Z16 | Z28 | Z40 |", "|---|---|---|---|---|"]
     for pl in order:
         z = e["z_rings"].get(pl, {})
@@ -91,22 +97,25 @@ def card_md(e):
 
 
 def write_index(lib):
-    """``INDEX.md``: one line per design, weakest placement first."""
+    """``INDEX.md``: one line per design, best Z first (#222); an entry without Z (scored before #222) last."""
     lib = Path(lib)
     rows = []
     for p in sorted(lib.glob("*/scores.json")):
         s = json.loads(p.read_text())
         greens = s.get("green_by_placement") or {}
         per = ", ".join(f"{pl} {_num(g)}" for pl, g in sorted(greens.items(), key=lambda kv: kv[1]))
-        rows.append((s.get("green_mm") or 0.0, f"| [{s['name']}]({s['name']}/card.md) | {s['origin']} | "
-                     f"{(s.get('idea') or '')[:120]} | {per} | {_num(s.get('overhang_steps'))} / "
-                     f"{_num(s.get('stack_courses'))} | {s.get('verdict') or '–'} |"))
+        quarters = ", ".join(f"{pl} {_num(z)}" for pl, z in (s.get("z_quarters") or {}).items())
+        rows.append((-2.0 if s.get("z") is None else s["z"],
+                     f"| [{s['name']}]({s['name']}/card.md) | {s['origin']} | {(s.get('idea') or '')[:120]} | "
+                     f"{_num(s.get('z'))} | {quarters or '–'} | {per} | {s.get('rules') or '–'} | "
+                     f"{s.get('verdict') or '–'} |"))
     text = ["# Design library", "",
-            f"Every design measured so far, best green zone first. Open a card for its idea, scores, strengths, "
-            f"weaknesses and the contacts that bound it. Read, don't refine: no entry is a parent. All numbers are "
-            f"{LABEL}.", "",
-            "| design | from | idea | green zone per placement (mm, weakest first) | overhang / stack at 16 mm | "
-            "archive |", "|---|---|---|---|---|---|"]
+            f"Every design measured so far, best Z first (#222: the mean over the stack and overhangs 1-3 of "
+            f"Z = (S - J) / N in the 16 mm disc). An entry scored under older rules has no Z: rescore it to compare. "
+            f"Open a card for its idea, scores, strengths, weaknesses and the contacts that bound it. Read, don't "
+            f"refine: no entry is a parent. All numbers are {LABEL}.", "",
+            "| design | from | idea | Z | Z per quarter | green zone per placement (mm, weakest first) | rules | "
+            "archive |", "|---|---|---|---|---|---|---|---|"]
     text += [r for _, r in sorted(rows, key=lambda t: -t[0])]
     (lib / "INDEX.md").write_text("\n".join(text) + "\n")
 

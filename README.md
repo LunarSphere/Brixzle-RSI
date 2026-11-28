@@ -2,9 +2,9 @@
 
 **Brixzle recursive self-improvement.** A self-steering loop for designing families of bricks that a drone can place imprecisely.
 
-The drone is a Crazyflie 2.1 Brushless with prop guards. It carries a brick with a passive magnet, hovers over the target with 16 to 40 mm of placement error, and drops it. The brick's own geometry has to catch that error as it falls and guide itself into its seat. The brick's own geometry has to catch that error and guide itself into its seat. The loop designs bricks only: the gripper and the landing pad are designed by hand (`src/brixzle/engine/gripper_spec.py`, `docs/requirements.md`).
+The drone is a Crazyflie 2.1 Brushless with prop guards. It carries a brick with a passive magnet, hovers over the target with 16 to 40 mm of placement error, and drops it. The brick's own geometry has to catch that error as it falls and guide itself into its seat. The loop designs bricks only: the gripper and the landing pad are designed by hand (`src/brixzle/engine/gripper_spec.py`, `docs/requirements.md`).
 
-> **Status:** the director loop (#165) runs the error-radius goal (#206), scored on the self-alignment grid (#208, #210). The older Agent SDK loop (`intake/`, `agents/`, `loop/`) is being removed (#204).
+> **Status:** the director loop (#165) runs the error-radius goal (#206), scored as Z on the grid over four placements: a stack and the first three reaching bricks of an overhang (#208, #222). The older Agent SDK loop (`intake/`, `agents/`, `loop/`) is being removed (#204).
 
 ## Run it
 
@@ -31,22 +31,23 @@ Each iteration has four roles, each with its own instructions in `.claude/agents
 4. **Verify** measures the candidate itself (`director/verify.measure_radius`), cheapest first:
    - the family contract, the rule margins and the magnet-target interface;
    - the MVP gate: a stack of 3 and an overhang of at least 3 with ideal placement and a free drop;
-   - the **grid score**: per placement type, free drops on an X–Y grid out to 40 mm, refined where the outcome changes; the **green zone** is the largest error radius inside which every release seats;
-   - a **jam analysis** of the failures that bound each green zone: reruns at other frictions, bands of repeatable failures, and the contacts at rest reduced and named;
-   - **noisy builds** of a tower and a back-first corbel at 16 mm of error, with each failed corbel brick replayed and its contacts named.
+   - the **screen**: 40 random free drops within 16 mm, 10 on each of the four placements; at least 32 must seat, or the design is not gridded;
+   - the **grid score**: per placement, free drops on an X–Y grid out to 40 mm, refined where the outcome changes, and **Z** from the cells within 16 mm;
+   - a **jam analysis** of the failures nearest the aim: reruns at other frictions, bands of repeatable failures, and the contacts at rest reduced and named;
+   - for finalists only (`run_builds`), **noisy builds** of a tower and a back-first corbel at 16 mm of error.
 5. **Verifier** audits the designer's note against the measurement; **critic** names the mechanisms behind the failures from the maps, the jam analysis and the contacts.
-6. The design is offered to the **band archive**, which keeps the best design per error band (below 16, 16–22, 22–28, 28–34, 34+ mm).
+6. The design is offered to the **band archive**, which keeps the best design per Z band (below 0, 0–0.5, 0.5–0.8, 0.8–0.95, 0.95+).
 
 The bounds are enforced by code, not by the prompts: while a run is active, a hook refuses writes outside the run directory, the tracked tree must not change, and every claimed number is rerun.
 
 ### The score
 
-- **`green_mm`**, the headline: the largest placement error, as a disc radius about the aim, inside which every free drop seats with no jam, wrong valley or fall, on every placement type. The weakest placement sets it. The placement types are the full seat (stacking), both bare edges, and three bricks of a back-first corbel (the first reach, a later back brick and the second reach). Only a failure that repeats counts: each failure nearest the aim is rerun at other frictions with small shifts, and one that does not come back is solver noise.
-- Within a band, designs rank by every placement's green zone, weakest first (ties within 1.25 mm), then by the overhang and stack height that the noisy builds reach at 16 mm, then by **Z**.
-- **Z = (seated − jammed) / N**, per ring at 16, 28 and 40 mm, counted by cell area. It runs from −1 to 1, and shows how much of the error disc works beyond the green zone.
-- The minimum worth printing is a green zone of 16 mm, a stack of 3 and an overhang of 3.
+- **Z**, the headline (#222): **Z = ¼ Z_stack + ¼ Z_overhang1 + ¼ Z_overhang2 + ¼ Z_overhang3**. Each term is (seated − jammed) / N over that placement's grid cells within 16 mm of the aim, counted by cell area, so it runs from −1 to 1 and a jam costs more than a fall.
+- **Stack** is a brick dropped across two seated bricks. **Overhang n** is the reaching brick of course n of a back-first corbel, n voxels past the base's face, dropped onto an ideally built corbel below it. If one brick stacks, many do; if each reach seats, the corbel builds.
+- Z = 1 means every release within 16 mm seats on all four: the minimum worth printing, with the MVP gate's stack of 3 and overhang of 3.
+- Ties (within 0.02) are broken by Z over 28 mm, then over 40 mm, then by each placement's **green zone** (`green_mm`, the largest error radius inside which every release seats), weakest first. Only a failure that repeats at other frictions counts; one that does not is solver noise.
 
-Each iteration's maps are `iter-NN/measured/grid/map-<placement>.png`: one cell per release offset, coloured by outcome, with rings at 16, 28 and 40 mm and the green zone dashed. All sim results are simulated, uncalibrated contact.
+Each iteration's maps are `iter-NN/measured/grid/map-<placement>.png`: one cell per release offset, coloured by outcome, with rings at 16, 28 and 40 mm, the green zone dashed and the placement's Z16 in the title. All sim results are simulated, uncalibrated contact.
 
 See [`docs/requirements.md`](docs/requirements.md) for R1–R13 and the hard constraints, and [`docs/architecture.md`](docs/architecture.md#the-error-radius-goal-206) for the components.
 
@@ -67,7 +68,7 @@ The package lives in `src/brixzle/`. [`REPO_MAP.md`](REPO_MAP.md) is the full ma
 | Path | What it holds |
 |---|---|
 | `src/brixzle/director/` | The loop's deterministic steps and its Codex driver (`drive.py`): run files, the one-change check, verify, the band archive, decisions and the write guard |
-| `src/brixzle/engine/` | The measurement: grid score, jam analysis, structure gate, noisy builds, the drop cache and the analytic predictor |
+| `src/brixzle/engine/` | The measurement: the screen, grid score and Z, jam analysis, structure gate, noisy builds, the drop cache and the analytic predictor |
 | `src/brixzle/engine/sim/` | The MuJoCo core: drop rigs (course and edge layouts), the held release of older goals, structure builds |
 | `src/brixzle/tools/` | Deterministic tools the roles call: `python -m brixzle.tools` evaluate, contacts, redrop, gate and more |
 | `src/brixzle/families/<name>/` | One brick family each: parameters and bounds, section, CAD solid, seats and rules |

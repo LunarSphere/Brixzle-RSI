@@ -23,10 +23,10 @@ tracked file changes, so keep this worktree clean while it runs.
 
 ## The design library
 
-Every measured design gets a card in `runs/library/` (#215). `decide` adds each iteration on its own. To add a registry family, score it with the grid and the builds, then file it:
+Every measured design gets a card in `runs/library/` (#215). `decide` adds each iteration on its own. To add a registry family, score it with the grid (Z on the four quarters, #222; add `--builds` for a finalist's noisy builds), then file it:
 
 ```sh
-uv run python -m brixzle.engine.gridscore fable_allround --out runs/grid-<stamp>-fable_allround --builds
+uv run python -m brixzle.engine.gridscore fable_allround --out runs/grid-<stamp>-fable_allround
 uv run python -m brixzle.director.library add fable_allround --grid runs/grid-<stamp>-fable_allround
 ```
 
@@ -56,11 +56,11 @@ same steps with Claude subagents (#205 will make it call Codex roles).
 - Iteration 1 (when there is nothing to refine), every 4th iteration and any iteration after three that added nothing must be a new family (#214; 3rd and two before)
   (`decide` refuses anything else).
 - Each iteration: a designer call (8 to 15 min in earlier Codex runs), the check, the verifier's measurement
-  (the grid score of A/B took 45 s on 14 workers, `runs/grid208-20261126-090821-ab-all`; the MVP gate and the noisy
-  builds add to it), the audit and the critique
+  (the check, the MVP gate, the quarter screen and the grid score on four placements, #222; noisy builds only when the
+  campaign sets `run_builds`), the audit and the critique
   in parallel, and the director.
 - Each iteration's maps are in `iter-NN/measured/grid/map-<placement>.png` and its jam analysis in `jams.json`.
-- Watch `runs/rsi/radius-scratch-1/STATE.md`, `archive.json` (the best design per error band) and `designs.jsonl`.
+- Watch `runs/rsi/radius-scratch-1/STATE.md`, `archive.json` (the best design per Z band) and `designs.jsonl`.
   `python -m brixzle.director status --run runs/rsi/radius-scratch-1` prints the next step and the budget.
 
 ## Known limits
